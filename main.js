@@ -1,0 +1,1993 @@
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, powerSaveBlocker } = require('electron');
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const crypto = require('crypto');
+
+const plataforma = require('./plataforma');
+const { EH_WIN, acharBin, spawnBin, abrirPty } = plataforma;
+
+const HOME = os.homedir();
+// no Mac o Claude mora sempre no mesmo lugar; no Windows a gente procura
+const CLAUDE_BIN = EH_WIN ? acharBin('claude') : path.join(HOME, '.local/bin/claude');
+const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
+const LOG = () => path.join(app.getPath('userData'), 'cockpit.log');
+function anota(...partes) {
+  const linha = new Date().toISOString() + '  ' + partes.map(x => (x && x.stack) || (typeof x === 'object' ? JSON.stringify(x) : String(x))).join(' ') + '\n';
+  try { fs.appendFileSync(LOG(), linha); } catch {}
+  try { console.log(linha.trim()); } catch {}
+}
+
+/* Rede de seguranca do processo principal. Sem isto, qualquer erro nao tratado em qualquer
+   canto do main mata o Electron na hora: a janela some da tela, todas as abas e todos os
+   chats morrem juntos, e o log nao registra nada. Aqui o erro vira uma linha no cockpit.log
+   e um aviso na tela, e o app continua de pe. */
+process.on('uncaughtException', (e) => {
+  try { anota('ERRO NAO TRATADO no main:', e); } catch {}
+  try {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('app:erro', { texto: 'Um erro interno aconteceu, mas o Cockpit continua aberto: ' + (e && e.message || e) });
+    }
+  } catch {}
+});
+process.on('unhandledRejection', (e) => {
+  try { anota('PROMESSA REJEITADA sem tratamento no main:', e); } catch {}
+});
+
+let win = null;
+const HANDLERS = {};                    // os mesmos comandos, tambem servidos pelo Wi-Fi
+function handle(nome, fn) { HANDLERS[nome] = fn; ipcMain.handle(nome, fn); }
+
+/* ======================= util ======================= */
+/* Gravar direto no arquivo final e perigoso: o config tem 2,3 MB (a foto em base64 sozinha
+   ocupa quase tudo) e e reescrito dezenas de vezes por dia. Se o app morrer no meio de uma
+   dessas gravacoes, o arquivo fica pela metade, o JSON.parse falha e TODAS as abas e chats
+   somem de uma vez. Gravando num temporario e trocando o nome, o rename e atomico: ou entra
+   o arquivo novo inteiro, ou fica o antigo inteiro. Nunca um pedaco. */
+function gravarSeguro(alvo, texto) {
+  const tmp = alvo + '.tmp';
+  try {
+    fs.writeFileSync(tmp, texto);
+    fs.renameSync(tmp, alvo);
+    return true;
+  } catch (e) {
+    anota('nao consegui gravar', alvo, e);
+    try { fs.unlinkSync(tmp); } catch {}
+    return false;
+  }
+}
+
+function loadConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_PATH(), 'utf8')); }
+  catch (e) {
+    // se o arquivo estiver corrompido, guarda uma copia antes de comecar do zero:
+    // assim da pra resgatar as abas na mao em vez de perder tudo calado
+    try {
+      if (fs.existsSync(CONFIG_PATH())) {
+        fs.copyFileSync(CONFIG_PATH(), CONFIG_PATH() + '.quebrado');
+        anota('config ilegivel, copia salva em config.json.quebrado:', e && e.message);
+      }
+    } catch {}
+    return {};
+  }
+}
+/* Rede contra perder aba sem perceber: quando a gravacao nova traz MENOS abas do que a
+   anterior, guarda o retrato de antes como config.json.anterior. Se uma restauracao falhar no
+   meio (ou qualquer outra coisa comer abas), da pra voltar.
+   A contagem fica na MEMORIA de proposito: reler e reinterpretar o arquivo de 2,2 MB a cada
+   gravacao — e o savePanes grava a cada chat aberto, fechado ou redimensionado — custaria
+   mais caro do que o problema que estamos evitando. */
+let abasNoDisco = -1;
+function saveConfig(cfg) {
+  const nAgora = Array.isArray(cfg && cfg.abas) ? cfg.abas.length : 0;
+  if (abasNoDisco < 0) {
+    const d = loadConfig();
+    abasNoDisco = Array.isArray(d && d.abas) ? d.abas.length : 0;
+  }
+  if (abasNoDisco > 0 && nAgora < abasNoDisco) {
+    try {
+      fs.copyFileSync(CONFIG_PATH(), CONFIG_PATH() + '.anterior');
+      anota('abas caindo de ' + abasNoDisco + ' para ' + nAgora + ': guardei config.json.anterior');
+    } catch {}
+  }
+  if (gravarSeguro(CONFIG_PATH(), JSON.stringify(cfg, null, 2))) abasNoDisco = nAgora;
+}
+
+// app GUI nao herda o PATH do shell: monta um PATH completo (ver plataforma.js)
+const buildEnv = plataforma.buildEnv;
+
+const ouvintesWeb = new Set();
+function emit(paneId, kind, data) {
+  // qualquer evento que nao seja pedaco de texto tem de sair DEPOIS do texto que ja estava
+  // acumulado, senao o "texto final" chega antes do fim do rascunho e a resposta duplica
+  if (kind !== 'text-delta') despejarDelta(paneId);
+  // Pedido de permissao de um turno que acabou nao pode continuar respondivel: alem de sobrar
+  // chave velha guardada a sessao inteira, responder "sim" ali escrevia num processo morto e
+  // fazia aparecer "a conexao caiu" num chat que estava vivo.
+  if (kind === 'turn-end' || kind === 'engine-down') {
+    for (const [k, a] of pendingApprovals) if (a && a.paneId === paneId) pendingApprovals.delete(k);
+  }
+  const msg = { paneId, kind, ...data };
+  if (win && !win.isDestroyed()) win.webContents.send('pane:event', msg);
+  for (const ws of ouvintesWeb) { try { ws.send(JSON.stringify({ tipo: 'evento', canal: 'pane:event', dados: msg })); } catch {} }
+}
+
+/* O claude roda com --include-partial-messages: chega um pedacinho de texto a cada poucos
+   caracteres. Cada um virava um envio para a tela, e a tela reprocessava o markdown da
+   resposta INTEIRA a cada pedacinho — o custo cresce ao quadrado, e por isso resposta longa
+   ia deixando o Cockpit pesado (rolar travava, digitar no outro chat engasgava).
+   Aqui os pedacinhos sao juntados e mandados no maximo 20 vezes por segundo. Nada se perde:
+   o texto final reescreve o bloco completo no fim do turno. */
+const filaDelta = new Map();   // paneId -> { id, texto, timer }
+function despejarDelta(paneId) {
+  const f = filaDelta.get(paneId);
+  if (!f) return;
+  clearTimeout(f.timer);
+  filaDelta.delete(paneId);
+  if (f.texto) emit(paneId, 'text-delta', { id: f.id, text: f.texto });
+}
+function emitDelta(paneId, id, texto) {
+  let f = filaDelta.get(paneId);
+  if (f && f.id !== id) { despejarDelta(paneId); f = null; }
+  if (!f) { f = { id, texto: '', timer: null }; filaDelta.set(paneId, f); }
+  f.texto += texto;
+  if (!f.timer) f.timer = setTimeout(() => despejarDelta(paneId), 50);
+}
+function avisarWeb(canal, dados) {
+  for (const ws of ouvintesWeb) { try { ws.send(JSON.stringify({ tipo: 'evento', canal, dados })); } catch {} }
+}
+
+/* ======================= motor CODEX =======================
+   Um `codex app-server` por DESTINO: um no Mac e um dentro da VPS (por SSH).
+   Cada painel e uma thread, e o painel lembra em qual destino ele vive. */
+const codexConns = new Map();     // destino ('local' | 'vps') -> conexao
+const codexPaneDest = new Map();  // paneId -> destino
+const codex = {
+  threadToPane: new Map(),   // threadId -> paneId
+  paneToThread: new Map(),   // paneId -> threadId
+  paneTurn: new Map(),       // paneId -> turnId em andamento
+};
+
+const destinoDoCwd = (cwd) => (ehRemoto(cwd) ? String(cwd).split(':')[0] : 'local');
+const destinoDoPane = (paneId) => codexPaneDest.get(paneId) || 'local';
+
+function conexaoCodex(destino) {
+  let c = codexConns.get(destino);
+  if (!c) { c = { destino, proc: null, buf: '', id: 0, pend: new Map(), ready: null }; codexConns.set(destino, c); }
+  return c;
+}
+
+function codexStart(destino = 'local') {
+  const c = conexaoCodex(destino);
+  if (c.ready) return c.ready;
+  const tentativa = new Promise((resolve, reject) => {
+    let p;
+    try {
+      if (destino === 'local') {
+        p = spawnBin('codex', ['app-server'], { cwd: HOME, env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+      } else {
+        const r = partesRemoto(destino + ':/');
+        if (!r) return reject(new Error('servidor desconhecido: ' + destino));
+        p = spawn('ssh', argsSsh(r, 'codex app-server'), { env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+      }
+    } catch (e) { return reject(e); }
+    c.proc = p;
+
+    p.stdout.on('data', (chunk) => {
+      c.buf += chunk.toString('utf8');
+      let i;
+      while ((i = c.buf.indexOf('\n')) >= 0) {
+        const line = c.buf.slice(0, i).trim();
+        c.buf = c.buf.slice(i + 1);
+        if (!line) continue;
+        let m; try { m = JSON.parse(line); } catch { continue; }
+        codexIncoming(destino, m);
+      }
+    });
+    p.stderr.on('data', () => {});   // logs do rust, ruido
+    // escrever no stdin de um codex ja morto emite 'error' no stream; sem ouvinte isso
+    // derruba o Electron inteiro
+    p.stdin.on('error', (e) => { anota('stdin do codex caiu:', e && e.message); });
+    p.on('close', () => {
+      c.proc = null; c.ready = null;
+      // quem estava esperando resposta precisa saber que caiu. Sem isto a promessa nunca
+      // resolve e o chat fica em "Ligando o Codex..." para sempre, sem erro nenhum.
+      for (const [, pend] of c.pend) { try { pend.reject(new Error('o Codex caiu no meio')); } catch {} }
+      c.pend.clear();
+      for (const [paneId, d] of codexPaneDest) {
+        if (d !== destino) continue;
+        emit(paneId, 'engine-down', {});
+        const tid = codex.paneToThread.get(paneId);
+        if (tid) codex.threadToPane.delete(tid);
+        codex.paneToThread.delete(paneId);
+        codexPaneDest.delete(paneId);
+      }
+    });
+    p.on('error', (e) => { c.ready = null; reject(e); });
+
+    codexReq(destino, 'initialize', { clientInfo: { name: 'cockpit', version: '1.0.0', title: 'Cockpit' }, capabilities: { experimentalApi: true } })
+      .then(() => { codexNote(destino, 'initialized', {}); resolve(true); })
+      .catch(reject);
+  });
+  c.ready = tentativa;
+  // Se ligar o Codex falhar, esquecer a tentativa. Antes o erro ficava guardado em c.ready e
+  // TODA chamada seguinte recebia o mesmo erro velho: o Codex ficava morto ate reiniciar o app.
+  tentativa.catch(() => { if (c.ready === tentativa) c.ready = null; });
+  return c.ready;
+}
+
+// escrita protegida: o processo pode ter morrido entre o "if (c.proc)" e o write
+function escreverCodex(c, obj) {
+  if (!c.proc || !c.proc.stdin || c.proc.stdin.destroyed || !c.proc.stdin.writable) return false;
+  try { c.proc.stdin.write(JSON.stringify(obj) + '\n'); return true; }
+  catch (e) { anota('nao consegui falar com o codex:', e && e.message); return false; }
+}
+
+function codexReq(destino, method, params) {
+  return new Promise((resolve, reject) => {
+    const c = conexaoCodex(destino);
+    if (!c.proc) return reject(new Error('codex fora do ar' + (destino !== 'local' ? ' na ' + destino : '')));
+    const id = ++c.id;
+    c.pend.set(id, { resolve, reject });
+    if (!escreverCodex(c, { jsonrpc: '2.0', id, method, params })) {
+      c.pend.delete(id);
+      reject(new Error('o Codex caiu antes de receber o pedido'));
+    }
+  });
+}
+function codexNote(destino, method, params) {
+  escreverCodex(conexaoCodex(destino), { jsonrpc: '2.0', method, params });
+}
+function codexReply(destino, id, result) {
+  escreverCodex(conexaoCodex(destino), { jsonrpc: '2.0', id, result });
+}
+
+const pendingApprovals = new Map();  // approvalKey -> {rpcId, type}
+
+function codexIncoming(destino, m) {
+  const c = conexaoCodex(destino);
+  // resposta a uma chamada nossa
+  if (m.id !== undefined && m.method === undefined) {
+    const p = c.pend.get(m.id);
+    if (p) { c.pend.delete(m.id); m.error ? p.reject(new Error(m.error.message || 'erro')) : p.resolve(m.result); }
+    return;
+  }
+  // servidor pedindo algo (aprovacao)
+  if (m.id !== undefined && m.method) { codexServerRequest(destino, m); return; }
+  // notificacao
+  if (m.method) codexNotification(m.method, m.params || {});
+}
+
+function paneOf(params) {
+  const tid = params.threadId || (params.thread && params.thread.id);
+  return tid ? codex.threadToPane.get(tid) : undefined;
+}
+
+function codexServerRequest(destino, m) {
+  const pane = paneOf(m.params || {});
+  const meth = m.method;
+  const key = 'ap_' + m.id;
+
+  if (meth === 'item/commandExecution/requestApproval' || meth === 'execCommandApproval') {
+    pendingApprovals.set(key, { rpcId: m.id, kind: 'cmd', destino, paneId: pane });
+    emit(pane, 'approval', {
+      key, title: destino === 'local' ? 'Rodar comando no seu Mac' : 'Rodar comando na ' + destino.toUpperCase(),
+      detail: (m.params.command || '') + (m.params.cwd ? '\nem ' + m.params.cwd : ''),
+      reason: m.params.reason || '',
+    });
+    return;
+  }
+  if (meth === 'item/fileChange/requestApproval' || meth === 'applyPatchApproval') {
+    pendingApprovals.set(key, { rpcId: m.id, kind: 'file', destino, paneId: pane });
+    emit(pane, 'approval', {
+      key, title: 'Alterar arquivos',
+      detail: m.params.grantRoot ? 'em ' + m.params.grantRoot : '',
+      reason: m.params.reason || '',
+    });
+    return;
+  }
+  if (meth === 'item/permissions/requestApproval') {
+    pendingApprovals.set(key, { rpcId: m.id, kind: 'perm', paneId: pane });
+    emit(pane, 'approval', {
+      key, title: 'Pedir mais acesso ao Mac',
+      detail: m.params.reason || JSON.stringify(m.params.permissions || {}).slice(0, 300),
+      reason: '',
+    });
+    return;
+  }
+  if (meth === 'currentTime/read') { codexReply(destino, m.id, { currentTimeAt: new Date().toISOString() }); return; }
+  // qualquer outro pedido: responde vazio pra nao travar
+  codexReply(destino, m.id, {});
+}
+
+function codexNotification(method, params) {
+  if (method === 'thread/started') {
+    return; // o paneamento e feito no thread/start
+  }
+  const pane = paneOf(params);
+  if (pane === undefined) return;
+
+  switch (method) {
+    case 'turn/started':
+      codex.paneTurn.set(pane, params.turnId || (params.turn && params.turn.id));
+      emit(pane, 'busy', {});
+      break;
+
+    case 'item/agentMessage/delta':
+      emitDelta(pane, params.itemId || 'msg', params.delta || '');
+      break;
+
+    case 'item/reasoning/summaryTextDelta':
+    case 'item/reasoning/textDelta':
+      emit(pane, 'think-delta', { text: params.delta || '' });
+      break;
+
+    case 'item/started': {
+      const it = params.item || {};
+      if (it.type === 'commandExecution') emit(pane, 'tool-start', { id: it.id, name: 'Terminal', arg: it.command || '' });
+      else if (it.type === 'fileChange') emit(pane, 'tool-start', { id: it.id, name: 'Editando arquivo', arg: fileChangeArg(it) });
+      else if (it.type === 'mcpToolCall') emit(pane, 'tool-start', { id: it.id, name: mcpName(it), arg: shortJson(it.arguments) });
+      else if (it.type === 'webSearch') emit(pane, 'tool-start', { id: it.id, name: 'Pesquisando na web', arg: it.query || '' });
+      break;
+    }
+
+    case 'item/commandExecution/outputDelta':
+    case 'command/exec/outputDelta': {
+      const txt = decodeChunk(params.chunk ?? params.delta ?? params.data);
+      if (txt) emit(pane, 'tool-output', { id: params.itemId || params.callId, text: txt });
+      break;
+    }
+
+    case 'item/completed': {
+      const it = params.item || {};
+      if (it.type === 'agentMessage') {
+        emit(pane, 'text-final', { id: it.id, text: it.text || '', phase: it.phase || '' });
+      } else if (it.type === 'commandExecution') {
+        emit(pane, 'tool-end', {
+          id: it.id,
+          output: it.aggregatedOutput || it.output || '',
+          error: (it.exitCode != null && it.exitCode !== 0) || it.status === 'failed',
+        });
+      } else if (it.type === 'fileChange') {
+        emit(pane, 'tool-end', { id: it.id, output: fileChangeSummary(it), error: it.status === 'failed' });
+      } else if (it.type === 'mcpToolCall') {
+        emit(pane, 'tool-end', { id: it.id, output: shortJson(it.result ?? it.output), error: it.status === 'failed' });
+      } else if (it.type === 'webSearch') {
+        emit(pane, 'tool-end', { id: it.id, output: it.query || '', error: false });
+      } else if (it.type === 'error') {
+        emit(pane, 'note', { text: it.message || 'erro', error: true });
+      }
+      break;
+    }
+
+    case 'turn/completed': {
+      codex.paneTurn.delete(pane);
+      emit(pane, 'turn-end', {});
+      break;
+    }
+
+    case 'turn/failed':
+    case 'error': {
+      // o erro pode vir como texto ou como objeto {message, codexErrorInfo}
+      const e = params.error;
+      const texto = params.message
+        || (typeof e === 'string' ? e : (e && (e.message || e.codexErrorInfo)))
+        || 'erro no Codex';
+      const remoto = destinoDoPane(pane) !== 'local';
+      const precisaEntrar = /revoked|unauthorized|log out and sign in|not logged in/i.test(texto);
+      emit(pane, 'note', {
+        text: texto + (precisaEntrar && remoto ? ' — use o menu / → Conta → trocar conta para entrar de novo na VPS.' : ''),
+        error: true,
+      });
+      emit(pane, 'turn-end', {});
+      break;
+    }
+
+    case 'thread/tokenUsage/updated': {
+      const tu = params.tokenUsage || {};
+      // "last" e o tamanho da conversa agora; "total" seria o gasto acumulado
+      const atual = (tu.last && tu.last.totalTokens) || (tu.total && tu.total.totalTokens) || 0;
+      emit(pane, 'tokens', { total: atual, janela: tu.modelContextWindow || undefined });
+      break;
+    }
+
+    case 'thread/compacted':
+      emit(pane, 'compactou', {});
+      break;
+
+    case 'thread/status/changed':
+      if (params.status && params.status.type === 'idle') emit(pane, 'turn-end', {});
+      break;
+  }
+}
+
+function decodeChunk(c) {
+  if (!c) return '';
+  if (typeof c === 'string') { try { return Buffer.from(c, 'base64').toString('utf8'); } catch { return c; } }
+  if (Array.isArray(c)) { try { return Buffer.from(c).toString('utf8'); } catch { return ''; } }
+  return '';
+}
+function mcpName(it) { return (it.server ? it.server + ' · ' : '') + (it.tool || 'MCP'); }
+function shortJson(v) { if (v == null) return ''; try { return typeof v === 'string' ? v : JSON.stringify(v); } catch { return String(v); } }
+function fileChangeArg(it) {
+  const ch = it.changes || it.fileChanges || [];
+  if (Array.isArray(ch) && ch.length) return ch.map(c => c.path || c.file || '').filter(Boolean).join(', ');
+  return it.path || '';
+}
+function fileChangeSummary(it) {
+  const ch = it.changes || it.fileChanges || [];
+  if (Array.isArray(ch) && ch.length) return ch.map(c => (c.kind || c.type || 'alterado') + '  ' + (c.path || c.file || '')).join('\n');
+  return shortJson(it);
+}
+
+/* O app-server nao aplica sozinho o ~/.codex/AGENTS.md, entao mandamos as regras da casa
+   junto com cada conversa nova. Se o arquivo existir, ele manda; senao, vai o basico. */
+function instrucoesCasa() {
+  const base = 'Responda SEMPRE em português do Brasil, nunca em inglês.\n'
+    + 'O Homero é leigo em código: fale em palavras simples, com exemplos do contexto dele.\n'
+    + 'Resposta curta: ele tem TDAH e não lê texto longo. Comece pelo resultado.\n'
+    + 'Não use travessão no texto para ele.';
+  try {
+    const f = path.join(HOME, '.codex/AGENTS.md');
+    const txt = fs.readFileSync(f, 'utf8');
+    if (txt.trim()) return base + '\n\n--- regras da casa (~/.codex/AGENTS.md) ---\n' + txt.slice(0, 12000);
+  } catch {}
+  return base;
+}
+
+const CODEX_MODE = {
+  manual:      { policy: 'untrusted',  sandbox: 'workspace-write' },
+  'auto-edit': { policy: 'on-request', sandbox: 'workspace-write' },
+  auto:        { policy: 'on-request', sandbox: 'workspace-write' },
+  bypass:      { policy: 'never',      sandbox: 'danger-full-access' },
+};
+const CLAUDE_MODE = { manual: 'manual', 'auto-edit': 'acceptEdits', plan: 'plan', auto: 'auto', bypass: 'bypassPermissions' };
+
+/* O settings.json do usuario tem defaultMode: bypassPermissions, que atropela qualquer
+   --permission-mode. Para Manual e Auto funcionarem, escrevemos uma copia sem essa linha
+   e carregamos ela por --settings, tirando o global do --setting-sources.            */
+function claudeSettingsSemBypass() {
+  try {
+    const src = path.join(HOME, '.claude/settings.json');
+    const d = JSON.parse(fs.readFileSync(src, 'utf8'));
+    delete d.defaultMode;                       // existe tambem na raiz
+    if (d.permissions) {
+      delete d.permissions.defaultMode;
+      delete d.permissions.additionalDirectories;  // isso liberava a home inteira sem perguntar
+    }
+    const out = path.join(app.getPath('userData'), 'claude-settings-sem-bypass.json');
+    fs.writeFileSync(out, JSON.stringify(d));
+    return out;
+  } catch { return null; }
+}
+
+/* ======================= motor CLAUDE ======================= */
+/* um processo `claude` por painel, protocolo stream-json */
+const claudePanes = new Map();  // paneId -> {proc, buf, blocks}
+
+const claudeCwd = new Map();
+/* O Claude Code nomeia a pasta da sessao trocando TODO caractere que nao e letra nem numero
+   por traco. Aqui so trocava "/" e ".", entao pasta com espaco ou acento gerava um caminho
+   que nao existe no disco e a conversa nunca voltava. Conferido: a pasta real do cliente
+   "Matheus Mota" e "-Users-...-Projetos-claude-Matheus-Mota", e a de "Adsure - Copy Lancamentos"
+   e "-Users-...-Adsure---Copy-Lan-amentos" (o "c cedilha" tambem vira traco). */
+function caminhoReal(dir) {
+  // O Claude Code resolve o atalho (realpath) ANTES de montar o nome da pasta da conversa.
+  // A home do Homero tem varios atalhos (~/cockpit, ~/maquina-sites, ~/mcp-servers...)
+  // apontando para ~/Documents/Adsure - Sistemas/. Sem resolver aqui, o nome que montamos
+  // aponta para uma pasta que nao existe no disco e a conversa volta vazia.
+  try { return fs.realpathSync(String(dir)); } catch { return String(dir); }
+}
+function encodeCwd(dir) { return caminhoReal(dir).replace(/[^a-zA-Z0-9]/g, '-'); }
+
+// texto oficial do modo ultracode do proprio Claude Code (o mesmo que a versao de terminal injeta)
+const ULTRACODE_SP = 'Ultracode is on: optimize for the most exhaustive, correct answer — not the fastest or cheapest. Use the Workflow tool on every substantive task; token cost is not a constraint. See the Workflow tool\'s **Ultracode** section and quality patterns. Solo only on conversational/trivial turns.';
+
+function claudeStart(paneId, opts) {
+  claudeStop(paneId);
+  claudeCwd.set(paneId, opts.cwd || HOME);
+  const args = [
+    '--print', '--input-format', 'stream-json', '--output-format', 'stream-json',
+    '--verbose', '--include-partial-messages',
+    '--permission-mode', CLAUDE_MODE[opts.approval] || 'bypassPermissions',
+  ];
+  const modo = opts.approval || 'bypass';
+  if (modo === 'bypass') {
+    args.push('--dangerously-skip-permissions');
+  } else {
+    // canal para ele perguntar antes de agir
+    args.push('--permission-prompt-tool', 'stdio');
+    const sf = claudeSettingsSemBypass();
+    if (sf) { args.push('--setting-sources', 'project,local'); args.push('--settings', sf); }
+  }
+  if (opts.effort) args.push('--effort', opts.effort);
+  // no esforco Maximo o painel vira "ultracode": ele passa a usar workflows (varios agentes
+  // em paralelo) por conta propria. Em --print o CLI nasce com a regra contraria, entao alem
+  // deste texto o renderer ainda manda a autorizacao junto da primeira mensagem.
+  if (opts.effort === 'max') args.push('--append-system-prompt', ULTRACODE_SP);
+  if (opts.model) args.push('--model', opts.model);
+  if (opts.resumeId) args.push('--resume', opts.resumeId);
+  // acesso amplo de saida so no modo que nao pergunta; nos outros ele pede na hora
+  if (modo === 'bypass' && opts.cwd && opts.cwd !== HOME && !ehRemoto(opts.cwd)) args.push('--add-dir', HOME);
+
+  let proc;
+  if (ehRemoto(opts.cwd)) {
+    // roda o Claude DENTRO da VPS: o mesmo fluxo de stream-json vem pelo SSH
+    const r = partesRemoto(opts.cwd);
+    const semLocal = args.filter((a, i) => {
+      if (a === '--settings' || a === '--setting-sources') return false;
+      const antes = args[i - 1];
+      return antes !== '--settings' && antes !== '--setting-sources';
+    });
+    const comando = 'cd ' + aspaSh(r.caminho) + ' && claude ' + semLocal.map(aspaSh).join(' ');
+    proc = spawn('ssh', argsSsh(r, comando), { env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+  } else {
+    proc = spawnBin(CLAUDE_BIN, args, { cwd: opts.cwd || HOME, env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+  }
+  const st = { proc, buf: '' };
+  claudePanes.set(paneId, st);
+
+  proc.stdout.on('data', (chunk) => {
+    st.buf += chunk.toString('utf8');
+    let i;
+    while ((i = st.buf.indexOf('\n')) >= 0) {
+      const line = st.buf.slice(0, i).trim(); st.buf = st.buf.slice(i + 1);
+      if (!line) continue;
+      let m; try { m = JSON.parse(line); } catch { continue; }
+      claudeMessage(paneId, m);
+    }
+  });
+  proc.stderr.on('data', (c) => {
+    const t = String(c).trim();
+    // ruido normal do ssh nao vira aviso; erro de verdade sim
+    if (!t || /Warning: Permanently added|Pseudo-terminal/i.test(t)) return;
+    // Antes, tudo que o Claude local escrevia aqui era jogado fora, e o chat so dizia
+    // "A conexao caiu" — sem nunca mostrar a frase em que o proprio CLI explica o problema
+    // (conta vencida, conversa que nao existe mais, modelo invalido). Agora fica guardado.
+    st.erro = ((st.erro || '') + t + '\n').slice(-1000);
+    if (ehRemoto(opts.cwd)) emit(paneId, 'note', { text: 'VPS: ' + t.slice(0, 300), error: true });
+  });
+  // Se o processo do claude ja morreu e alguem escreve no stdin dele, o Node emite 'error'
+  // no stream. Evento 'error' sem ouvinte = excecao nao tratada = o Electron inteiro fecha,
+  // levando junto todas as abas e todos os chats. Este ouvinte e o que impede isso.
+  proc.stdin.on('error', (e) => {
+    anota('stdin do claude caiu:', e && e.message);
+    if (claudePanes.get(paneId) !== st) return;
+    claudePanes.delete(paneId);
+    if (!st.parandoDeProposito) emit(paneId, 'engine-down', {});
+  });
+  // handshake que liga o canal de permissao (e devolve a lista de skills)
+  try { proc.stdin.write(JSON.stringify({ type: 'control_request', request_id: 'init-' + paneId, request: { subtype: 'initialize', hooks: {} } }) + '\n'); } catch {}
+  proc.on('close', (code) => {
+    // so apaga se o registro ainda for DESTE processo. Se o painel ja subiu um claude novo
+    // (troca de modelo, de modo, de esforco), apagar aqui mataria o registro do novo: o chat
+    // ficaria com "a conexao caiu" mentindo e sobraria um processo orfao rodando escondido.
+    if (claudePanes.get(paneId) !== st) return;
+    claudePanes.delete(paneId);
+    if (st.parandoDeProposito) return;
+    // diz o MOTIVO, em vez de so "a conexao caiu"
+    if (st.erro) emit(paneId, 'note', { text: st.erro.trim().slice(-400), error: true });
+    else if (code) emit(paneId, 'note', { text: 'O Claude saiu com erro (código ' + code + ').', error: true });
+    emit(paneId, 'engine-down', {});
+  });
+  proc.on('error', (e) => {
+    const meu = claudePanes.get(paneId) === st;
+    if (meu) claudePanes.delete(paneId);
+    emit(paneId, 'note', { text: 'Erro: ' + e.message, error: true });
+    // o 'close' que vem em seguida sai calado (a guarda ve que o registro ja nao e deste
+    // processo), entao o aviso que DESTRAVA a tela precisa sair daqui: sem ele o chat fica
+    // girando "trabalhando..." para sempre quando o claude nem consegue abrir
+    if (meu && !st.parandoDeProposito) emit(paneId, 'engine-down', {});
+  });
+  return true;
+}
+
+function claudeStop(paneId) {
+  const st = claudePanes.get(paneId);
+  if (st) { st.parandoDeProposito = true; try { st.proc.kill('SIGTERM'); } catch {} }
+}
+
+/* Unico lugar que fala com o claude. Antes cada comando escrevia direto no stdin, e escrever
+   num processo que acabou de morrer derrubava o app inteiro. Aqui a escrita e sempre
+   protegida, e quando falha o painel recebe "engine-down" em vez de ficar pendurado. */
+function escreverClaude(paneId, obj) {
+  const st = claudePanes.get(paneId);
+  if (!st || !st.proc || !st.proc.stdin || st.proc.stdin.destroyed || !st.proc.stdin.writable) {
+    // Nao basta devolver false: sem o 'engine-down' a tela mantem "ja esta ligado" e o envio
+    // seguinte pula o religar. O chat repetia "manda de novo que ele religa" para sempre.
+    if (st && claudePanes.get(paneId) === st) claudePanes.delete(paneId);
+    if (!st || !st.parandoDeProposito) emit(paneId, 'engine-down', {});
+    return false;
+  }
+  try {
+    st.proc.stdin.write(JSON.stringify(obj) + '\n');
+    return true;
+  } catch (e) {
+    anota('nao consegui falar com o claude:', e && e.message);
+    if (claudePanes.get(paneId) === st) claudePanes.delete(paneId);
+    emit(paneId, 'engine-down', {});
+    return false;
+  }
+}
+
+function claudeMessage(paneId, m) {
+  if (m.type === 'control_response') return;
+  if (m.type === 'control_request' && m.request && m.request.subtype === 'can_use_tool') {
+    const key = 'cl_' + paneId + '_' + m.request_id;
+    pendingApprovals.set(key, { kind: 'claude', paneId, reqId: m.request_id, input: m.request.input });
+    emit(paneId, 'approval', {
+      key, title: 'Claude quer usar: ' + (m.request.tool_name || 'ferramenta'),
+      detail: claudeToolArg(m.request.tool_name, m.request.input), reason: '',
+    });
+    return;
+  }
+  if (m.type === 'stream_event' && m.event) {
+    const ev = m.event;
+    if (ev.type === 'content_block_delta') {
+      const d = ev.delta || {};
+      if (d.type === 'text_delta') emitDelta(paneId, 'b' + ev.index, d.text || '');
+      else if (d.type === 'thinking_delta') emit(paneId, 'think-delta', { text: d.thinking || '' });
+    }
+    return;
+  }
+  if (m.type === 'assistant' && m.message) {
+    (m.message.content || []).forEach((c, i) => {
+      if (c.type === 'text') emit(paneId, 'text-final', { id: 'b' + i, text: c.text || '' });
+      else if (c.type === 'tool_use') emit(paneId, 'tool-start', { id: c.id, name: c.name, arg: claudeToolArg(c.name, c.input) });
+    });
+    return;
+  }
+  if (m.type === 'user' && m.message && Array.isArray(m.message.content)) {
+    for (const c of m.message.content) {
+      if (c.type === 'tool_result') {
+        let txt = '';
+        if (typeof c.content === 'string') txt = c.content;
+        else if (Array.isArray(c.content)) txt = c.content.map(x => x && x.type === 'text' ? x.text : '').join('\n');
+        emit(paneId, 'tool-end', { id: c.tool_use_id, output: txt, error: !!c.is_error });
+      }
+    }
+    return;
+  }
+  if (m.type === 'system' && m.subtype === 'init' && m.session_id) {
+    emit(paneId, 'sessao', { id: m.session_id, file: path.join(CLAUDE_PROJ, encodeCwd(claudeCwd.get(paneId) || HOME), m.session_id + '.jsonl') });
+    return;
+  }
+  if (m.type === 'result') {
+    const u = m.usage || {};
+    let janela = 0;
+    try { const mu = m.modelUsage || {}; const k = Object.keys(mu)[0]; if (k) janela = mu[k].contextWindow || 0; } catch {}
+    emit(paneId, 'tokens', {
+      total: (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0),
+      janela: janela || undefined,
+    });
+    if (m.is_error) emit(paneId, 'note', { text: String(m.result || m.subtype), error: true });
+    emit(paneId, 'turn-end', {});
+  }
+}
+
+function claudeToolArg(name, inp) {
+  if (!inp) return '';
+  const v = inp.command || inp.file_path || inp.pattern || inp.query || inp.url || inp.description || inp.skill || inp.notebook_path;
+  if (v) return String(v);
+  try { return JSON.stringify(inp).slice(0, 160); } catch { return ''; }
+}
+
+/* ======================= arvore de arquivos ======================= */
+const IGNORE = new Set(['node_modules', '.git', '.DS_Store', 'dist', 'build', '__pycache__', '.venv', 'venv', '.next', '.cache', 'Library']);
+function listDir(dir) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return { error: e.message }; }
+  const out = [];
+  for (const e of entries) {
+    if (e.name.startsWith('.') && !['.claude', '.codex', '.env.example'].includes(e.name)) continue;
+    if (IGNORE.has(e.name)) continue;
+    let isDir = e.isDirectory();
+    if (e.isSymbolicLink()) { try { isDir = fs.statSync(path.join(dir, e.name)).isDirectory(); } catch { continue; } }
+    out.push({ name: e.name, dir: isDir, path: path.join(dir, e.name) });
+  }
+  out.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+  return { entries: out.slice(0, 800) };
+}
+
+
+/* ======================= trabalhar direto na VPS =======================
+   Uma pasta remota vem escrita como "vps:/caminho/na/vps". Tudo que fala com
+   pasta (motor, arvore de arquivos, visor) passa por aqui e vira comando por SSH.
+   O Claude/Codex rodam LA, entao e a conta e o disco da VPS que valem. */
+const SERVIDORES = {
+  vps: { host: 'vps', usuario: 'homero', nome: 'VPS' },
+};
+const ehRemoto = (cwd) => /^[a-z0-9_-]+:\//i.test(String(cwd || '')) && !!SERVIDORES[String(cwd).split(':')[0]];
+function partesRemoto(cwd) {
+  const txt = String(cwd || '');
+  const chave = txt.slice(0, txt.indexOf(':'));
+  const srv = SERVIDORES[chave];
+  if (!srv) return null;
+  return { chave, ...srv, caminho: txt.slice(chave.length + 1) || '/' };
+}
+// aspas de shell: o unico jeito seguro de mandar texto com espaco, acento e quebra de linha
+const aspaSh = (t) => "'" + String(t).replace(/'/g, "'\\''") + "'";
+
+function linhaNoServidor(r, comando) {
+  const dentro = 'bash -lc ' + aspaSh(comando);
+  return r.usuario ? 'sudo -u ' + r.usuario + ' -H ' + dentro : dentro;
+}
+function argsSsh(r, comando) {
+  return ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=12', '-o', 'ServerAliveInterval=20', r.host, linhaNoServidor(r, comando)];
+}
+// roda um comando na VPS e devolve a saida (para listar pasta, ler arquivo, etc.)
+function noServidor(r, comando, ms = 20000) {
+  return new Promise((res) => {
+    const p = spawn('ssh', argsSsh(r, comando), { env: buildEnv() });
+    let out = '', erro = '';
+    const t = setTimeout(() => { try { p.kill(); } catch {} res({ error: 'a VPS demorou demais para responder' }); }, ms);
+    p.stdout.on('data', (c) => { out += c.toString('utf8'); });
+    p.stderr.on('data', (c) => { erro += c.toString('utf8'); });
+    p.on('error', (e) => { clearTimeout(t); res({ error: e.message }); });
+    p.on('close', (code) => {
+      clearTimeout(t);
+      if (code !== 0) return res({ error: (erro || out || 'a VPS respondeu com erro ' + code).trim().slice(0, 300) });
+      // varias ferramentas (o codex, por exemplo) escrevem o status no stderr mesmo dando certo
+      res({ out: out || erro });
+    });
+  });
+}
+
+async function listDirRemoto(cwd) {
+  const r = partesRemoto(cwd);
+  if (!r) return { error: 'servidor desconhecido' };
+  // "-p" poe barra no fim das pastas: e assim que sei quem e pasta sem outra chamada
+  const rr = await noServidor(r, 'ls -1Ap -- ' + aspaSh(r.caminho));
+  if (rr.error) return { error: rr.error };
+  const out = [];
+  for (const linha of rr.out.split('\n')) {
+    const nome0 = linha.replace(/\r$/, '');
+    if (!nome0) continue;
+    const dir = nome0.endsWith('/');
+    const nome = dir ? nome0.slice(0, -1) : nome0;
+    if (nome.startsWith('.') && !['.claude', '.codex', '.env.example'].includes(nome)) continue;
+    if (IGNORE.has(nome)) continue;
+    const base = r.caminho.endsWith('/') ? r.caminho : r.caminho + '/';
+    out.push({ name: nome, dir, path: r.chave + ':' + base + nome });
+  }
+  out.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+  return { entries: out.slice(0, 800) };
+}
+
+async function lerArquivoRemoto(f) {
+  const r = partesRemoto(f);
+  if (!r) return { error: 'servidor desconhecido' };
+  const rr = await noServidor(r, 'if [ $(stat -c%s -- ' + aspaSh(r.caminho) + ') -gt 512000 ]; then echo GRANDE_DEMAIS >&2; exit 1; fi; cat -- ' + aspaSh(r.caminho));
+  if (rr.error) return { error: /GRANDE_DEMAIS/.test(rr.error) ? 'Arquivo grande demais para ver aqui.' : rr.error };
+  return { content: rr.out };
+}
+
+/* ======================= conversas recentes ======================= */
+const CLAUDE_PROJ = path.join(HOME, '.claude/projects');
+const NOMES_PATH = () => path.join(app.getPath('userData'), 'nomes.json');
+function lerNomes() { try { return JSON.parse(fs.readFileSync(NOMES_PATH(), 'utf8')); } catch { return {}; } }
+function salvarNomes(o) { gravarSeguro(NOMES_PATH(), JSON.stringify(o)); }
+
+handle('sessao:renomear', async (_e, { engine, id, nome }) => {
+  const todos = lerNomes();
+  if (nome && nome.trim()) todos[id] = nome.trim(); else delete todos[id];
+  salvarNomes(todos);
+  if (engine === 'codex' && id) {
+    try { await codexStart(); await codexReq('local', 'thread/name/set', { threadId: id, name: nome || null }); } catch {}
+  }
+  return true;
+});
+
+/* procura um pedaço de texto dentro da conversa e devolve o trecho achado */
+function acharNaConversa(file, alvo, engine) {
+  try {
+    const st = fs.statSync(file);
+    const dados = st.size > 8 * 1024 * 1024 ? tailRead(file, 8 * 1024 * 1024) : fs.readFileSync(file, 'utf8');
+    const baixo = dados.toLowerCase();
+    const i = baixo.indexOf(alvo);
+    if (i < 0) return null;
+    // acha a linha inteira e tenta extrair um texto legivel
+    const ini = dados.lastIndexOf('\n', i) + 1;
+    const fim = dados.indexOf('\n', i);
+    const linha = dados.slice(ini, fim < 0 ? dados.length : fim);
+    let trecho = '';
+    try {
+      const d = JSON.parse(linha);
+      const pega = (c) => typeof c === 'string' ? c
+        : Array.isArray(c) ? c.map(x => x && (x.text || x.thinking || '')).join(' ') : '';
+      trecho = pega(d.message && d.message.content) || pega(d.payload && d.payload.content) || '';
+    } catch {}
+    if (!trecho) trecho = linha.replace(/\\[nrt]/g, ' ').replace(/[{}"\[\]]/g, ' ');
+    const j = trecho.toLowerCase().indexOf(alvo);
+    const de = Math.max(0, (j < 0 ? 0 : j) - 45);
+    return (de > 0 ? '…' : '') + trecho.slice(de, de + 150).replace(/\s+/g, ' ').trim() + '…';
+  } catch { return null; }
+}
+
+/* Buscar era sincrono: abria conversa por conversa (podem ser mais de mil arquivos, varios GB)
+   sem largar o processo principal. E TODO o app passa por ele, entao a resposta do Claude
+   parava no meio da frase e a janela nem arrastava. Agora devolve a vez do processador entre
+   um arquivo e outro, e desiste depois de 4 segundos: melhor resposta parcial rapida do que o
+   app congelado. */
+handle('sessions:buscar', async (_e, { engine, termo, itens }) => {
+  const alvo = String(termo || '').toLowerCase().trim();
+  if (!alvo) return [];
+  const achados = [];
+  const ateQuando = Date.now() + 4000;
+  const lista = itens || [];
+  let vistos = 0;
+  let cortou = false;
+  for (const it of lista) {
+    vistos++;
+    if (!it.file) continue;
+    const t = acharNaConversa(it.file, alvo, engine);
+    if (t) achados.push({ id: it.id, trecho: t });
+    if (achados.length >= 40) break;
+    if (Date.now() > ateQuando) { cortou = true; break; }
+    await new Promise(r => setImmediate(r));
+  }
+  // o corte por tempo nao pode ser silencioso: se sobrou conversa sem olhar, a tela avisa
+  return { achados, parcial: cortou ? { vistos, total: lista.length } : null };
+});
+
+function tailRead(file, bytes) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(bytes, size);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    fs.closeSync(fd);
+    return buf.toString('utf8');
+  } catch { return ''; }
+}
+function headRead(file, bytes) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(bytes);
+    const n = fs.readSync(fd, buf, 0, bytes, 0);
+    fs.closeSync(fd);
+    return buf.toString('utf8', 0, n);
+  } catch { return ''; }
+}
+
+const ENTRADAS_DE_GENTE = ['claude-vscode', 'cockpit', 'cli', 'claude-code'];
+
+const INDICE_PATH = () => path.join(app.getPath('userData'), 'indice-conversas.json');
+let indice = null;
+function lerIndice() { if (indice) return indice; try { indice = JSON.parse(fs.readFileSync(INDICE_PATH(), 'utf8')); } catch { indice = {}; } return indice; }
+function gravarIndice() { gravarSeguro(INDICE_PATH(), JSON.stringify(indice || {})); }
+
+const PULAR_PASTA = new Set(['subagents', 'workflows']);
+
+function varrerConversas(dir, achados, nivel) {
+  let itens = [];
+  try { itens = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of itens) {
+    const p2 = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (PULAR_PASTA.has(e.name) || nivel > 4) continue;   // agentes internos nao sao conversa sua
+      varrerConversas(p2, achados, nivel + 1);
+    } else if (e.name.endsWith('.jsonl')) {
+      try { const st = fs.statSync(p2); if (st.size > 300) achados.push({ f: p2, mtime: st.mtimeMs, size: st.size, id: e.name.replace('.jsonl', '') }); } catch {}
+    }
+  }
+}
+
+/* le titulo/pasta/entrada de um arquivo, guardando em indice para nao reler toda vez */
+function fichaConversa(it) {
+  const ind = lerIndice();
+  const salvo = ind[it.f];
+  if (salvo && salvo.mtime === it.mtime && salvo.size === it.size) return salvo;
+
+  const head = headRead(it.f, 64 * 1024);
+  const em = head.match(/"entrypoint":"([^"]*)"/);
+  const entrada = em ? em[1] : '';
+
+  const tail = tailRead(it.f, 96 * 1024);
+  let title = '';
+  const tm = [...tail.matchAll(/"aiTitle":"((?:[^"\\]|\\.)*)"/g)];
+  if (tm.length) { try { title = JSON.parse('"' + tm[tm.length - 1][1] + '"'); } catch { title = tm[tm.length - 1][1]; } }
+
+  let cwd = '';
+  const cm = head.match(/"cwd":"((?:[^"\\]|\\.)*)"/);
+  if (cm) { try { cwd = JSON.parse('"' + cm[1] + '"'); } catch { cwd = cm[1]; } }
+
+  if (!title) {
+    for (const linha of head.split('\n')) {
+      if (!linha.includes('"type":"user"')) continue;
+      try {
+        const d = JSON.parse(linha);
+        const c = d.message && d.message.content;
+        const t = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => x && x.text || '').join(' ') : '';
+        if (t.trim() && !ehTecnico(t)) { title = limparTitulo(t.trim()).slice(0, 90); break; }
+      } catch {}
+    }
+  }
+  const ficha = { mtime: it.mtime, size: it.size, title, cwd, entrada };
+  ind[it.f] = ficha;
+  return ficha;
+}
+
+function claudeSessions(limit, incluirRobos) {
+  const achados = [];
+  varrerConversas(CLAUDE_PROJ, achados, 0);
+  achados.sort((a, b) => b.mtime - a.mtime);
+
+  const nomesMeus = lerNomes();
+  const alvo = limit || 5000;
+  const out = [];
+  let lidos = 0;
+  for (const it of achados) {
+    if (out.length >= alvo) break;
+    const fi = fichaConversa(it);
+    lidos++;
+    if (!incluirRobos && fi.entrada && !ENTRADAS_DE_GENTE.includes(fi.entrada)) continue;
+    let title = nomesMeus[it.id] || fi.title;
+    if (!title) continue;
+    out.push({ engine: 'claude', id: it.id, title, cwd: fi.cwd || HOME, when: it.mtime, file: it.f, entrada: fi.entrada });
+  }
+  if (lidos) gravarIndice();
+  return out;
+}
+
+function claudeHistory(file, maxMsgs) {
+  const msgs = [];
+  let data = '';
+  try {
+    const st = fs.statSync(file);
+    // arquivos gigantes: le so o final
+    data = st.size > 6 * 1024 * 1024 ? tailRead(file, 6 * 1024 * 1024) : fs.readFileSync(file, 'utf8');
+  } catch { return msgs; }
+  for (const line of data.split('\n')) {
+    if (!line.startsWith('{')) continue;
+    let d; try { d = JSON.parse(line); } catch { continue; }
+    if (d.type === 'user' && d.message) {
+      const c = d.message.content;
+      let t = typeof c === 'string' ? c : Array.isArray(c) ? c.filter(x => x && x.type === 'text').map(x => x.text).join('\n') : '';
+      t = (t || '').trim();
+      if (t && !ehTecnico(t)) msgs.push({ role: 'user', text: semContexto(t) || t });
+    } else if (d.type === 'assistant' && d.message) {
+      const c = d.message.content || [];
+      for (const x of c) {
+        if (x.type === 'text' && x.text && x.text.trim()) msgs.push({ role: 'bot', text: x.text });
+        else if (x.type === 'tool_use') msgs.push({ role: 'tool', name: x.name, arg: claudeToolArg(x.name, x.input) });
+      }
+    }
+  }
+  return msgs.slice(-(maxMsgs || 60));
+}
+
+function codexHistory(file, maxMsgs) {
+  const msgs = [];
+  let data = '';
+  try { data = fs.readFileSync(file, 'utf8'); } catch { return msgs; }
+  for (const line of data.split('\n')) {
+    if (!line.startsWith('{')) continue;
+    let d; try { d = JSON.parse(line); } catch { continue; }
+    if (d.type !== 'response_item') continue;
+    const p = d.payload || {};
+    if (p.type === 'message') {
+      if (p.role === 'developer' || p.role === 'system') continue;
+      const t = (p.content || []).map(c => c.text || '').join('\n').trim();
+      if (!t) continue;
+      // pula o contexto tecnico que o Codex injeta como se fosse fala do usuario
+      if (ehTecnico(t) || t.includes('<workspace_roots>')) continue;
+      msgs.push({ role: p.role === 'user' ? 'user' : 'bot', text: p.role === 'user' ? (semContexto(t) || t) : t });
+    } else if (p.type === 'function_call' || p.type === 'local_shell_call') {
+      let arg = '';
+      try { const a = typeof p.arguments === 'string' ? JSON.parse(p.arguments) : (p.action || p.arguments || {}); arg = a.command ? (Array.isArray(a.command) ? a.command.join(' ') : a.command) : JSON.stringify(a).slice(0, 120); } catch { arg = String(p.arguments || '').slice(0, 120); }
+      msgs.push({ role: 'tool', name: p.name === 'shell' || p.type === 'local_shell_call' ? 'Terminal' : (p.name || 'Ferramenta'), arg });
+    }
+  }
+  return msgs.slice(-(maxMsgs || 60));
+}
+
+handle('sessions:claude', (_e, incluirRobos) => claudeSessions(5000, incluirRobos));
+const CODEX_SESS = path.join(HOME, '.codex/sessions');
+const ORIGENS_DE_GENTE = ['cockpit', 'codex-tui', 'codex_tui', 'codex_vscode', 'codex-vscode', 'codex_app', 'codex-app', 'vscode'];
+
+const TECNICO = /<recommended_plugins>|<environment_context>|<user_instructions>|<system-reminder>|<available_tools>|<plugins>|^Caveat:|^<[a-z_]+>/i;
+const ehTecnico = (t) => !t || TECNICO.test(t.trim().slice(0, 400));
+
+function semContexto(t) {
+  if (!t) return t;
+  const i = t.indexOf('Agora, o novo pedido:');
+  if (i >= 0) return t.slice(i + 'Agora, o novo pedido:'.length).trim();
+  const j = t.indexOf('Arquivos que anexei');
+  if (j > 0) return t.slice(0, j).trim();
+  return t;
+}
+const limparTitulo = (t) => (semContexto(t) || '').slice(0, 90);
+
+function fichaCodex(it) {
+  const ind = lerIndice();
+  const salvo = ind[it.f];
+  if (salvo && salvo.mtime === it.mtime && salvo.size === it.size) return salvo;
+
+  let head = headRead(it.f, 96 * 1024);
+  let id = '', cwd = '', origem = '', title = '', doAssistente = '';
+  const varrer = (texto) => {
+  for (const linha of texto.split('\n')) {
+    if (!linha.startsWith('{')) continue;
+    let d; try { d = JSON.parse(linha); } catch { continue; }
+    if (d.type === 'session_meta') {
+      const p2 = d.payload || {};
+      id = p2.id || p2.session_id || '';
+      cwd = p2.cwd || '';
+      origem = p2.originator || p2.source || '';
+      continue;
+    }
+    if (!title && d.type === 'response_item') {
+      const p2 = d.payload || {};
+      if (p2.type === 'message') {
+        const t = (p2.content || []).map(c => c.text || '').join(' ').trim();
+        if (p2.role === 'user' && t && !ehTecnico(t)) title = limparTitulo(t).slice(0, 90);
+        else if (p2.role === 'assistant' && t && !doAssistente) doAssistente = t.slice(0, 90);
+      }
+    }
+    if (title && id) return true;
+  }
+  return false;
+  };
+  if (!varrer(head) && it.size > 96 * 1024) varrer(fs.readFileSync(it.f, 'utf8'));   // arquivo grande: le tudo
+  if (!title) title = doAssistente;                       // ao menos a primeira resposta
+  if (!title) title = 'Conversa de ' + new Date(it.mtime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const ficha = { mtime: it.mtime, size: it.size, title, cwd, entrada: origem, sid: id };
+  ind[it.f] = ficha;
+  return ficha;
+}
+
+function codexSessions(incluirRobos, nomesDoApp) {
+  const achados = [];
+  varrerConversas(CODEX_SESS, achados, 0);
+  achados.sort((a, b) => b.mtime - a.mtime);
+  const meus = lerNomes();
+  const out = [];
+  let lidos = 0;
+  for (const it of achados) {
+    const fi = fichaCodex(it);
+    lidos++;
+    if (!incluirRobos && fi.entrada && !ORIGENS_DE_GENTE.includes(fi.entrada)) continue;
+    const id = fi.sid || it.id;
+    const title = meus[id] || (nomesDoApp && nomesDoApp[id]) || fi.title;
+    if (!title) continue;
+    out.push({ engine: 'codex', id, title: title.slice(0, 120), cwd: fi.cwd || HOME, when: it.mtime, file: it.f, entrada: fi.entrada });
+  }
+  if (lidos) gravarIndice();
+  return out;
+}
+
+handle('sessions:codex', async (_e, incluirRobos) => {
+  // nomes que o proprio Codex guarda (renomeadas por lá)
+  const nomesDoApp = {};
+  try {
+    await codexStart();
+    const r = await codexReq('local', 'thread/list', { pageSize: 500 });
+    for (const t of ((r && (r.data || r.threads)) || [])) if (t.name) nomesDoApp[t.id] = t.name;
+  } catch {}
+  try { return codexSessions(incluirRobos, nomesDoApp); }
+  catch (e) { return { error: e.message }; }
+});
+
+handle('sessions:titulo', (_e, { engine, file, id }) => {
+  try {
+    if (engine !== 'claude') return '';
+    let f = file;
+    if ((!f || !fs.existsSync(f)) && id) {
+      const achados = [];
+      varrerConversas(CLAUDE_PROJ, achados, 0);
+      const it = achados.find(a => a.id === id);
+      if (it) f = it.f;
+    }
+    if (!f || !fs.existsSync(f)) return '';
+    const tail = tailRead(f, 96 * 1024);
+    const m = [...tail.matchAll(/"aiTitle":"((?:[^"\\]|\\.)*)"/g)];
+    if (!m.length) return '';
+    try { return JSON.parse('"' + m[m.length - 1][1] + '"'); } catch { return m[m.length - 1][1]; }
+  } catch { return ''; }
+});
+
+/* Acha o arquivo de uma conversa do Claude pelo id.
+   Primeiro tenta a pasta da aba, que e o caso normal. Se nao achar, varre TODAS as pastas de
+   projeto: a conversa pode ter comecado com o chat apontando para outra pasta (a home, por
+   exemplo) e so depois a aba ter mudado de pasta. Sem esta segunda tentativa, a conversa
+   existia inteira no disco e o chat voltava vazio. Medido: varrer as 162 pastas leva 0,3 ms. */
+function acharConversaClaude(id, cwd) {
+  if (!id) return '';
+  try {
+    const perto = path.join(CLAUDE_PROJ, encodeCwd(cwd || HOME), id + '.jsonl');
+    if (fs.existsSync(perto)) return perto;
+  } catch {}
+  try {
+    for (const pasta of fs.readdirSync(CLAUDE_PROJ)) {
+      const f = path.join(CLAUDE_PROJ, pasta, id + '.jsonl');
+      if (fs.existsSync(f)) return f;
+    }
+  } catch {}
+  return '';
+}
+
+handle('sessions:history', (_e, { engine, file, id, cwd }) => {
+  let alvo = file && fs.existsSync(file) ? file : '';
+  // o caminho guardado pode estar vazio (config antigo) ou apontar para um lugar que nao
+  // existe mais: nos dois casos, procurar pelo id
+  if (!alvo && engine === 'claude') alvo = acharConversaClaude(id, cwd);
+  if (!alvo) return [];
+  return engine === 'claude' ? claudeHistory(alvo, 60) : codexHistory(alvo, 60);
+});
+
+/* ======================= comandos e skills ======================= */
+function readSkillDirs(dirs) {
+  const out = [];
+  for (const d of dirs) {
+    let names = [];
+    try { names = fs.readdirSync(d, { withFileTypes: true }); } catch { continue; }
+    for (const e of names) {
+      if (e.isDirectory()) {
+        const f = path.join(d, e.name, 'SKILL.md');
+        if (fs.existsSync(f)) out.push({ name: e.name, desc: skillDesc(f) });
+      } else if (e.name.endsWith('.md')) {
+        out.push({ name: e.name.replace(/\.md$/, ''), desc: skillDesc(path.join(d, e.name)) });
+      }
+    }
+  }
+  return out;
+}
+function skillDesc(file) {
+  const head = headRead(file, 1600);
+  const m = head.match(/^description:\s*(.+)$/m);
+  if (m) return m[1].replace(/^["']|["']$/g, '').slice(0, 140);
+  const t = head.split('\n').find(l => l.trim() && !l.startsWith('---') && !l.startsWith('name:'));
+  return (t || '').replace(/^#+\s*/, '').slice(0, 140);
+}
+
+let skillCache = { claude: null, codex: null };
+handle('skills:list', (_e, engine) => {
+  if (skillCache[engine]) return skillCache[engine];
+  let dirs;
+  if (engine === 'claude') {
+    dirs = [path.join(HOME, '.claude/skills'), path.join(HOME, '.claude/commands')];
+    // skills que vem de plugins
+    const pc = path.join(HOME, '.claude/plugins/cache');
+    try {
+      for (const owner of fs.readdirSync(pc)) {
+        const od = path.join(pc, owner);
+        for (const plug of fs.readdirSync(od)) {
+          const pd = path.join(od, plug);
+          for (const ver of fs.readdirSync(pd)) {
+            const sd = path.join(pd, ver, 'skills');
+            if (fs.existsSync(sd)) dirs.push(sd);
+          }
+        }
+      }
+    } catch {}
+  } else {
+    dirs = [path.join(HOME, '.codex/skills'), path.join(HOME, '.codex/prompts'), path.join(HOME, '.agents/skills')];
+  }
+  const seen = new Set(); const out = [];
+  for (const s of readSkillDirs(dirs)) { if (seen.has(s.name)) continue; seen.add(s.name); out.push(s); }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  skillCache[engine] = out;
+  return out;
+});
+
+/* ---------- conectores (MCP) ---------- */
+function rodar(bin, args, timeout) {
+  // spawnBin em vez de execFile porque no Windows o binario pode ser um .cmd,
+  // que o Node se recusa a chamar direto desde a correcao de seguranca do Node 20
+  return new Promise((res) => {
+    let out = '', errout = '', acabou = false;
+    const p = spawnBin(bin, args, { env: buildEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const t = setTimeout(() => { try { p.kill(); } catch {} }, timeout || 60000);
+    const fim = (err) => { if (acabou) return; acabou = true; clearTimeout(t); res({ err, out, errout }); };
+    p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d.toString('utf8'); });
+    p.stderr.on('data', (d) => { if (errout.length < 4 * 1024 * 1024) errout += d.toString('utf8'); });
+    p.on('error', (e) => fim(e));
+    p.on('close', (code) => fim(code === 0 ? null : new Error('saiu com código ' + code)));
+  });
+}
+/* ---------- terminal embutido: roda no app, sem abrir o Terminal do sistema ----------
+   Dá um terminal de verdade (pty) ao comando, assim as telinhas interativas
+   (login, colar codigo) funcionam dentro do Cockpit. No Mac quem faz isso é o
+   ptybridge.py; no Windows é o ConPTY. Quem escolhe é o plataforma.js.        */
+const terms = new Map();
+const PTY_BRIDGE = app.isPackaged
+  ? path.join(process.resourcesPath, 'ptybridge.py')
+  : path.join(__dirname, 'ptybridge.py');
+
+function termEnviar(id, kind, data) {
+  if (win && !win.isDestroyed()) win.webContents.send('term:event', { id, kind, ...data }); avisarWeb('term:event', { id, kind, ...data });
+}
+
+function termRodar({ id, linha, cols, rows }) {
+  if (!id || !linha) return { error: 'faltou o comando' };
+  termMatar(id);
+  const c = Math.max(40, Math.min(400, Number(cols) || 100));
+  const r = Math.max(10, Math.min(200, Number(rows) || 30));
+  let p;
+  try {
+    p = abrirPty({
+      linha, cols: c, rows: r, cwd: HOME, ptyBridge: PTY_BRIDGE,
+      env: { ...buildEnv(), TERM: 'xterm-256color', COLUMNS: String(c), LINES: String(r) },
+    });
+  } catch (e) { return { error: e.message }; }
+  terms.set(id, p);
+  p.onData((d) => termEnviar(id, 'data', { data: d }));
+  p.onErro((e) => termEnviar(id, 'data', { data: '\r\n[erro: ' + e.message + ']\r\n' }));
+  p.onFim((code) => { terms.delete(id); termEnviar(id, 'exit', { code }); });
+  return { ok: true };
+}
+
+function termMatar(id) {
+  const p = terms.get(id);
+  if (!p) return { ok: true };
+  terms.delete(id);
+  p.matar();
+  return { ok: true };
+}
+
+handle('term:run', (_e, o) => termRodar(o || {}));
+handle('term:input', (_e, { id, data }) => {
+  const p = terms.get(id);
+  if (!p) return { error: 'esse terminal já fechou' };
+  try { p.escrever(data); } catch (e) { return { error: e.message }; }
+  return { ok: true };
+});
+handle('term:resize', (_e, { id, cols, rows }) => {
+  const p = terms.get(id);
+  if (!p) return { ok: true };
+  p.redimensionar(Math.round(cols), Math.round(rows));
+  return { ok: true };
+});
+handle('term:kill', (_e, { id }) => termMatar(id));
+
+app.on('before-quit', () => { for (const id of [...terms.keys()]) termMatar(id); });
+
+function alvoDoTransporte(t) {
+  if (!t) return '';
+  if (t.url) return t.url;
+  const c = t.command;
+  if (Array.isArray(c)) return c.join(' ');
+  if (typeof c === 'string') return c + (Array.isArray(t.args) ? ' ' + t.args.join(' ') : '');
+  return t.type || '';
+}
+
+handle('mcp:list', async (_e, engine) => {
+  if (engine === 'codex') {
+    const r = await rodar('codex', ['mcp', 'list', '--json'], 45000);
+    try {
+      const arr = JSON.parse(r.out);
+      return arr.map(m => ({
+        nome: m.name,
+        alvo: alvoDoTransporte(m.transport),
+        ligado: m.enabled !== false,
+        precisaEntrar: m.auth_status === 'not_logged_in' && (m.transport || {}).type !== 'stdio',
+        status: m.auth_status === 'logged_in' ? 'conectado'
+          : m.auth_status === 'not_logged_in' ? 'precisa entrar' : (m.disabled_reason || 'ok'),
+      }));
+    } catch (e) { return { error: 'não consegui ler a lista do Codex: ' + String(e.message).slice(0, 160) }; }
+  }
+  const r = await rodar(CLAUDE_BIN, ['mcp', 'list'], 90000);
+  const linhas = (r.out + '\n' + r.errout).split('\n').map(l => l.trim()).filter(Boolean);
+  const out = [];
+  for (const l of linhas) {
+    const m = l.match(/^(.+?):\s+(\S+)\s+-\s+(.+)$/);
+    if (!m) continue;
+    const st = m[3];
+    out.push({
+      nome: m[1], alvo: m[2],
+      ligado: true,
+      precisaEntrar: /authentication|auth/i.test(st),
+      status: /Connected/i.test(st) ? 'conectado' : /authentication/i.test(st) ? 'precisa entrar' : st.replace(/[✔✗!⏸]/g, '').trim(),
+    });
+  }
+  return out;
+});
+
+handle('mcp:acao', async (_e, { engine, acao, nome, url, comando }) => {
+  const bin = engine === 'claude' ? CLAUDE_BIN : 'codex';
+  const cru = engine === 'claude' ? CLAUDE_BIN : acharBin('codex');
+  // Esta linha vai para o /bin/sh. O JSON.stringify() de antes so poe aspas DUPLAS, e dentro
+  // delas o sh ainda expande $(...) e crase: um nome de conector com isso dentro (vem do
+  // formulario e do ~/.claude.json, que qualquer programa escreve) rodava comando escondido.
+  // Aspas SIMPLES nao expandem nada.
+  const aspas = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
+  const nomeBin = aspas(cru);
+  if (acao === 'login' || acao === 'logout') {
+    // roda no terminal embutido do Cockpit, sem abrir o Terminal do Mac
+    return { terminal: nomeBin + ' mcp ' + acao + ' ' + aspas(nome),
+             titulo: (acao === 'login' ? 'Entrar no conector ' : 'Sair do conector ') + nome };
+  }
+  if (acao === 'remove') {
+    const r = await rodar(bin, ['mcp', 'remove', nome], 30000);
+    return r.err ? { error: (r.errout || r.err.message).slice(0, 300) } : { ok: true };
+  }
+  if (acao === 'add') {
+    if (!nome) return { error: 'falta o nome' };
+    let args;
+    if (url) {
+      args = engine === 'claude' ? ['mcp', 'add', '--transport', 'http', nome, url] : ['mcp', 'add', nome, '--url', url];
+    } else if (comando) {
+      const partes = comando.split(/\s+/).filter(Boolean);
+      args = engine === 'claude' ? ['mcp', 'add', nome, '--', ...partes] : ['mcp', 'add', nome, '--', ...partes];
+    } else return { error: 'informe o endereço ou o comando' };
+    const r = await rodar(bin, args, 45000);
+    return r.err ? { error: (r.errout || r.out || r.err.message).slice(0, 300) } : { ok: true };
+  }
+  return { error: 'ação desconhecida' };
+});
+
+/* ---------- conta e limite de uso ---------- */
+// Mac: Chaveiro. Windows: arquivo de credenciais. Detalhe em plataforma.js
+const tokenDoClaude = plataforma.tokenClaude;
+
+// fica guardado na memoria: assim o Chaveiro so e consultado uma vez por sessao do app,
+// em vez de a cada leitura da faixa de uso
+let credGuardada = null;
+function credClaude(denovo) {
+  if (denovo) credGuardada = null;
+  if (!credGuardada) credGuardada = tokenDoClaude();
+  return credGuardada;
+}
+
+async function usoDoClaude(segundaTentativa) {
+  const t = credClaude(false);
+  if (!t) return null;
+  try {
+    const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
+      headers: { Authorization: 'Bearer ' + t, 'anthropic-beta': 'oauth-2025-04-20' },
+    });
+    // vencida: descarta a guardada e tenta mais uma vez com a atual
+    if ((r.status === 401 || r.status === 403) && !segundaTentativa) { credClaude(true); return usoDoClaude(true); }
+    // 429 e "muita consulta em pouco tempo", nao e conta com problema: vale dizer isso
+    if (r.status === 429) return { limitado: true };
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+handle('conta:ler', async (_e, engine) => {
+  if (engine === 'claude') {
+    let conta = {};
+    try { conta = JSON.parse((await rodar(CLAUDE_BIN, ['auth', 'status'], 25000)).out || '{}'); } catch {}
+    const u = await usoDoClaude();
+    const janela = (x) => x ? { pct: Math.round(x.utilization || 0), reseta: x.resets_at ? Date.parse(x.resets_at) : 0 } : null;
+    return {
+      entrou: !!conta.loggedIn,
+      email: conta.email || '',
+      nome: (conta.orgName || '').replace(/'s Organization$/, '') || conta.email || '',
+      plano: conta.subscriptionType || '',
+      via: conta.authMethod || '',
+      // 429 do endpoint de uso = muita consulta em pouco tempo. Nao e conta com problema,
+      // entao a tela diz isso em vez de "nao consegui ler"
+      limitado: !!(u && u.limitado),
+      sessao: (u && !u.limitado) ? janela(u.five_hour) : null,
+      semana: (u && !u.limitado) ? janela(u.seven_day) : null,
+      extra: u && u.extra_usage ? {
+        ligado: !!u.extra_usage.is_enabled,
+        usado: u.extra_usage.used_credits || 0,
+        teto: u.extra_usage.monthly_limit || 0,
+        moeda: u.extra_usage.currency || '',
+      } : null,
+    };
+  }
+
+  // sem este try, quando o Codex nao sobe a promessa rejeita, o renderer morre na linha do
+  // await e o painel fica girando em "Vendo a conta..." para sempre, sem erro nenhum
+  try { await codexStart(); }
+  catch (e) {
+    return {
+      entrou: false, email: '', nome: '', plano: '', via: '',
+      sessao: null, semana: null, extra: null,
+      erro: 'não consegui falar com o Codex: ' + String((e && e.message) || e),
+    };
+  }
+  let conta = {}, lim = {};
+  try { conta = await codexReq('local', 'account/read', {}); } catch {}
+  try { lim = await codexReq('local', 'account/rateLimits/read', {}); } catch {}
+  const rl = (lim && lim.rateLimits) || {};
+  const jan = (x) => x ? { pct: Math.round(x.usedPercent || 0), reseta: (x.resetsAt || 0) * 1000, mins: x.windowDurationMins || 0 } : null;
+  const a = jan(rl.primary), b = jan(rl.secondary);
+  const curta = [a, b].find(x => x && x.mins && x.mins <= 1440) || null;
+  const longa = [a, b].find(x => x && x.mins && x.mins > 1440) || null;
+  const c = (conta && conta.account) || {};
+  return {
+    entrou: !!c.email,
+    email: c.email || '',
+    nome: c.email || '',
+    plano: c.planType || rl.planType || '',
+    via: c.type || '',
+    sessao: curta,
+    semana: longa,
+    extra: rl.credits ? {
+      ligado: !!rl.credits.hasCredits,
+      usado: 0,
+      teto: rl.credits.unlimited ? -1 : Number(rl.credits.balance || 0),
+      moeda: 'créditos',
+    } : null,
+  };
+});
+
+/* so os percentuais do plano, para a faixa em cima da caixa de texto.
+   Diferente do conta:ler, nao chama o CLI: e leve o bastante para repetir de minuto em minuto. */
+handle('uso:ler', async (_e, engine) => {
+  if (engine === 'claude') {
+    const u = await usoDoClaude();
+    if (!u) return null;
+    if (u.limitado) return { limitado: true, sessao: null, semana: null };
+    const janela = (x) => x ? { pct: Math.round(x.utilization || 0), reseta: x.resets_at ? Date.parse(x.resets_at) : 0 } : null;
+    return { sessao: janela(u.five_hour), semana: janela(u.seven_day) };
+  }
+  try {
+    await codexStart();
+    const lim = await codexReq('local', 'account/rateLimits/read', {});
+    const rl = (lim && lim.rateLimits) || {};
+    const jan = (x) => x ? { pct: Math.round(x.usedPercent || 0), reseta: (x.resetsAt || 0) * 1000, mins: x.windowDurationMins || 0 } : null;
+    const a = jan(rl.primary), b = jan(rl.secondary);
+    return {
+      sessao: [a, b].find(x => x && x.mins && x.mins <= 1440) || null,
+      semana: [a, b].find(x => x && x.mins && x.mins > 1440) || null,
+    };
+  } catch { return null; }
+});
+
+handle('auth:acao', async (_e, { engine, acao, cwd }) => {
+  const ehClaude = engine === 'claude';
+  const naVps = ehRemoto(cwd);
+  const alvo = naVps ? (ehClaude ? 'claude' : 'codex') : (ehClaude ? CLAUDE_BIN : acharBin('codex'));
+  const bin = (/[ ()]/.test(alvo) ? '"' + alvo + '"' : alvo);
+  // na VPS tudo roda por SSH, dentro do usuario que tem a conta
+  const naMaquina = (comando) => {
+    if (!naVps) return null;
+    const r = partesRemoto(cwd);
+    return 'ssh -o BatchMode=yes -o ConnectTimeout=12 ' + r.host + ' ' + JSON.stringify(linhaNoServidor(r, comando));
+  };
+  const CMD = ehClaude
+    ? { login: 'auth login', logout: 'auth logout', status: 'auth status', codigo: 'auth login' }
+    : { login: 'login', logout: 'logout', status: 'login status', codigo: 'login --device-auth' };
+
+  if (acao === 'status') {
+    if (naVps) {
+      const r2 = await noServidor(partesRemoto(cwd), bin + ' ' + CMD.status, 25000);
+      return { texto: String(r2.out || r2.error || '').trim().slice(0, 800) };
+    }
+    const r = await rodar(alvo, CMD.status.split(' '), 25000);
+    return { texto: String(r.out || r.errout || (r.err && r.err.message) || '').trim().slice(0, 800) };
+  }
+
+  // TROCAR de conta: sai da atual e entra na nova numa tacada so.
+  // Sem o logout antes, o CLI ve que ja tem sessao e nao troca nada — era o que quebrava.
+  const ondeDiz = naVps ? ' na VPS' : '';
+  if (acao === 'trocar' || acao === 'trocarCodigo') {
+    // na VPS o navegador nao existe: o caminho que funciona e o codigo (device auth)
+    const entrar = (acao === 'trocarCodigo' || naVps) ? CMD.codigo : CMD.login;
+    const linha = bin + ' ' + CMD.logout + ' ; ' + bin + ' ' + entrar;
+    return {
+      terminal: naMaquina(linha) || linha,
+      titulo: 'Trocar a conta do ' + (ehClaude ? 'Claude' : 'Codex') + ondeDiz,
+      esperaLink: true, confereDepois: true, naVps,
+    };
+  }
+
+  const cmd = CMD[acao];
+  if (!cmd) return { error: 'ação desconhecida' };
+  const linha = bin + ' ' + cmd;
+  return { terminal: naMaquina(linha) || linha,
+           titulo: (acao === 'logout' ? 'Sair da conta do ' : 'Entrar na conta do ') + (ehClaude ? 'Claude' : 'Codex') + ondeDiz,
+           esperaLink: acao !== 'logout', confereDepois: acao !== 'logout', naVps };
+});
+
+/* Um toque no iPhone NUNCA pode abrir janela do sistema no Mac: no macOS ela nasce presa a
+   janela (modal) e trava o Cockpit inteiro para quem esta na frente do computador. O servidor
+   do telefone ja marca a chamada com { remoto: true }; faltava alguem olhar. */
+const souRemoto = (e) => !!(e && e.remoto);
+
+handle('user:pickPhoto', async (_e) => {
+  if (souRemoto(_e)) return { error: 'Trocar a foto só funciona no Mac.' };
+  const r = await dialog.showOpenDialog(win, { properties: ['openFile'], defaultPath: HOME,
+    filters: [{ name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }] });
+  if (r.canceled || !r.filePaths[0]) return null;
+  try {
+    const f = r.filePaths[0];
+    const ext = path.extname(f).slice(1).toLowerCase();
+    const mime = ext === 'jpg' ? 'jpeg' : ext;
+    const b = fs.readFileSync(f);
+    if (b.length > 3 * 1024 * 1024) return { error: 'Imagem muito pesada. Use uma menor que 3 MB.' };
+    return { dataUrl: 'data:image/' + mime + ';base64,' + b.toString('base64') };
+  } catch (e) { return { error: e.message }; }
+});
+
+const EXT_IMG = ['png','jpg','jpeg','gif','webp','bmp','heic','svg'];
+/* o que estiver na area de transferencia: arquivos copiados no Finder ou imagem/print */
+function arquivosColados() {
+  const achados = [];
+  try {
+    const buf = clipboard.readBuffer('NSFilenamesPboardType');
+    if (buf && buf.length) {
+      const txt = buf.toString('utf8');
+      for (const m of txt.matchAll(/<string>([^<]+)<\/string>/g)) achados.push(m[1]);
+    }
+  } catch {}
+  if (!achados.length) {
+    for (const fmt of ['public.file-url', 'text/uri-list']) {
+      try {
+        const u = clipboard.read(fmt);
+        if (u) for (const linha of String(u).split(/\r?\n/)) {
+          const l = linha.trim();
+          if (l.startsWith('file://')) achados.push(decodeURIComponent(l.replace(/^file:\/\//, '')));
+        }
+      } catch {}
+    }
+  }
+  return [...new Set(achados)].filter(f => { try { return fs.existsSync(f); } catch { return false; } });
+}
+
+const EXT_VIS_IMG = ['png','jpg','jpeg','gif','webp','bmp','svg'];
+handle('arquivo:ver', (_e, file) => {
+  try {
+    const st = fs.statSync(file);
+    const ext = path.extname(file).slice(1).toLowerCase();
+    const base = { path: file, nome: path.basename(file), ext, bytes: st.size };
+    if (EXT_VIS_IMG.includes(ext) && st.size <= 25 * 1024 * 1024) {
+      const mime = ext === 'jpg' ? 'jpeg' : ext === 'svg' ? 'svg+xml' : ext;
+      base.tipo = 'imagem';
+      base.dados = 'data:image/' + mime + ';base64,' + fs.readFileSync(file).toString('base64');
+    } else if (st.size <= 600 * 1024 && /^(txt|md|json|js|ts|py|html|css|csv|log|sh|yml|yaml|toml|xml)$/.test(ext)) {
+      base.tipo = 'texto';
+      base.dados = fs.readFileSync(file, 'utf8');
+    } else {
+      base.tipo = 'outro';
+    }
+    return base;
+  } catch (e) { return { erro: e.message, path: file, nome: path.basename(file) }; }
+});
+
+handle('clipboard:anexos', () => {
+  const arquivos = arquivosColados();
+  if (arquivos.length) return { arquivos };
+  try {
+    const img = clipboard.readImage();
+    if (img && !img.isEmpty()) {
+      const dir = path.join(app.getPath('userData'), 'colados');
+      fs.mkdirSync(dir, { recursive: true });
+      const nome = 'colado-' + Date.now() + '.png';
+      const destino = path.join(dir, nome);
+      fs.writeFileSync(destino, img.toPNG());
+      return { arquivos: [destino] };
+    }
+  } catch {}
+  return { arquivos: [] };
+});
+
+handle('anexo:ler', (_e, file) => {
+  try {
+    const st = fs.statSync(file);
+    const ext = path.extname(file).slice(1).toLowerCase();
+    const base = { path: file, nome: path.basename(file), ext, bytes: st.size };
+    if (EXT_IMG.includes(ext) && st.size <= 8 * 1024 * 1024) {
+      const mime = ext === 'jpg' ? 'jpeg' : ext === 'svg' ? 'svg+xml' : ext;
+      base.mini = 'data:image/' + mime + ';base64,' + fs.readFileSync(file).toString('base64');
+    }
+    return base;
+  } catch (e) { return { path: file, nome: path.basename(file), erro: e.message }; }
+});
+
+handle('dialog:pickFiles', async (_e, kind) => {
+  if (souRemoto(_e)) return [];
+  const opt = { properties: ['multiSelections'], defaultPath: HOME };
+  if (kind === 'folder') opt.properties = ['openDirectory'];
+  else opt.properties.push('openFile');
+  if (kind === 'image') opt.filters = [{ name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'] }];
+  const r = await dialog.showOpenDialog(win, opt);
+  return r.canceled ? [] : r.filePaths;
+});
+
+/* ======================= janela ======================= */
+function createWindow() {
+  win = new BrowserWindow({
+    width: 1500, height: 900, minWidth: 900, minHeight: 560,
+    backgroundColor: '#1e1e1e',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 16 },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false },
+  });
+  win.loadFile(path.join(__dirname, 'renderer/index.html'));
+
+  // menu do botao direito: copiar, colar, procurar, etc. — o do sistema mesmo
+  win.webContents.on('context-menu', (_ev, props) => {
+    const itens = [];
+    const temSelecao = !!(props.selectionText && props.selectionText.trim());
+    const podeEditar = props.isEditable;
+
+    if (props.linkURL) {
+      itens.push({ label: 'Abrir link no navegador', click: () => shell.openExternal(props.linkURL) });
+      itens.push({ label: 'Copiar o endereço do link', click: () => clipboard.writeText(props.linkURL) });
+      itens.push({ type: 'separator' });
+    }
+    if (podeEditar) {
+      itens.push({ role: 'undo', label: 'Desfazer' });
+      itens.push({ role: 'redo', label: 'Refazer' });
+      itens.push({ type: 'separator' });
+      itens.push({ role: 'cut', label: 'Recortar' });
+    }
+    itens.push({ role: 'copy', label: 'Copiar', enabled: temSelecao });
+    if (podeEditar) itens.push({ role: 'paste', label: 'Colar' });
+    if (podeEditar) itens.push({ role: 'selectAll', label: 'Selecionar tudo' });
+    else if (temSelecao) itens.push({ role: 'selectAll', label: 'Selecionar tudo' });
+
+    if (temSelecao) {
+      const t = props.selectionText.trim().slice(0, 120);
+      itens.push({ type: 'separator' });
+      itens.push({ label: 'Procurar no Google', click: () => shell.openExternal('https://www.google.com/search?q=' + encodeURIComponent(t)) });
+      // se o que ele marcou parece um caminho de arquivo, deixo abrir no Finder
+      if (/^[~/][^\n]{2,}$/.test(t)) {
+        itens.push({ label: 'Mostrar no Finder', click: () => shell.showItemInFolder(t.replace(/^~/, HOME)) });
+      }
+    }
+    itens.push({ type: 'separator' });
+    itens.push({ label: 'Recarregar a tela', click: () => win.webContents.reload() });
+    itens.push({ label: 'Ferramentas de desenvolvedor', click: () => win.webContents.toggleDevTools() });
+
+    Menu.buildFromTemplate(itens).popup({ window: win });
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  // clicar num link nunca troca a tela do app: abre no navegador.
+  // O file:// ficava LIBERADO aqui, e era por isso que arrastar um arquivo e soltar fora da
+  // caixa de texto fazia o Cockpit "sumir": a janela navegava para o arquivo e a interface
+  // inteira era trocada pelo conteudo dele. Agora nada navega; arquivo abre no Finder.
+  win.webContents.on('will-navigate', (e, url) => {
+    e.preventDefault();
+    if (/^https?:/i.test(url)) { shell.openExternal(url); return; }
+    if (url.startsWith('file://')) {
+      try { shell.showItemInFolder(decodeURIComponent(url.replace('file://', ''))); } catch {}
+    }
+  });
+  win.on('closed', () => { win = null; shutdown(); });
+}
+
+function shutdown() {
+  for (const id of [...claudePanes.keys()]) claudeStop(id);
+  for (const c of codexConns.values()) { if (c.proc) { try { c.proc.kill('SIGTERM'); } catch {} c.proc = null; c.ready = null; } }
+}
+
+/* ======================= IPC ======================= */
+handle('config:get', () => loadConfig());
+/* Estas tres chaves quem manda e o main (senha do iPhone e o liga/desliga do Wi-Fi). A tela
+   trabalha com uma copia do config lida uma unica vez no boot, entao qualquer gravacao dela
+   — e o savePanes() grava a cada chat aberto, fechado ou redimensionado — mandava de volta o
+   valor VELHO e apagava a senha e o "ligado". Era por isso que o acesso pelo iPhone se
+   desligava sozinho e a senha mudava. Agora estas tres vem sempre do disco. */
+const CHAVES_DO_MAIN = ['senhaWeb', 'webLigado', 'webSeguroConfirmado'];
+/* Estas tres ficam na memoria do main. Antes eu relia o arquivo de 2,2 MB a cada gravacao so
+   para busca-las — e o savePanes grava a cada chat aberto ou fechado. Quem escreve nelas e
+   sempre o main (senhaDoTelefone e web:ligar), entao a copia na memoria esta sempre certa. */
+let chavesDoMain = null;
+function lerChavesDoMain() {
+  if (chavesDoMain) return chavesDoMain;
+  const d = loadConfig();
+  chavesDoMain = {};
+  for (const k of CHAVES_DO_MAIN) {
+    if (Object.prototype.hasOwnProperty.call(d, k)) chavesDoMain[k] = d[k];
+  }
+  return chavesDoMain;
+}
+function anotarChaveDoMain(k, v) { lerChavesDoMain(); chavesDoMain[k] = v; }
+
+handle('config:set', (_e, c) => {
+  const novo = (c && typeof c === 'object') ? { ...c } : {};
+  const donas = lerChavesDoMain();
+  for (const k of CHAVES_DO_MAIN) {
+    if (Object.prototype.hasOwnProperty.call(donas, k)) novo[k] = donas[k];
+    else delete novo[k];
+  }
+  saveConfig(novo);
+  return true;
+});
+handle('sys:home', () => HOME);
+
+handle('dialog:pickFolder', async (_e, start) => {
+  if (souRemoto(_e)) return null;
+  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: start || HOME, title: 'Pasta de trabalho deste painel' });
+  return r.canceled ? null : r.filePaths[0];
+});
+handle('fs:list', (_e, d) => (ehRemoto(d) ? listDirRemoto(d) : listDir(d)));
+handle('fs:read', (_e, f) => {
+  if (ehRemoto(f)) return lerArquivoRemoto(f);
+  try {
+    if (fs.statSync(f).size > 500 * 1024) return { error: 'Arquivo grande demais para ver aqui.' };
+    return { content: fs.readFileSync(f, 'utf8') };
+  } catch (e) { return { error: e.message }; }
+});
+// listar pastas da VPS para o seletor de pasta remoto
+handle('vps:pastas', async (_e, cwd) => {
+  const alvo = ehRemoto(cwd) ? cwd : 'vps:/';
+  return listDirRemoto(alvo);
+});
+handle('vps:testar', async () => {
+  const r = partesRemoto('vps:/');
+  const rr = await noServidor(r, 'echo ok; claude --version 2>/dev/null | head -1', 15000);
+  if (rr.error) return { error: rr.error };
+  return { ok: true, versao: (rr.out || '').split('\n')[1] || '' };
+});
+handle('shell:open', (_e, p) => shell.openPath(p));
+handle('shell:link', (_e, url) => {
+  if (/^https?:\/\//i.test(url)) return shell.openExternal(url);
+  return shell.openPath(url);
+});
+handle('shell:openUrl', (_e, u) => {
+  if (!/^https?:\/\//i.test(String(u || ''))) return { error: 'link inválido' };
+  shell.openExternal(u); return { ok: true };
+});
+
+handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId, effort }) => {
+  if (engine === 'claude') return claudeStart(paneId, { cwd, model, approval, resumeId, effort });
+  const dest = destinoDoCwd(cwd);
+  codexPaneDest.set(paneId, dest);
+  await codexStart(dest);
+  if (resumeId) {
+    const r = await codexReq(dest, 'thread/resume', { threadId: resumeId });
+    const rid = (r && (r.threadId || (r.thread && r.thread.id))) || resumeId;
+    codex.threadToPane.set(rid, paneId);
+    codex.paneToThread.set(paneId, rid);
+    emit(paneId, 'sessao', { id: rid, file: (r && r.thread && r.thread.path) || '' });
+    return true;
+  }
+  const pol = CODEX_MODE[approval] || CODEX_MODE.bypass;
+  const res = await codexReq(dest, 'thread/start', {
+    cwd: (dest === 'local' ? (cwd || HOME) : partesRemoto(cwd).caminho),
+    sandbox: pol.sandbox,
+    approvalPolicy: pol.policy,
+    developerInstructions: instrucoesCasa(),
+    ...(model ? { model } : {}),
+  });
+  const tid = res && (res.threadId || (res.thread && res.thread.id));
+  if (!tid) throw new Error('Codex não devolveu a conversa');
+  codex.threadToPane.set(tid, paneId);
+  codex.paneToThread.set(paneId, tid);
+  emit(paneId, 'sessao', { id: tid, file: (res.thread && res.thread.path) || '' });
+  return true;
+});
+
+handle('pane:send', async (_e, { paneId, engine, text, effort }) => {
+  if (engine === 'claude') {
+    return escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+  }
+  const tid = codex.paneToThread.get(paneId);
+  if (!tid) return false;
+  await codexReq(destinoDoPane(paneId), 'turn/start', { threadId: tid, input: [{ type: 'text', text }], ...(effort ? { effort } : {}) });
+  return true;
+});
+
+handle('pane:compactar', async (_e, { paneId, engine }) => {
+  if (engine === 'claude') {
+    if (!escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/compact' }] } })) return { error: 'sessão fora do ar' };
+    return { ok: true };
+  }
+  const tid = codex.paneToThread.get(paneId);
+  if (!tid) return { error: 'nenhuma conversa aberta' };
+  try { await codexReq(destinoDoPane(paneId), 'thread/compact/start', { threadId: tid }); return { ok: true }; }
+  catch (e) { return { error: String(e && e.message || e) }; }
+});
+
+handle('pane:steer', async (_e, { paneId, engine, text }) => {
+  if (engine === 'claude') {
+    // o CLI aceita uma fala nova no meio do turno pelo mesmo canal
+    if (!escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } })) return { error: 'sessão fora do ar' };
+    return { ok: true };
+  }
+  const tid = codex.paneToThread.get(paneId);
+  const turno = codex.paneTurn.get(paneId);
+  if (!tid || !turno) return { error: 'nenhum trabalho em andamento' };
+  try {
+    await codexReq(destinoDoPane(paneId), 'turn/steer', { threadId: tid, expectedTurnId: turno, input: [{ type: 'text', text }] });
+    return { ok: true };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+});
+
+handle('pane:interrupt', async (_e, { paneId, engine }) => {
+  if (engine === 'claude') {
+    escreverClaude(paneId, { type: 'control_request', request_id: 'i' + Date.now(), request: { subtype: 'interrupt' } });
+    return true;
+  }
+  const tid = codex.paneToThread.get(paneId);
+  const turn = codex.paneTurn.get(paneId);
+  if (tid && turn) { try { await codexReq(destinoDoPane(paneId), 'turn/interrupt', { threadId: tid, turnId: turn }); } catch {} }
+  return true;
+});
+
+handle('pane:stop', async (_e, { paneId, engine }) => {
+  if (engine === 'claude') claudeStop(paneId);
+  else {
+    const tid = codex.paneToThread.get(paneId);
+    const turno = codex.paneTurn.get(paneId);
+    // O codex app-server e um processo so, compartilhado por todos os chats. Fechar o chat
+    // apenas esquecia o apontamento: o turno continuava vivo la dentro, rodando comando e
+    // editando arquivo no Mac, sem aparecer em lugar nenhum e sem jeito de parar. Aqui a
+    // gente manda parar de verdade — com limite de 1,5s pra nao travar quem fechou a aba.
+    if (tid && turno) {
+      try {
+        await Promise.race([
+          codexReq(destinoDoPane(paneId), 'turn/interrupt', { threadId: tid, turnId: turno }),
+          new Promise(r => setTimeout(r, 1500)),
+        ]);
+      } catch {}
+    }
+    codex.paneTurn.delete(paneId);
+    if (tid) {
+      codex.threadToPane.delete(tid);
+      // So apaga o apontamento se ele ainda for para ESTA conversa. Durante a espera de 1,5s
+      // do turn/interrupt o painel pode ter comecado uma conversa nova (arrastar o chat, trocar
+      // a pasta) — apagar aqui mataria a nova. E a mesma guarda que o Claude ja tem no close.
+      if (codex.paneToThread.get(paneId) === tid) codex.paneToThread.delete(paneId);
+    }
+    codexPaneDest.delete(paneId);
+  }
+  return true;
+});
+
+handle('pane:approve', (_e, { key, allow }) => {
+  const a = pendingApprovals.get(key);
+  if (!a) return false;
+  pendingApprovals.delete(key);
+  if (a.kind === 'claude') {
+    escreverClaude(a.paneId, {
+      type: 'control_response',
+      response: { request_id: a.reqId, subtype: 'success',
+        response: allow ? { behavior: 'allow', updatedInput: a.input } : { behavior: 'deny', message: 'Negado por você' } },
+    });
+    return true;
+  }
+  codexReply(a.destino || 'local', a.rpcId, { decision: allow ? 'acceptForSession' : 'reject' });
+  return true;
+});
+
+handle('codex:models', async () => {
+  try {
+    await codexStart();
+    const r = await codexReq('local', 'model/list', {});
+    const arr = (r && (r.data || r.models || r)) || [];
+    return arr.filter(m => !m.hidden).map(m => ({
+      id: m.id || m.model,
+      nome: m.displayName || m.id,
+      desc: m.description || '',
+      efforts: (m.supportedReasoningEfforts || []).map(e => ({ id: e.reasoningEffort, desc: e.description || '' })),
+      padraoEffort: m.defaultReasoningEffort || 'medium',
+      padrao: !!m.isDefault,
+    }));
+  } catch { return []; }
+});
+
+/* ======================= menu ======================= */
+function menu() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { label: 'Painel', submenu: [
+      { label: 'Novo chat nesta aba', accelerator: 'CmdOrCtrl+T', click: () => win && win.webContents.send('menu', 'newPane') },
+      { label: 'Nova aba de projeto…', accelerator: 'CmdOrCtrl+Shift+T', click: () => win && win.webContents.send('menu', 'newTab') },
+      { label: 'Fechar chat', accelerator: 'CmdOrCtrl+W', click: () => win && win.webContents.send('menu', 'closePane') },
+      { type: 'separator' },
+      { label: 'Trocar a pasta desta aba…', accelerator: 'CmdOrCtrl+O', click: () => win && win.webContents.send('menu', 'pickFolder') },
+      { label: 'Limpar conversa', accelerator: 'CmdOrCtrl+K', click: () => win && win.webContents.send('menu', 'clearPane') },
+    ]},
+    { role: 'editMenu', label: 'Editar' },
+    { label: 'Ver', submenu: [
+      { label: 'Mostrar/ocultar arquivos', accelerator: 'CmdOrCtrl+B', click: () => win && win.webContents.send('menu', 'toggleSidebar') },
+      { type: 'separator' },
+      { role: 'resetZoom', label: 'Zoom normal' }, { role: 'zoomIn', label: 'Aumentar' }, { role: 'zoomOut', label: 'Diminuir' },
+      { type: 'separator' },
+      { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' }, { role: 'reload', label: 'Recarregar' },
+    ]},
+    { role: 'windowMenu', label: 'Janela' },
+  ]));
+}
+
+/* ---------- Cockpit no telefone ---------- */
+let web = null;
+/* o macOS coloca o app para dormir quando fica sem foco, e ai o telefone
+   conecta mas nunca recebe resposta. Enquanto o servidor estiver ligado,
+   seguramos o app acordado. */
+let travaSono = null, batimento = null;
+function manterAcordado(ligar) {
+  try {
+    if (ligar) {
+      if (travaSono === null || !powerSaveBlocker.isStarted(travaSono)) {
+        travaSono = powerSaveBlocker.start('prevent-app-suspension');
+      }
+      // um tique de nada, so para o app nunca ficar totalmente parado:
+      // parado, ele demora a perceber que o telefone chamou.
+      if (!batimento) batimento = setInterval(() => {}, 1000);
+    } else {
+      if (travaSono !== null && powerSaveBlocker.isStarted(travaSono)) {
+        powerSaveBlocker.stop(travaSono);
+      }
+      travaSono = null;
+      if (batimento) { clearInterval(batimento); batimento = null; }
+    }
+  } catch (e) { anota('sono:', e); }
+}
+function senhaDoTelefone() {
+  const cfg = loadConfig();
+  if (!cfg.senhaWeb || !/^([a-f0-9]{4}-){3}[a-f0-9]{4}$/i.test(cfg.senhaWeb)) {
+    cfg.senhaWeb = crypto.randomBytes(8).toString('hex').match(/.{1,4}/g).join('-');
+    anotarChaveDoMain('senhaWeb', cfg.senhaWeb);
+    saveConfig(cfg);
+  }
+  return cfg.senhaWeb;
+}
+function enderecoTailscale() {
+  try {
+    const { execFileSync } = require('child_process');
+    const bin = acharBin('tailscale');
+    const socket = path.join(HOME, '.tailscale', 'tailscaled.sock');
+    const args = fs.existsSync(socket) ? ['--socket=' + socket, 'status', '--json'] : ['status', '--json'];
+    const st = JSON.parse(execFileSync(bin, args, { encoding: 'utf8', timeout: 5000 }));
+    const dns = st && st.Self && String(st.Self.DNSName || '').replace(/\.$/, '');
+    if (dns) return 'http://' + dns + ':7788';
+    const ip = st && st.TailscaleIPs && st.TailscaleIPs[0];
+    if (ip) return 'http://' + ip + ':7788';
+  } catch (e) { anota('tailscale:', e.message); }
+  return '';
+}
+handle('web:estado', () => ({
+  ligado: !!web,
+  endereco: web ? web.endereco : '',
+  senha: senhaDoTelefone(),
+}));
+handle('web:ligar', async (_e, ligar) => {
+  const cfg = loadConfig();
+  if (ligar && !web) {
+    try {
+      const sw = require('./servidor-web.js');
+      web = sw.criar({
+        pastaRenderer: path.join(__dirname, 'renderer'),
+        handlers: HANDLERS, ouvintes: ouvintesWeb,
+        porta: 7788, senha: senhaDoTelefone(), somenteTailscale: true, endereco: enderecoTailscale(),
+      });
+      // espera o servidor ESCUTAR de verdade antes de dizer que ligou: com a porta ocupada
+      // a tela mostrava endereco e senha e o telefone nunca conectava
+      if (web && web.pronto) await web.pronto;
+      manterAcordado(true);
+      cfg.webLigado = true; cfg.webSeguroConfirmado = true;
+      anotarChaveDoMain('webLigado', true); anotarChaveDoMain('webSeguroConfirmado', true);
+      saveConfig(cfg);
+    } catch (e) { anota('web:', e); return { error: e.message }; }
+  } else if (!ligar && web) {
+    // fechar() derruba tambem os telefones ja conectados; o close() sozinho so impedia
+    // conexao nova e quem estava dentro seguia com poder total sobre o Mac
+    try { (web.fechar || web.servidor.close.bind(web.servidor))(); } catch {}
+    web = null; manterAcordado(false); cfg.webLigado = false;
+    anotarChaveDoMain('webLigado', false);
+    saveConfig(cfg);
+  }
+  return { ligado: !!web, endereco: web ? web.endereco : '', senha: senhaDoTelefone() };
+});
+
+app.whenReady().then(() => { anota('app iniciou'); menu(); createWindow();
+  try {
+    const cfgInicial = loadConfig();
+    // Quem já usava o iPhone não precisa caçar um novo botão após atualizar.
+    // A migração só liga o servidor porque esta versão já obriga Tailscale.
+    if (cfgInicial.webLigado && !Object.prototype.hasOwnProperty.call(cfgInicial, 'webSeguroConfirmado')) {
+      cfgInicial.webSeguroConfirmado = true;
+      saveConfig(cfgInicial);
+    }
+    if (cfgInicial.webLigado && cfgInicial.webSeguroConfirmado) {
+      const sw = require('./servidor-web.js');
+      web = sw.criar({ pastaRenderer: path.join(__dirname, 'renderer'), handlers: HANDLERS,
+        ouvintes: ouvintesWeb, porta: 7788, senha: senhaDoTelefone(), somenteTailscale: true, endereco: enderecoTailscale() });
+      manterAcordado(true);
+      // no boot nao da pra esperar; mas o erro tem de aparecer no log e o estado tem de ficar
+      // honesto, senao o app acha que o telefone esta ligado e ele nunca conecta
+      if (web && web.pronto) web.pronto
+        .then(() => anota('telefone ligado em', web.endereco))
+        .catch((e) => { anota('NAO consegui abrir para o telefone:', (e && e.message) || e); web = null; manterAcordado(false); });
+      else anota('telefone ligado em', web.endereco);
+    }
+  } catch (e) { anota('NAO ABRIU para o telefone:', e); } setTimeout(() => codexStart().catch(() => {}), 1500); app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); }); });
+app.on('window-all-closed', () => { shutdown(); if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', () => { shutdown(); if (web) { try { (web.fechar || web.servidor.close.bind(web.servidor))(); } catch {} } });
