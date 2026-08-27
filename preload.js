@@ -1,0 +1,53 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('api', {
+  getConfig: () => ipcRenderer.invoke('config:get'),
+  setConfig: (c) => ipcRenderer.invoke('config:set', c),
+  home: () => ipcRenderer.invoke('sys:home'),
+
+  pickFolder: (start) => ipcRenderer.invoke('dialog:pickFolder', start),
+  listDir: (d) => ipcRenderer.invoke('fs:list', d),
+  readFile: (f) => ipcRenderer.invoke('fs:read', f),
+  openPath: (p) => ipcRenderer.invoke('shell:open', p),
+  abrirLink: (u) => ipcRenderer.invoke('shell:link', u),
+  openUrl: (u) => ipcRenderer.invoke('shell:openUrl', u),
+
+  paneStart: (o) => ipcRenderer.invoke('pane:start', o),
+  paneSend: (o) => ipcRenderer.invoke('pane:send', o),
+  paneInterrupt: (o) => ipcRenderer.invoke('pane:interrupt', o),
+  paneSteer: (o) => ipcRenderer.invoke('pane:steer', o),
+  paneCompactar: (o) => ipcRenderer.invoke('pane:compactar', o),
+  paneStop: (o) => ipcRenderer.invoke('pane:stop', o),
+  approve: (o) => ipcRenderer.invoke('pane:approve', o),
+  codexModels: () => ipcRenderer.invoke('codex:models'),
+  sessionsClaude: (r) => ipcRenderer.invoke('sessions:claude', r),
+  sessionsCodex: (r) => ipcRenderer.invoke('sessions:codex', r),
+  sessionHistory: (o) => ipcRenderer.invoke('sessions:history', o),
+  sessionTitulo: (o) => ipcRenderer.invoke('sessions:titulo', o),
+  skills: (e) => ipcRenderer.invoke('skills:list', e),
+  pickFiles: (k) => ipcRenderer.invoke('dialog:pickFiles', k),
+  pickPhoto: () => ipcRenderer.invoke('user:pickPhoto'),
+  anexoLer: (f) => ipcRenderer.invoke('anexo:ler', f),
+  colados: () => ipcRenderer.invoke('clipboard:anexos'),
+  verArquivo: (f) => ipcRenderer.invoke('arquivo:ver', f),
+  renomear: (o) => ipcRenderer.invoke('sessao:renomear', o),
+  buscarConversas: (o) => ipcRenderer.invoke('sessions:buscar', o),
+  auth: (o) => ipcRenderer.invoke('auth:acao', o),
+  webEstado: () => ipcRenderer.invoke('web:estado'),
+  webLigar: (v) => ipcRenderer.invoke('web:ligar', v),
+  contaLer: (e) => ipcRenderer.invoke('conta:ler', e),
+  usoLer: (e) => ipcRenderer.invoke('uso:ler', e),
+  mcpList: (e) => ipcRenderer.invoke('mcp:list', e),
+  mcpAcao: (o) => ipcRenderer.invoke('mcp:acao', o),
+
+  termRun: (o) => ipcRenderer.invoke('term:run', o),
+  termInput: (o) => ipcRenderer.invoke('term:input', o),
+  termKill: (o) => ipcRenderer.invoke('term:kill', o),
+  termResize: (o) => ipcRenderer.invoke('term:resize', o),
+  onTermEvent: (cb) => ipcRenderer.on('term:event', (_e, p) => cb(p)),
+
+  onPaneEvent: (cb) => ipcRenderer.on('pane:event', (_e, p) => cb(p)),
+  onMenu: (cb) => ipcRenderer.on('menu', (_e, action) => cb(action)),
+  // erro interno do processo principal: em vez de o app sumir da tela, aparece um aviso
+  onErroApp: (cb) => ipcRenderer.on('app:erro', (_e, p) => cb(p)),
+});

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+_backup-*/
+*.bak
+*.bak-*
+.DS_Store
+*.log
+config.json
