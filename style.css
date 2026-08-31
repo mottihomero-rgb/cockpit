@@ -13,6 +13,7 @@
   --green:#5aa469; --yellow:#d7ba7d; --red:#e05252;
   --aba-barra:#131315; --aba-fundo:#303035; --aba-alto:#3b3b41; --aba-borda:#4a4a51; --aba-brilho:#ffffff14;
   --aba-alto-on:#45454e; --aba-borda-on:#6a6a74; --aba-brilho-on:#ffffff2e; --aba-marca:#c8c8d2;
+  --aba-neon:#6ea8fe;
 }
 html[data-tema="claro"]{
   --bg:#ffffff; --bg2:#f5f5f6; --bg3:#ececed; --bg4:#dcdcde; --act:#e7e7e9;
@@ -27,6 +28,7 @@ html[data-tema="claro"]{
   --green:#2f7d3a; --yellow:#9a6b00; --red:#c62828;
   --aba-barra:#d7d7dc; --aba-fundo:#ececed; --aba-alto:#f7f7f8; --aba-borda:#bfbfc6; --aba-brilho:#ffffff;
   --aba-alto-on:#ffffff; --aba-borda-on:#a6a6b0; --aba-brilho-on:#ffffff; --aba-marca:#3d3d45;
+  --aba-neon:#1f6feb;
 }
 html[data-tema="jornal"]{
   /* Solarized Light, o mesmo do seu VSCode */
@@ -42,6 +44,7 @@ html[data-tema="jornal"]{
   --green:#859900; --yellow:#b58900; --red:#dc322f;
   --aba-barra:#ded6bd; --aba-fundo:#f0e9d5; --aba-alto:#f8f2e2; --aba-borda:#c9c1a6; --aba-brilho:#fffdf6;
   --aba-alto-on:#fffdf4; --aba-borda-on:#b3ab90; --aba-brilho-on:#ffffff; --aba-marca:#3f5560;
+  --aba-neon:#268bd2;
 }
 
 :root{
@@ -203,14 +206,24 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .note{padding:2px 18px 8px;font-size:11.5px;color:var(--fg-dim);user-select:text}
 .note.err{color:var(--red)}
 
-.pane-perm{border-top:1px solid var(--accent);background:#2b2622;padding:9px 14px;display:flex;
-  align-items:center;gap:12px}
-.pp-txt{flex:1;font:11.5px/1.5 var(--mono);color:var(--fg);user-select:text;
+/* o fundo era um preto cravado no codigo. No tema claro dava texto cinza-escuro sobre quase
+   preto: a barra que pergunta "posso rodar tal comando?" ficava ilegivel justo na hora de
+   decidir. Usando a variavel do tema, no escuro fica praticamente igual ao que era. */
+/* a barra tem de CHAMAR ATENCAO (e o momento de autorizar ou negar um comando) e ao mesmo
+   tempo ser legivel nos tres temas. Um banho leve da cor do motor faz as duas coisas: destaca
+   do fundo do chat e mantem contraste. O preto cravado de antes ficava ilegivel no tema claro. */
+.pane-perm{border-top:1px solid var(--accent);
+  background:color-mix(in srgb, var(--accent) 11%, var(--bg2));
+  padding:9px 14px;display:flex;align-items:center;gap:12px}
+/* texto em destaque: e o comando que ele vai autorizar ou negar, tem de dar pra ler de relance */
+.pp-txt{flex:1;font:11.5px/1.5 var(--mono);color:var(--fg-strong);user-select:text;
   max-height:88px;overflow:auto;white-space:pre-wrap}
 .pp-btns{display:flex;gap:6px;flex:none}
 .pp-yes,.pp-no{padding:5px 12px;border-radius:5px;font-size:11.5px;font-weight:500}
 .pp-yes{background:var(--accent);color:var(--sobre-accent)}
-.pp-no{background:var(--bg3);border:1px solid var(--line2)}
+/* fundo proprio, senao o "Negar" desaparece dentro da barra */
+.pp-no{background:var(--bg);border:1px solid var(--line2);color:var(--fg-strong)}
+.pp-no:hover{background:var(--erro-fundo);border-color:transparent}
 
 .pane-cmp{flex:none;margin:8px 12px 10px;background:var(--bg2);border:1px solid var(--line2);
   border-radius:10px;padding:8px 8px 6px;position:relative}
@@ -550,9 +563,16 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .side-busca::placeholder{color:var(--fg-fraco)}
 .hi-trecho{display:block;font-size:10.5px;color:var(--fg-fraco);line-height:1.4;margin-top:2px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hist-item.com-trecho{display:block}
+/* no resultado de busca o item vira "display:block" pra caber o trecho encontrado. So que a
+   estrela e o lapis sao "display:grid": fora de um flex, cada um cai numa linha propria,
+   embaixo do texto, e o item quase triplica de altura. Ancorando os dois no canto direito. */
+.hist-item.com-trecho{display:block;position:relative;padding-right:52px}
 .hist-item.com-trecho .hi-t{display:block}
 .hist-item.com-trecho .hi-w{float:right;margin-left:8px}
+.hist-item.com-trecho .hi-fav,
+.hist-item.com-trecho .hi-edit{position:absolute;top:5px}
+.hist-item.com-trecho .hi-fav{right:29px}
+.hist-item.com-trecho .hi-edit{right:6px}
 .hi-marca{background:color-mix(in srgb,var(--accent) 40%,transparent);border-radius:3px;padding:0 2px}
 .hist-cab{padding:9px 12px 4px;font-size:10.5px;color:var(--fg-fraco);text-transform:uppercase;letter-spacing:.6px}
 
@@ -818,10 +838,16 @@ html[data-tema="jornal"] .pane.eng-codex{--accent:#268bd2}
   transition:height .12s ease-out, filter .12s}
 .aba:hover{filter:brightness(1.07);color:var(--fg)}
 /* a aba aberta sobe, ganha a cor do conteudo e encosta nele */
+/* o neon leve da aba aberta: um fio da cor de destaque contornando a aba, mais um halo
+   suave por dentro. E inset de proposito — o clip-path do chanfro corta qualquer sombra
+   por fora, entao brilho externo simplesmente nao apareceria. */
 .aba.ativa{height:38px;color:var(--fg-strong);
   background:linear-gradient(180deg, var(--aba-alto-on) 0%, var(--bg) 38%, var(--bg) 100%);
-  box-shadow:inset 0 0 0 1px var(--aba-borda-on), inset 0 1.5px 0 var(--aba-brilho-on),
-             inset -14px 0 22px -20px var(--sombra2), inset 14px 0 22px -20px var(--sombra2)}
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--aba-neon) 60%, var(--aba-borda-on)),
+             inset 0 0 13px -3px color-mix(in srgb, var(--aba-neon) 70%, transparent),
+             inset 0 1.5px 0 var(--aba-brilho-on),
+             inset -14px 0 22px -20px var(--sombra2), inset 14px 0 22px -20px var(--sombra2);
+  transition:height .12s ease-out, box-shadow .18s ease-out}
 .aba.ativa:hover{filter:none}
 
 .aba-ic{flex:none;width:15px;height:15px;display:grid;place-items:center;color:var(--fg-dim)}

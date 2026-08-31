@@ -718,7 +718,8 @@ async function restaurarAbasCorpo(salvas) {
         else if (m.role === 'tool') toolStart(P, 'r' + Math.random(), m.name, m.arg);
       }
       $$('.tool-st.run', P.el).forEach(x => { x.className = 'tool-st ok'; x.innerHTML = ico('check'); });
-      if (msgs && msgs.length) note(P, '— daqui pra baixo é a conversa de agora —');
+      // sem isto o "Escreva embaixo pra começar" ficava por cima da conversa que acabou de voltar
+      if (msgs && msgs.length) { clearEmpty(P); note(P, '— daqui pra baixo é a conversa de agora —'); }
       scroll(P, true);
     } catch { note(P, 'Não consegui trazer o que já foi conversado. Pode continuar mesmo assim.', true); }
   }
