@@ -899,9 +899,11 @@ function fichaConversa(it) {
       if (!linha.includes('"type":"user"')) continue;
       try {
         const d = JSON.parse(linha);
+        if (d.isMeta) continue;
         const c = d.message && d.message.content;
-        const t = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => x && x.text || '').join(' ') : '';
-        if (t.trim() && !ehTecnico(t)) { title = limparTitulo(t.trim()).slice(0, 90); break; }
+        const bruto = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => x && x.text || '').join(' ') : '';
+        const t = tiraBlocos(bruto);
+        if (t && !ehTecnico(t)) { title = limparTitulo(t).slice(0, 90); break; }
       } catch {}
     }
   }
@@ -943,10 +945,13 @@ function claudeHistory(file, maxMsgs) {
   for (const line of data.split('\n')) {
     if (!line.startsWith('{')) continue;
     let d; try { d = JSON.parse(line); } catch { continue; }
+    // isMeta marca o que o proprio Claude Code escreveu se passando por usuario: prompt de
+    // subagente, texto de skill, aviso de imagem colada. Nada disso e conversa.
+    if (d.isMeta) continue;
     if (d.type === 'user' && d.message) {
       const c = d.message.content;
       let t = typeof c === 'string' ? c : Array.isArray(c) ? c.filter(x => x && x.type === 'text').map(x => x.text).join('\n') : '';
-      t = (t || '').trim();
+      t = tiraBlocos(t);
       if (t && !ehTecnico(t)) msgs.push({ role: 'user', text: semContexto(t) || t });
     } else if (d.type === 'assistant' && d.message) {
       const c = d.message.content || [];
@@ -970,7 +975,7 @@ function codexHistory(file, maxMsgs) {
     const p = d.payload || {};
     if (p.type === 'message') {
       if (p.role === 'developer' || p.role === 'system') continue;
-      const t = (p.content || []).map(c => c.text || '').join('\n').trim();
+      const t = tiraBlocos((p.content || []).map(c => c.text || '').join('\n'));
       if (!t) continue;
       // pula o contexto tecnico que o Codex injeta como se fosse fala do usuario
       if (ehTecnico(t) || t.includes('<workspace_roots>')) continue;
@@ -988,8 +993,34 @@ handle('sessions:claude', (_e, incluirRobos) => claudeSessions(5000, incluirRobo
 const CODEX_SESS = path.join(HOME, '.codex/sessions');
 const ORIGENS_DE_GENTE = ['cockpit', 'codex-tui', 'codex_tui', 'codex_vscode', 'codex-vscode', 'codex_app', 'codex-app', 'vscode'];
 
-const TECNICO = /<recommended_plugins>|<environment_context>|<user_instructions>|<system-reminder>|<available_tools>|<plugins>|^Caveat:|^<[a-z_]+>/i;
+const TECNICO = /<recommended_plugins>|<environment_context>|<user_instructions>|<system-reminder>|<available_tools>|<plugins>|<task-notification>|<command-name>|<local-command-stdout>|<bash-input>|<function_results>|^Caveat:|^\[Request interrupted|^\[Image: original|^<[a-z_-]+>/i;
 const ehTecnico = (t) => !t || TECNICO.test(t.trim().slice(0, 400));
+
+/* O que o Claude Code injeta na conversa NAO e fala do Homero, mas fica gravado no mesmo lugar
+   e com o mesmo "role: user". Antes so era barrado o que comecava com a tag — o que vinha
+   colado DEPOIS da fala dele (lembrete de sistema, contexto de hook, aviso de tarefa que
+   terminou) passava batido e reaparecia na tela ao reabrir o app, misturado com a conversa.
+   Aqui esses pedacos saem do texto onde quer que estejam; se nao sobrar nada, a mensagem some. */
+const BLOCOS_TECNICOS = [
+  'system-reminder', 'task-notification', 'command-name', 'command-message', 'command-args',
+  'local-command-stdout', 'local-command-stderr', 'bash-input', 'bash-stdout', 'bash-stderr',
+  'user-prompt-submit-hook', 'function_results', 'recommended_plugins', 'environment_context',
+  'user_instructions', 'available_tools', 'plugins', 'workspace_roots', 'EXTREMELY_IMPORTANT',
+  'ide_selection', 'ide_opened_file', 'ide_diagnostics',
+];
+function tiraBlocos(t) {
+  let s = String(t || '');
+  for (const tag of BLOCOS_TECNICOS) {
+    s = s.replace(new RegExp('<' + tag + '>[\\s\\S]*?<\\/' + tag + '>', 'gi'), '');
+    // bloco aberto e nunca fechado (arquivo cortado no meio): corta dali ate o fim
+    s = s.replace(new RegExp('<' + tag + '>[\\s\\S]*$', 'i'), '');
+  }
+  // contexto que o harness cola sem tag nenhuma, sempre no fim da mensagem
+  s = s.replace(/(^|\n)[^\n]{0,80}hook additional context:[\s\S]*$/i, '');
+  s = s.replace(/^\[Image: original[^\]]*\]$/gim, '');
+  s = s.replace(/^\[Request interrupted[^\]]*\]$/gim, '');
+  return s.replace(/\n{3,}/g, '\n\n').trim();
+}
 
 function semContexto(t) {
   if (!t) return t;

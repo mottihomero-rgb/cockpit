@@ -13,6 +13,7 @@
   --green:#5aa469; --yellow:#d7ba7d; --red:#e05252;
   --aba-barra:#131315; --aba-fundo:#303035; --aba-alto:#3b3b41; --aba-borda:#4a4a51; --aba-brilho:#ffffff14;
   --aba-alto-on:#45454e; --aba-borda-on:#6a6a74; --aba-brilho-on:#ffffff2e; --aba-marca:#c8c8d2;
+  --aba-neon:#6ea8fe;
 }
 html[data-tema="claro"]{
   --bg:#ffffff; --bg2:#f5f5f6; --bg3:#ececed; --bg4:#dcdcde; --act:#e7e7e9;
@@ -27,6 +28,7 @@ html[data-tema="claro"]{
   --green:#2f7d3a; --yellow:#9a6b00; --red:#c62828;
   --aba-barra:#d7d7dc; --aba-fundo:#ececed; --aba-alto:#f7f7f8; --aba-borda:#bfbfc6; --aba-brilho:#ffffff;
   --aba-alto-on:#ffffff; --aba-borda-on:#a6a6b0; --aba-brilho-on:#ffffff; --aba-marca:#3d3d45;
+  --aba-neon:#1f6feb;
 }
 html[data-tema="jornal"]{
   /* Solarized Light, o mesmo do seu VSCode */
@@ -42,6 +44,7 @@ html[data-tema="jornal"]{
   --green:#859900; --yellow:#b58900; --red:#dc322f;
   --aba-barra:#ded6bd; --aba-fundo:#f0e9d5; --aba-alto:#f8f2e2; --aba-borda:#c9c1a6; --aba-brilho:#fffdf6;
   --aba-alto-on:#fffdf4; --aba-borda-on:#b3ab90; --aba-brilho-on:#ffffff; --aba-marca:#3f5560;
+  --aba-neon:#268bd2;
 }
 
 :root{
@@ -835,10 +838,16 @@ html[data-tema="jornal"] .pane.eng-codex{--accent:#268bd2}
   transition:height .12s ease-out, filter .12s}
 .aba:hover{filter:brightness(1.07);color:var(--fg)}
 /* a aba aberta sobe, ganha a cor do conteudo e encosta nele */
+/* o neon leve da aba aberta: um fio da cor de destaque contornando a aba, mais um halo
+   suave por dentro. E inset de proposito — o clip-path do chanfro corta qualquer sombra
+   por fora, entao brilho externo simplesmente nao apareceria. */
 .aba.ativa{height:38px;color:var(--fg-strong);
   background:linear-gradient(180deg, var(--aba-alto-on) 0%, var(--bg) 38%, var(--bg) 100%);
-  box-shadow:inset 0 0 0 1px var(--aba-borda-on), inset 0 1.5px 0 var(--aba-brilho-on),
-             inset -14px 0 22px -20px var(--sombra2), inset 14px 0 22px -20px var(--sombra2)}
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--aba-neon) 60%, var(--aba-borda-on)),
+             inset 0 0 13px -3px color-mix(in srgb, var(--aba-neon) 70%, transparent),
+             inset 0 1.5px 0 var(--aba-brilho-on),
+             inset -14px 0 22px -20px var(--sombra2), inset 14px 0 22px -20px var(--sombra2);
+  transition:height .12s ease-out, box-shadow .18s ease-out}
 .aba.ativa:hover{filter:none}
 
 .aba-ic{flex:none;width:15px;height:15px;display:grid;place-items:center;color:var(--fg-dim)}

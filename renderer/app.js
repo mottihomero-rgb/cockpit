@@ -351,9 +351,16 @@ async function mudarPastaDoChat(P) {
 async function levarChatPara(P, escolhida) {
   if (!escolhida || escolhida === P.cwd) return;
   const A0 = abaDe(P);
-  const jaExiste = [...abas.values()].find(x => x.cwd === escolhida);
+  const jaExiste = abaDoCaminho(escolhida, false);
 
-  if (jaExiste && jaExiste === A0) return;               // ja e a pasta desta aba
+  if (jaExiste && jaExiste === A0) {   // ja e a aba certa: so a subpasta do chat muda
+    await window.api.paneStop({ paneId: P.id, engine: P.engine });
+    P.cwd = escolhida; P.started = false; setDot(P, 'off');
+    $('.p-cwd', P.el).textContent = nomePasta(escolhida);
+    conversaDaPastaNova(P, escolhida);
+    savePanes();
+    return;
+  }
 
   // este chat esta sozinho na aba e nao ha outra aba com essa pasta:
   // e mais simples a propria aba mudar de pasta do que criar outra
@@ -589,6 +596,7 @@ let restaurando = false;
    estavam: sem isto, o primeiro salvamento depois de uma restauracao pela metade apagava do
    arquivo justamente as abas que faltaram — logo depois de o aviso dizer que nada foi perdido. */
 let abasQueNaoVoltaram = [];
+let clienteQueEstavaAberto = '';
 function savePanes() {
   if (restaurando) return;   // remontando a tela: nao gravar estado pela metade
   delete cfg.panes; delete cfg.grupos;
@@ -616,8 +624,35 @@ function savePanes() {
    era desligada no caminho feliz: se qualquer coisa estourasse no meio, ela ficava ligada e o
    savePanes() nunca mais gravava nada — em silencio. O Homero trabalhava o dia inteiro e no
    dia seguinte caia na tela de "Nova aba". O finally garante que ela sempre desliga. */
+/* Uma aba = uma pasta de cliente. O que esta gravado pode ter chat de outro cliente dentro
+   (arrastado na mao, aberto pela lista antes desta regra existir, ou pasta trocada depois):
+   ao voltar, cada chat vai para a aba do SEU cliente e duas abas do mesmo cliente viram uma so.
+   E o que impede a tela de abrir com "Matheus Mota" segurando uma conversa da pasta do Mac. */
+function agruparPorCliente(salvas) {
+  const mapa = new Map();
+  const grupos = [];
+  for (const a of salvas) {
+    const chats = a.chats || [];
+    const iAtivo = Math.min(Math.max(0, a.ativo | 0), chats.length - 1);
+    chats.forEach((c, i) => {
+      const cwd = c.cwd || a.cwd || HOME;
+      const cli = clienteDe(cwd) || cwd;
+      let g = mapa.get(cli);
+      if (!g) { g = { cwd: cli, ativo: 0, chats: [] }; mapa.set(cli, g); grupos.push(g); }
+      g.chats.push(Object.assign({}, c, { cwd }));
+      if (i === iAtivo) g.ativo = g.chats.length - 1;
+    });
+  }
+  return grupos;
+}
+
 async function restaurarAbas() {
-  const salvas = Array.isArray(cfg.abas) ? cfg.abas.filter(a => a && a.chats && a.chats.length) : [];
+  const gravadas = Array.isArray(cfg.abas) ? cfg.abas.filter(a => a && a.chats && a.chats.length) : [];
+  if (!gravadas.length) return false;
+  // qual cliente estava na frente, para reabrir nele mesmo depois do reagrupamento
+  const antes = gravadas[Math.min(Math.max(0, cfg.abaAberta | 0), gravadas.length - 1)];
+  clienteQueEstavaAberto = antes ? (clienteDe(antes.cwd || HOME) || antes.cwd) : '';
+  const salvas = agruparPorCliente(gravadas);
   if (!salvas.length) return false;
   restaurando = true;
   abasQueNaoVoltaram = salvas.slice();     // cada aba que remontar sai desta lista
@@ -663,7 +698,10 @@ async function restaurarAbasCorpo(salvas) {
   }
 
   const abertas = [...abas.values()];
-  const i = Math.min(Math.max(0, cfg.abaAberta | 0), abertas.length - 1);
+  // depois do reagrupamento o numero da aba mudou de lugar: quem manda e o cliente que estava aberto
+  const iCli = clienteQueEstavaAberto
+    ? abertas.findIndex(A => clienteDe(A.cwd) === clienteQueEstavaAberto) : -1;
+  const i = iCli >= 0 ? iCli : Math.min(Math.max(0, cfg.abaAberta | 0), abertas.length - 1);
   ativarAbaProjeto(abertas[i] || abertas[0]);
 
   // as conversas voltam com o que ja tinha sido dito, uma de cada vez para nao travar a tela
@@ -2591,12 +2629,23 @@ function dentroDe(cwd, alvo) {
   if (!cwd || !alvo) return false;
   return cwd === alvo || cwd.startsWith(alvo.replace(/\/+$/, '') + '/');
 }
-// de qualquer caminho, descobre de qual cliente ele e
+/* De qualquer caminho, descobre de qual cliente ele e — e o que define em qual aba a conversa
+   mora. Uma subpasta do cliente (Adsure/paginas/checkout) continua sendo Adsure, senao cada
+   subpasta abria uma aba nova e a lista lateral nao achava nada.
+   Pasta fora de Projetos-claude devolve ela mesma, e nao vazio: vazio queria dizer "Mac
+   inteiro", entao uma aba dessas despejava TODAS as conversas do computador na lista. */
 function clienteDe(cwd) {
   const raiz = PROJETOS();
-  if (!dentroDe(cwd, raiz)) return '';
+  if (!dentroDe(cwd, raiz)) return cwd || '';
   const primeiro = cwd.slice(raiz.length + 1).split('/').filter(Boolean)[0];
-  return primeiro ? raiz + '/' + primeiro : '';
+  return primeiro ? raiz + '/' + primeiro : raiz;
+}
+// a aba onde este caminho deve morar: a do cliente dele. Cria se ainda nao existir.
+function abaDoCaminho(cwd, criar) {
+  const alvo = clienteDe(cwd);
+  const achada = [...abas.values()].find(x => clienteDe(x.cwd) === alvo);
+  if (achada) return achada;
+  return criar ? novaAbaProjeto(alvo || cwd) : null;
 }
 
 function pastaDoFiltro(engine) {
@@ -2827,8 +2876,9 @@ async function openSession(s, el) {
   // cada conversa da lista abre no seu proprio painel, sem atropelar o que ja esta rolando
   let P = null;
   if (panes.size < 12) {
-    const A = [...abas.values()].find(x => x.cwd === s.cwd) || novaAbaProjeto(s.cwd);
-    P = newPane({ engine: s.engine, aba: A, titulo: s.title });
+    // a conversa abre na aba do cliente dela, mesmo que tenha nascido numa subpasta
+    const A = abaDoCaminho(s.cwd, true);
+    P = newPane({ engine: s.engine, aba: A, cwd: s.cwd, titulo: s.title });
   } else {
     P = [...panes.values()].find(q => !q.busy && !q.hist.length) || [...panes.values()].find(q => !q.busy);
     if (!P) { const q = focusPane; if (q) avisoTemp(q, 'Todos os painéis estão ocupados. Feche um para abrir esta conversa.'); return; }
