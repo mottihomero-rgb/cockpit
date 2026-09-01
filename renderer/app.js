@@ -1340,7 +1340,15 @@ window.api.onPaneEvent((ev) => {
   switch (ev.kind) {
     case 'busy': P.busy = true; setDot(P, 'busy'); trabalhando(P); break;
     // o motor abriu (ou reabriu) a conversa: este id passa a ser o fio guardado
-    case 'sessao': P.sessaoId = ev.id; P.resumeId = ev.id; P.sessaoFile = ev.file || ''; break;
+    case 'sessao': {
+      const mudou = P.sessaoId !== ev.id;
+      P.sessaoId = ev.id; P.resumeId = ev.id; P.sessaoFile = ev.file || '';
+      // grava o fio no disco NA HORA. Antes so ia junto do proximo salvamento por outro motivo:
+      // fechar o app logo depois de a conversa nascer perdia o numero dela, e ao reabrir o chat
+      // voltava sem fio — a mesma armadilha de continuar o trabalho de outra conversa.
+      if (mudou) savePanes();
+      break;
+    }
     // o Claude disse que essa conversa nao existe mais: agora sim o fio se solta
     case 'sessao-sumiu':
       P.sessaoId = null; P.resumeId = null; P.fioSolto = Date.now();
