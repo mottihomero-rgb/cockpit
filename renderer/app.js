@@ -2259,9 +2259,12 @@ async function pintarContaLateral(engine, forcar) {
     if (!j) return '<div class="sc-us"><div class="sc-top"><span>' + titulo + '</span><b>—</b></div></div>';
     const pct = Math.min(100, Math.max(0, j.pct || 0));
     const cor = pct >= 90 ? 'perto' : pct >= 70 ? 'meio' : '';
-    return '<div class="sc-us"><div class="sc-top"><span>' + titulo + '</span><b>' + pct + '%</b></div>'
-      + '<div class="sc-bar"><span class="sc-fill ' + cor + '" style="width:' + pct + '%"></span></div>'
-      + '<div class="sc-pe">' + (j.reseta ? 'zera ' + quandoFuturo(j.reseta) : '') + '</div></div>';
+    // "zera em X" vai na MESMA linha do titulo: em linha propria era uma terceira altura
+    // so para tres palavrinhas, e a coluna toda ficava alta a toa
+    return '<div class="sc-us"><div class="sc-top"><span>' + titulo
+      + (j.reseta ? ' <i class="sc-zera">zera ' + quandoFuturo(j.reseta) + '</i>' : '')
+      + '</span><b>' + pct + '%</b></div>'
+      + '<div class="sc-bar"><span class="sc-fill ' + cor + '" style="width:' + pct + '%"></span></div></div>';
   };
   cx.innerHTML = '<div class="sc-cab"><span class="sc-av"></span>'
     + '<span class="sc-txt"><b class="sc-n"></b><span class="sc-e"></span></span>'
@@ -3260,7 +3263,8 @@ $$('.na-onde').forEach(b => b.addEventListener('click', () => {
   if (naEstado.onde === 'vps') setTimeout(() => $('#naCaminho').focus(), 40);
 }));
 $('#naPasta').addEventListener('click', async () => {
-  const p = await window.api.pickFolder(naEstado.pasta || cfg.defCwd || HOME);
+  // aba nova abre direto na pasta dos projetos do Claude (quem resolve o caminho e o main)
+  const p = await window.api.pickFolder(naEstado.pasta || '');
   if (!p) return;
   naEstado.pasta = p; naPintar();
 });

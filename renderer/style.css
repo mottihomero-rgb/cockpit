@@ -1032,6 +1032,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .sc-fill.meio{background:var(--yellow)}
 .sc-fill.perto{background:var(--red)}
 .sc-pe{font-size:9px;color:var(--fg-fraco)}
+.sc-zera{font-style:normal;font-size:9px;color:var(--fg-fraco);margin-left:4px}
 
 /* ---------- filtro de pasta da lista ---------- */
 .side-filtro{flex:none;margin:6px 8px 0;padding:4px 8px;display:flex;align-items:center;gap:6px;
