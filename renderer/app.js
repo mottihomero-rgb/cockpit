@@ -2280,6 +2280,8 @@ async function pintarContaLateral(engine, forcar) {
   $('.sc-av', cx).innerHTML = svgMotor(engine);
   $('.sc-n', cx).textContent = c.nome || c.email || '';
   $('.sc-e', cx).textContent = c.email || '';
+  // quando a conta nao tem nome, o de cima ja e o e-mail: a segunda linha era o mesmo texto
+  $('.sc-e', cx).classList.toggle('repetido', !c.nome || c.nome === c.email);
   if (c.plano) $('.sc-plano', cx).textContent = c.plano;
   $('.sc-re', cx).innerHTML = ico('refresh-cw');
   $('.sc-re', cx).onclick = (e) => { e.stopPropagation(); pintarContaLateral(engine, true); };

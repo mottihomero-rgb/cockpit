@@ -1725,9 +1725,17 @@ handle('config:set', (_e, c) => {
 });
 handle('sys:home', () => HOME);
 
+/* Escolher pasta sem um ponto de partida cai na home, e de la sao 3 cliques ate os projetos.
+   O padrao passa a ser a pasta dos projetos do Claude, que e de onde quase toda aba nasce. */
+const PASTA_PROJETOS = path.join(HOME, 'Desktop', 'Projetos-claude');
+function pastaInicial(start) {
+  if (start) return start;
+  try { if (fs.statSync(PASTA_PROJETOS).isDirectory()) return PASTA_PROJETOS; } catch {}
+  return HOME;
+}
 handle('dialog:pickFolder', async (_e, start) => {
   if (souRemoto(_e)) return null;
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: start || HOME, title: 'Pasta de trabalho deste painel' });
+  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: pastaInicial(start), title: 'Pasta de trabalho deste painel' });
   return r.canceled ? null : r.filePaths[0];
 });
 handle('fs:list', (_e, d) => (ehRemoto(d) ? listDirRemoto(d) : listDir(d)));

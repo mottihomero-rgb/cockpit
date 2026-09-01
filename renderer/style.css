@@ -89,10 +89,10 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
    entao o Claude seleccionado aparecia marcado de azul. */
 .act.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:currentColor;border-radius:0 2px 2px 0}
 
-#sidebar{width:230px;flex:none;background:var(--bg2);display:flex;flex-direction:column;overflow:hidden}
+#sidebar{width:206px;flex:none;background:var(--bg2);display:flex;flex-direction:column;overflow:hidden}
 .side-view{display:flex;flex-direction:column;height:100%;overflow:hidden}
-.side-head{height:35px;flex:none;display:flex;align-items:center;justify-content:space-between;
-  padding:0 8px 0 14px;font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--fg-dim)}
+.side-head{height:26px;flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:0 6px 0 11px;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--fg-fraco)}
 #projName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mini{font-size:11px;padding:2px 7px;border-radius:4px;color:var(--fg-dim);text-transform:none;letter-spacing:0}
 .mini:hover{background:var(--hover2);color:var(--fg)}
@@ -285,16 +285,16 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 
 
 /* conversas recentes */
-.new-chat{margin:2px 10px 8px;padding:6px 9px;border-radius:6px;background:var(--bg3);
-  border:1px solid var(--line2);font-size:12px;text-align:left;color:var(--fg)}
+.new-chat{margin:1px 8px 5px;padding:4px 8px;border-radius:6px;background:var(--bg3);
+  border:1px solid var(--line2);font-size:11.5px;text-align:left;color:var(--fg)}
 .new-chat:hover{background:var(--bg4)}
-.hist{flex:1;overflow:auto;padding:0 6px 14px}
-.hist-item{display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:6px;cursor:pointer}
+.hist{flex:1;overflow:auto;padding:0 5px 10px}
+.hist-item{display:flex;align-items:center;gap:7px;padding:3px 8px;border-radius:6px;cursor:pointer}
 .hist-item:hover{background:var(--hover)}
 .hist-item.on{background:var(--hover3)}
-.hi-t{flex:1;min-width:0;font-size:12.5px;color:var(--fg-strong);overflow:hidden;
+.hi-t{flex:1;min-width:0;font-size:11.5px;color:var(--fg-strong);overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
-.hi-w{flex:none;font-size:10.5px;color:var(--fg-fraco)}
+.hi-w{flex:none;font-size:9.5px;color:var(--fg-fraco)}
 .hist-load{padding:14px;font-size:12px;color:var(--fg-dim)}
 
 /* ---------- ajustes: foto do usuario ---------- */
@@ -557,8 +557,8 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .pane.soltando{outline:2px dashed var(--accent);outline-offset:-6px}
 
 /* busca na lista de conversas */
-.side-busca{margin:0 10px 7px;padding:6px 9px;background:var(--fundo-fundo);border:1px solid var(--line2);
-  border-radius:7px;color:var(--fg);font:12px var(--sans);outline:none}
+.side-busca{margin:0 8px 5px;padding:4px 8px;background:var(--fundo-fundo);border:1px solid var(--line2);
+  border-radius:7px;color:var(--fg);font:11.5px var(--sans);outline:none}
 .side-busca:focus{border-color:var(--accent)}
 .side-busca::placeholder{color:var(--fg-fraco)}
 .hi-trecho{display:block;font-size:10.5px;color:var(--fg-fraco);line-height:1.4;margin-top:2px;
@@ -574,7 +574,7 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .hist-item.com-trecho .hi-fav{right:29px}
 .hist-item.com-trecho .hi-edit{right:6px}
 .hi-marca{background:color-mix(in srgb,var(--accent) 40%,transparent);border-radius:3px;padding:0 2px}
-.hist-cab{padding:9px 12px 4px;font-size:10.5px;color:var(--fg-fraco);text-transform:uppercase;letter-spacing:.6px}
+.hist-cab{padding:7px 10px 3px;font-size:9.5px;color:var(--fg-fraco);text-transform:uppercase;letter-spacing:.6px}
 
 /* lápis no nome do painel */
 .pn-edit{width:20px;height:20px;border-radius:5px;color:var(--fg-dim);flex:none;opacity:0;
@@ -1003,36 +1003,39 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
    limite da conta Claude apareciam azuis. Cada lado da lateral passa a ter a sua cor. */
 .side-view[data-view="hclaude"]{--accent:var(--claude)}
 .side-view[data-view="hcodex"]{--accent:var(--codex)}
-.side-conta{flex:none;padding:9px 12px 10px;border-bottom:1px solid var(--line)}
+.side-conta{flex:none;padding:6px 10px 7px;border-bottom:1px solid var(--line)}
 .sc-vazio{font-size:11.5px;color:var(--fg-dim);line-height:1.5}
 .sc-link{color:var(--accent);text-decoration:underline;font-size:11.5px}
-.sc-cab{display:flex;align-items:center;gap:8px;cursor:pointer;padding:2px 0 8px}
+.sc-cab{display:flex;align-items:center;gap:7px;cursor:pointer;padding:0 0 5px}
 .sc-cab:hover .sc-n{color:var(--accent)}
-.sc-av{width:20px;height:20px;flex:none;display:grid;place-items:center}
+.sc-av{width:16px;height:16px;flex:none;display:grid;place-items:center}
 .sc-av svg{width:100%;height:100%;fill:currentColor}
 .side-view[data-view="hclaude"] .sc-av{color:var(--claude)}
 .side-view[data-view="hcodex"] .sc-av{color:var(--codex)}
 .sc-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
-.sc-n{font-size:11.5px;color:var(--fg-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sc-e{font-size:10px;color:var(--fg-fraco);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sc-plano{flex:none;font-size:9px;font-weight:700;letter-spacing:.5px;padding:2px 6px;border-radius:20px;
+.sc-n{font-size:11px;color:var(--fg-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc-e{font-size:9.5px;color:var(--fg-fraco);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* e-mail igual ao nome nao vira segunda linha: o JS marca a repeticao e ela some daqui */
+.sc-e.repetido{display:none}
+.sc-plano{flex:none;font-size:8.5px;font-weight:700;letter-spacing:.5px;padding:1px 5px;border-radius:20px;
   background:var(--hover3);color:var(--fg-dim);text-transform:uppercase}
 .sc-re{flex:none;width:18px;height:18px;border-radius:4px;display:grid;place-items:center;color:var(--fg-fraco)}
 .sc-re .ic{width:11px;height:11px}
 .sc-re:hover{background:var(--hover3);color:var(--fg-strong)}
-.sc-rot{font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--fg-fraco);margin:2px 0 6px}
-.sc-us{margin-bottom:7px}
-.sc-top{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--fg-dim)}
-.sc-top b{font-size:11.5px;color:var(--fg-strong);font-weight:600}
-.sc-bar{height:4px;border-radius:3px;background:var(--bg4);overflow:hidden;margin:3px 0 2px}
+/* o titulo "Limite de uso" era so enfeite: as duas barras ja dizem o que sao */
+.sc-rot{display:none}
+.sc-us{margin-bottom:4px}
+.sc-top{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;color:var(--fg-dim)}
+.sc-top b{font-size:10.5px;color:var(--fg-strong);font-weight:600}
+.sc-bar{height:3px;border-radius:3px;background:var(--bg4);overflow:hidden;margin:2px 0 1px}
 .sc-fill{display:block;height:100%;border-radius:3px;background:var(--accent);transition:width .3s}
 .sc-fill.meio{background:var(--yellow)}
 .sc-fill.perto{background:var(--red)}
-.sc-pe{font-size:9.5px;color:var(--fg-fraco)}
+.sc-pe{font-size:9px;color:var(--fg-fraco)}
 
 /* ---------- filtro de pasta da lista ---------- */
-.side-filtro{flex:none;margin:8px 10px 0;padding:6px 9px;display:flex;align-items:center;gap:6px;
-  background:var(--bg3);border:1px solid var(--line);border-radius:7px;font-size:11.5px;color:var(--fg-dim)}
+.side-filtro{flex:none;margin:6px 8px 0;padding:4px 8px;display:flex;align-items:center;gap:6px;
+  background:var(--bg3);border:1px solid var(--line);border-radius:7px;font-size:11px;color:var(--fg-dim)}
 .side-filtro:hover{background:var(--bg4);color:var(--fg)}
 .side-filtro.on{border-color:var(--accent);color:var(--fg-strong)}
 .sf-txt{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
