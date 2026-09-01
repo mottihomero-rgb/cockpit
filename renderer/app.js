@@ -1343,7 +1343,7 @@ window.api.onPaneEvent((ev) => {
     case 'sessao': P.sessaoId = ev.id; P.resumeId = ev.id; P.sessaoFile = ev.file || ''; break;
     // o Claude disse que essa conversa nao existe mais: agora sim o fio se solta
     case 'sessao-sumiu':
-      P.sessaoId = null; P.resumeId = null;
+      P.sessaoId = null; P.resumeId = null; P.fioSolto = Date.now();
       note(P, 'Esta conversa não existe mais no Claude. A próxima mensagem começa uma nova, levando junto o que já foi dito aqui.', true);
       savePanes();
       break;
@@ -1404,9 +1404,13 @@ window.api.onPaneEvent((ev) => {
       if (P.queued) { const cx = $('.p-input', P.el); if (cx && !cx.value) cx.value = P.queued; P.queued = null; }
       escondePerm(P);
       setDot(P, 'off'); pararTrabalho(P); limparPassos(P);
-      note(P, P.resumeId
-        ? 'A conexão caiu. A próxima mensagem religa e CONTINUA esta mesma conversa.'
-        : 'A conexão caiu antes de a conversa ficar salva. A próxima mensagem começa uma nova.', true);
+      // se o aviso de "esta conversa nao existe mais" acabou de sair, nao repetir outro recado
+      // dizendo a mesma coisa com outras palavras
+      if (!(P.fioSolto && Date.now() - P.fioSolto < 5000)) {
+        note(P, P.resumeId
+          ? 'A conexão caiu. A próxima mensagem religa e CONTINUA esta mesma conversa.'
+          : 'A conexão caiu antes de a conversa ficar salva. A próxima mensagem começa uma nova.', true);
+      }
       savePanes();
       break;
     }
