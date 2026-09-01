@@ -569,6 +569,10 @@ function claudeStart(paneId, opts) {
     // diz o MOTIVO, em vez de so "a conexao caiu"
     if (st.erro) emit(paneId, 'note', { text: st.erro.trim().slice(-400), error: true });
     else if (code) emit(paneId, 'note', { text: 'O Claude saiu com erro (código ' + code + ').', error: true });
+    // UNICO caso em que o fio da conversa deve ser solto: o proprio Claude avisa que aquela
+    // conversa nao existe mais. Em toda outra queda (limite de uso, internet, ssh) o id
+    // continua valendo e a proxima mensagem TEM de voltar para ela.
+    if (st.erro && /No conversation found with session ID/i.test(st.erro)) emit(paneId, 'sessao-sumiu', {});
     emit(paneId, 'engine-down', {});
   });
   proc.on('error', (e) => {
