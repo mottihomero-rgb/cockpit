@@ -714,7 +714,9 @@ async function restaurarAbasCorpo(salvas) {
       const aviso = $('.note', P.chat); if (aviso) aviso.remove();
       for (const m of (msgs || [])) {
         if (m.role === 'user') userMsg(P, m.text);
-        else if (m.role === 'bot') { const b = botBlock(P, 'r' + Math.random()); b.raw = m.text; b.el.innerHTML = marked.parse(m.text); }
+        // a resposta tambem entra no historico da memoria da tela: e dele que sai o contexto
+        // de emergencia quando a conversa cai e volta sem numero
+        else if (m.role === 'bot') { const b = botBlock(P, 'r' + Math.random()); b.raw = m.text; b.el.innerHTML = marked.parse(m.text); P.hist.push({ quem: P.engine === 'codex' ? 'Codex' : 'Claude', texto: m.text }); }
         else if (m.role === 'tool') toolStart(P, 'r' + Math.random(), m.name, m.arg);
       }
       $$('.tool-st.run', P.el).forEach(x => { x.className = 'tool-st ok'; x.innerHTML = ico('check'); });
@@ -756,7 +758,7 @@ async function trocarMotor(P, novo) {
   pintarUso(P); lerUso(P.engine); savePanes();   // nao zera o "ja fechei": ele nao pediu o aviso de volta
 }
 
-function montarContexto(P) {
+function montarContexto(P, retomada) {
   const LIM = 14000;
   const linhas = [];
   for (let i = P.hist.length - 1; i >= 0; i--) {
@@ -764,6 +766,18 @@ function montarContexto(P) {
     const t = '### ' + h.quem + ':\n' + (h.texto || '').trim();
     if (linhas.join('\n\n').length + t.length > LIM) break;
     linhas.unshift(t);
+  }
+  // retomada = a conexao caiu e o numero da conversa se perdeu. Aqui o risco nao e recomecar do
+  // zero: e pegar carona no resumo de OUTROS chats da mesma pasta, que o arranque injeta sozinho.
+  if (retomada) {
+    return 'ATENÇÃO: esta conversa caiu (limite de uso ou internet) e voltou como sessão nova. '
+      + 'IGNORE qualquer resumo de trabalhos anteriores, memória do projeto ou contexto de outras '
+      + 'conversas que tenha vindo no início desta sessão: NADA daquilo é o que estávamos fazendo. '
+      + 'O trabalho desta conversa é EXCLUSIVAMENTE o que está abaixo. Se o que está abaixo não '
+      + 'for suficiente para saber onde paramos, pergunte antes de agir — não invente nem retome '
+      + 'trabalho de outro chat.\n\n'
+      + '--- esta conversa até aqui ---\n' + linhas.join('\n\n') + '\n--- fim ---\n\n'
+      + 'Agora, o novo pedido:\n';
   }
   return 'Estou continuando uma conversa que vinha sendo tocada por outro assistente, no mesmo computador '
     + 'e na mesma pasta. Abaixo está o que já foi conversado. Assuma o trabalho daqui em diante, '
@@ -1225,11 +1239,24 @@ async function send(P) {
     setDot(P, 'busy');
     note(P, P.engine === 'codex' ? 'Ligando o Codex…' : 'Ligando o Claude…');
     try {
-      // zerar ANTES: o sessaoId so volta a ter valor se o motor abrir a conversa de verdade.
-      // E o que permite saber, la no engine-down, se da para religar continuando esta conversa.
-      P.sessaoId = null;
-      await window.api.paneStart({ paneId: P.id, engine: P.engine, cwd: P.cwd, model: P.model || undefined, approval: modoDe(P).id, effort: esforcoDe(P), resumeId: P.resumeId || undefined });
-      P.started = true; P.resumeId = null; P.ultraAvisado = false;   // processo novo: liberar o ultracode de novo
+      /* O FIO da conversa (o id que vai no --resume) nao pode ser jogado fora enquanto o motor
+         novo nao confirmar que abriu. Antes ele era zerado no instante em que o processo subia:
+         se esse processo morresse antes de abrir a conversa — que e exatamente o que acontece
+         quando o limite de uso ainda nao voltou ou a internet ainda esta fora — o id sumia para
+         sempre. A mensagem seguinte entao subia um chat DO ZERO, e como o arranque injeta a
+         memoria da PASTA (trabalhos de outros chats do mesmo cliente), o "continue" saia
+         continuando o trabalho de outra conversa. O fio agora so e solto em 'sessao-sumiu'. */
+      const fio = P.sessaoId || P.resumeId || null;
+      P.resumeId = fio;          // guardado ate o motor confirmar que reabriu esta conversa
+      P.sessaoId = null;         // sessaoId = conversa do processo VIVO; volta no evento 'sessao'
+      // Rede de seguranca: sem fio e com conversa na tela, o chat nasceria cego e pegaria carona
+      // na memoria de outro chat. Vai junto o que foi dito AQUI, e a ordem de ignorar o resto.
+      if (!fio && P.hist.length && !P.passarContexto) {
+        P.passarContexto = montarContexto(P, true);
+        note(P, 'Perdi o número desta conversa. Mandei junto o que já foi dito AQUI, para ele continuar este trabalho e não o de outro chat.', true);
+      }
+      await window.api.paneStart({ paneId: P.id, engine: P.engine, cwd: P.cwd, model: P.model || undefined, approval: modoDe(P).id, effort: esforcoDe(P), resumeId: fio || undefined });
+      P.started = true; P.ultraAvisado = false;   // processo novo: liberar o ultracode de novo
     } catch (e) {
       setDot(P, 'off'); note(P, 'Não consegui ligar: ' + (e && e.message || e), true); return;
     }
@@ -1312,7 +1339,14 @@ window.api.onPaneEvent((ev) => {
   const P = panes.get(ev.paneId); if (!P) return;
   switch (ev.kind) {
     case 'busy': P.busy = true; setDot(P, 'busy'); trabalhando(P); break;
-    case 'sessao': P.sessaoId = ev.id; P.sessaoFile = ev.file || ''; break;
+    // o motor abriu (ou reabriu) a conversa: este id passa a ser o fio guardado
+    case 'sessao': P.sessaoId = ev.id; P.resumeId = ev.id; P.sessaoFile = ev.file || ''; break;
+    // o Claude disse que essa conversa nao existe mais: agora sim o fio se solta
+    case 'sessao-sumiu':
+      P.sessaoId = null; P.resumeId = null;
+      note(P, 'Esta conversa não existe mais no Claude. A próxima mensagem começa uma nova, levando junto o que já foi dito aqui.', true);
+      savePanes();
+      break;
     case 'text-delta': textDelta(P, ev.id, ev.text); break;
     case 'think-delta': thinkDelta(P, ev.text); break;
     case 'text-final': textFinal(P, ev.id, ev.text); break;
@@ -1359,9 +1393,10 @@ window.api.onPaneEvent((ev) => {
       // --resume e comecava outra conversa do zero, calada: a tela continuava mostrando tudo
       // que foi dito, entao parecia que ele tinha ficado burro. Na aba da VPS, onde a ssh cai
       // sozinha, isso acontecia direto.
-      const abriu = !!P.sessaoId;                  // este processo chegou a abrir a conversa?
-      if (abriu) P.resumeId = P.sessaoId;
-      else if (P.resumeId) P.resumeId = null;      // foi o proprio --resume que falhou: soltar
+      // O fio NUNCA se solta numa queda: se este processo abriu a conversa, o id dele manda;
+      // se caiu antes de abrir, vale o que ja estava guardado. Soltar aqui (como antes) fazia
+      // a conversa se perder justamente na segunda queda seguida — limite que ainda nao voltou.
+      P.resumeId = P.sessaoId || P.resumeId || null;
       P.started = false; P.busy = false;
       // O motor morreu: o que estava na fila morreu junto. Guardado, ele disparava sozinho no
       // proximo fim de turno — uma pergunta velha respondida do nada, minutos depois. Volta
@@ -2903,7 +2938,7 @@ async function openSession(s, el) {
   const msgs = await window.api.sessionHistory({ engine: s.engine, file: s.file });
   for (const m of (msgs || [])) {
     if (m.role === 'user') userMsg(P, m.text);
-    else if (m.role === 'bot') { const b = botBlock(P, 'h' + Math.random()); b.raw = m.text; b.el.innerHTML = marked.parse(m.text); }
+    else if (m.role === 'bot') { const b = botBlock(P, 'h' + Math.random()); b.raw = m.text; b.el.innerHTML = marked.parse(m.text); P.hist.push({ quem: P.engine === 'codex' ? 'Codex' : 'Claude', texto: m.text }); }
     else if (m.role === 'tool') { toolStart(P, 'h' + Math.random(), m.name, m.arg); }
   }
   document.querySelectorAll('.tool-st').forEach(x => { if (x.classList.contains('run')) { x.className = 'tool-st ok'; x.innerHTML = ico('check'); } });
