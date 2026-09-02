@@ -2826,6 +2826,7 @@ function linhaConversa(s, termo, trecho) {
   const d = document.createElement('div');
   d.className = 'hist-item' + (trecho ? ' com-trecho' : '');
   d.dataset.sid = s.id;
+  d.dataset.sfile = s.file || '';
   d.innerHTML = '<span class="hi-w"></span><span class="hi-t"></span>'
     + (trecho ? '<span class="hi-trecho"></span>' : '')
     + '<button class="hi-fav" title="Deixar no topo"></button>'
