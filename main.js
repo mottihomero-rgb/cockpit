@@ -360,7 +360,7 @@ function codexNotification(method, params) {
     case 'item/started': {
       const it = params.item || {};
       if (it.type === 'commandExecution') emit(pane, 'tool-start', { id: it.id, name: 'Terminal', arg: it.command || '' });
-      else if (it.type === 'fileChange') emit(pane, 'tool-start', { id: it.id, name: 'Editando arquivo', arg: fileChangeArg(it) });
+      else if (it.type === 'fileChange') emit(pane, 'tool-start', { id: it.id, name: 'Editando arquivo', arg: fileChangeArg(it), edicao: edicaoDoCodex(it) });
       else if (it.type === 'mcpToolCall') emit(pane, 'tool-start', { id: it.id, name: mcpName(it), arg: shortJson(it.arguments) });
       else if (it.type === 'webSearch') emit(pane, 'tool-start', { id: it.id, name: 'Pesquisando na web', arg: it.query || '' });
       break;
@@ -449,6 +449,23 @@ function fileChangeArg(it) {
   if (Array.isArray(ch) && ch.length) return ch.map(c => c.path || c.file || '').filter(Boolean).join(', ');
   return it.path || '';
 }
+/* O Codex manda a mudanca ja mastigada, e o formato varia conforme a versao: as vezes vem um
+   patch unificado pronto, as vezes o par antes/depois. Pega o que houver. */
+function edicaoDoCodex(it) {
+  const ch = it.changes || it.fileChanges || [];
+  const lista = Array.isArray(ch) ? ch : [];
+  if (!lista.length) return null;
+  const c = lista[0];
+  const arquivo = c.path || c.file || it.path || '';
+  if (!arquivo) return null;
+  const pronto = c.unified_diff || c.unifiedDiff || c.diff || c.patch;
+  if (typeof pronto === 'string' && pronto) return { arquivo, patch: pronto.slice(0, 40000) };
+  const antes = c.old_content ?? c.oldContent ?? c.before ?? c.old_string;
+  const depois = c.new_content ?? c.newContent ?? c.after ?? c.new_string;
+  if (typeof depois === 'string') return { arquivo, partes: [{ antes: String(antes || ''), depois: String(depois) }] };
+  return null;
+}
+
 function fileChangeSummary(it) {
   const ch = it.changes || it.fileChanges || [];
   if (Array.isArray(ch) && ch.length) return ch.map(c => (c.kind || c.type || 'alterado') + '  ' + (c.path || c.file || '')).join('\n');
@@ -672,7 +689,11 @@ function claudeMessage(paneId, m) {
   if (m.type === 'assistant' && m.message) {
     (m.message.content || []).forEach((c, i) => {
       if (c.type === 'text') emit(paneId, 'text-final', { id: 'b' + i, text: c.text || '' });
-      else if (c.type === 'tool_use') emit(paneId, 'tool-start', { id: c.id, name: c.name, arg: claudeToolArg(c.name, c.input) });
+      else if (c.type === 'tool_use') emit(paneId, 'tool-start', {
+        id: c.id, name: c.name, arg: claudeToolArg(c.name, c.input),
+        edicao: dadosDaEdicao(c.name, c.input),
+        tarefas: c.name === 'TodoWrite' && c.input ? c.input.todos : null,
+      });
     });
     return;
   }
@@ -710,6 +731,48 @@ function claudeToolArg(name, inp) {
   if (v) return String(v);
   try { return JSON.stringify(inp).slice(0, 160); } catch { return ''; }
 }
+
+/* ---------- o antes e o depois de cada edicao ----------
+   A tela mostrava so "Editando arquivo.js" e o texto cru do resultado. Quem e visual nao le
+   patch em texto. Aqui sai o par (antes, depois) de cada pedaco mexido, para o outro lado
+   pintar de verde e vermelho — e para dar de desfazer depois. */
+const PEDACO_MAX = 40000;               // nao adianta mandar arquivo gigante pelo cano do IPC
+const corta = (s) => { s = String(s == null ? '' : s); return s.length > PEDACO_MAX ? s.slice(0, PEDACO_MAX) + '\n… (cortado)' : s; };
+
+function dadosDaEdicao(name, inp) {
+  if (!inp) return null;
+  const arquivo = inp.file_path || inp.notebook_path || '';
+  if (!arquivo) return null;
+  if ((name === 'Edit' || name === 'NotebookEdit') && typeof inp.old_string === 'string') {
+    return { arquivo, partes: [{ antes: corta(inp.old_string), depois: corta(inp.new_string) }] };
+  }
+  if (name === 'MultiEdit' && Array.isArray(inp.edits)) {
+    return { arquivo, partes: inp.edits.slice(0, 30).map(e => ({ antes: corta(e.old_string), depois: corta(e.new_string) })) };
+  }
+  if (name === 'Write' && typeof inp.content === 'string') {
+    // le o arquivo ANTES de o motor gravar por cima: e o unico momento em que o "antes" existe
+    let antes = '';
+    let existia = false;
+    try { antes = fs.readFileSync(arquivo, 'utf8'); existia = true; } catch {}
+    return { arquivo, novo: !existia, partes: [{ antes: corta(antes), depois: corta(inp.content) }] };
+  }
+  return null;
+}
+
+/* desfazer uma edicao: troca de volta o pedaco novo pelo antigo, no arquivo de verdade */
+handle('arquivo:desfazer', (_e, { arquivo, antes, depois }) => {
+  try {
+    if (!arquivo) return { error: 'sem arquivo' };
+    const atual = fs.readFileSync(arquivo, 'utf8');
+    const novo = String(depois == null ? '' : depois);
+    if (!novo) return { error: 'não sei o que tirar' };
+    const onde = atual.indexOf(novo);
+    if (onde < 0) return { error: 'o arquivo mudou depois dessa edição — desfazer aqui ia estragar' };
+    if (atual.indexOf(novo, onde + 1) >= 0) return { error: 'esse trecho aparece mais de uma vez no arquivo' };
+    fs.writeFileSync(arquivo, atual.slice(0, onde) + String(antes == null ? '' : antes) + atual.slice(onde + novo.length), 'utf8');
+    return { ok: true };
+  } catch (e) { return { error: e.message }; }
+});
 
 /* ======================= arvore de arquivos ======================= */
 const IGNORE = new Set(['node_modules', '.git', '.DS_Store', 'dist', 'build', '__pycache__', '.venv', 'venv', '.next', '.cache', 'Library']);
@@ -1973,6 +2036,56 @@ function zerarBadge() {
 }
 
 handle('clipboard:copiar', (_e, txt) => { clipboard.writeText(String(txt || '')); return { ok: true }; });
+
+/* ---------- puxar a aba que ele está olhando no navegador ----------
+   Ele manda link o dia todo copiando e colando. Isto pergunta ao navegador qual e a aba da
+   frente. Se o Mac ainda nao deu permissao de automacao, o proprio erro explica o caminho. */
+handle('navegador:aba', async () => {
+  const roteiros = [
+    ['Google Chrome', 'tell application "Google Chrome" to return (URL of active tab of front window) & "\\n" & (title of active tab of front window)'],
+    ['Safari', 'tell application "Safari" to return (URL of front document) & "\\n" & (name of front document)'],
+  ];
+  for (const [nome, script] of roteiros) {
+    const r = await rodar('/usr/bin/osascript', ['-e', script], 8000);
+    const saida = String(r.out || '').trim();
+    if (saida && /^https?:/i.test(saida)) {
+      const [url, ...resto] = saida.split('\n');
+      return { url, titulo: resto.join(' ').trim(), navegador: nome };
+    }
+    if (/not allowed|permitido|-1743/i.test(String(r.errout || ''))) {
+      return { error: 'o Mac ainda não deixou o Cockpit falar com o ' + nome + '. Ajustes do Sistema › Privacidade › Automação › Cockpit' };
+    }
+  }
+  return { error: 'não achei nenhuma aba aberta no Chrome nem no Safari' };
+});
+
+/* ---------- o que manda no comportamento do Claude ----------
+   Só lê e mostra: memória (CLAUDE.md), agentes, hooks e permissões. Mexer nesses arquivos
+   muda o comportamento de TODOS os projetos, então isso continua sendo decisão dele. */
+handle('config:claude', () => {
+  const casa = path.join(HOME, '.claude');
+  const ler = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+  const lista = (d) => { try { return fs.readdirSync(d).filter(x => !x.startsWith('.')); } catch { return []; } };
+  let ajustes = {};
+  try { ajustes = JSON.parse(ler(path.join(casa, 'settings.json')) || '{}'); } catch {}
+  const perm = ajustes.permissions || {};
+  return {
+    memoria: {
+      global: { caminho: path.join(casa, 'CLAUDE.md'), tamanho: (ler(path.join(casa, 'CLAUDE.md')) || '').length },
+      casa: { caminho: path.join(HOME, 'CLAUDE.md'), tamanho: (ler(path.join(HOME, 'CLAUDE.md')) || '').length },
+    },
+    agentes: lista(path.join(casa, 'agents')).map(x => x.replace(/\.md$/, '')),
+    skills: lista(path.join(casa, 'skills')).length,
+    hooks: Object.keys(ajustes.hooks || {}),
+    permissoes: {
+      liberado: (perm.allow || []).length,
+      negado: (perm.deny || []).length,
+      pergunta: (perm.ask || []).length,
+      modo: ajustes.defaultMode || perm.defaultMode || 'padrão',
+    },
+    arquivoAjustes: path.join(casa, 'settings.json'),
+  };
+});
 handle('shell:open', (_e, p) => shell.openPath(p));
 handle('shell:link', (_e, url) => {
   if (/^https?:\/\//i.test(url)) return shell.openExternal(url);
@@ -2129,6 +2242,7 @@ function menu() {
       { label: 'Novo chat nesta aba', accelerator: 'CmdOrCtrl+T', click: () => win && win.webContents.send('menu', 'newPane') },
       { label: 'Nova aba de projeto…', accelerator: 'CmdOrCtrl+Shift+T', click: () => win && win.webContents.send('menu', 'newTab') },
       { label: 'Fechar chat', accelerator: 'CmdOrCtrl+W', click: () => win && win.webContents.send('menu', 'closePane') },
+      { label: 'Reabrir o último chat fechado', accelerator: 'CmdOrCtrl+Shift+W', click: () => win && win.webContents.send('menu', 'reabrirFechado') },
       { type: 'separator' },
       { label: 'Trocar a pasta desta aba…', accelerator: 'CmdOrCtrl+O', click: () => win && win.webContents.send('menu', 'pickFolder') },
       { label: 'Limpar conversa', accelerator: 'CmdOrCtrl+K', click: () => win && win.webContents.send('menu', 'clearPane') },
@@ -2142,6 +2256,7 @@ function menu() {
     { role: 'editMenu', label: 'Editar' },
     { label: 'Ver', submenu: [
       { label: 'Mostrar/ocultar arquivos', accelerator: 'CmdOrCtrl+B', click: () => win && win.webContents.send('menu', 'toggleSidebar') },
+      { label: 'Modo foco (só pergunta e resposta)', accelerator: 'CmdOrCtrl+Shift+F', click: () => win && win.webContents.send('menu', 'foco') },
       { type: 'separator' },
       { role: 'resetZoom', label: 'Zoom normal' }, { role: 'zoomIn', label: 'Aumentar' }, { role: 'zoomOut', label: 'Diminuir' },
       { type: 'separator' },

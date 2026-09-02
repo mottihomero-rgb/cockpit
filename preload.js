@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('api', {
   mcpAcao: (o) => ipcRenderer.invoke('mcp:acao', o),
   avisarPronto: (o) => ipcRenderer.invoke('aviso:pronto', o),
   copiar: (t) => ipcRenderer.invoke('clipboard:copiar', t),
+  desfazerEdicao: (o) => ipcRenderer.invoke('arquivo:desfazer', o),
+  abaDoNavegador: () => ipcRenderer.invoke('navegador:aba'),
+  configClaude: () => ipcRenderer.invoke('config:claude'),
   salvarNoVault: (o) => ipcRenderer.invoke('vault:salvar', o),
   ditar: (o) => ipcRenderer.invoke('voz:transcrever', o),
 

@@ -871,6 +871,7 @@ async function closePane(id, semPerguntar) {
     if (!confirm('O ' + (P.engine === 'codex' ? 'Codex' : 'Claude') + ' está trabalhando em “' + nome + '”.\n\nFechar agora joga fora o que ele está fazendo. Fechar mesmo assim?')) return;
   }
   const A = abaDe(P);
+  guardarFechado(P);   // fechou sem querer? dá para trazer de volta
   // terminal embutido aberto neste chat morre junto, senao sobra processo vivo escondido
   if (P.fecharTerminal) { const f = P.fecharTerminal; P.fecharTerminal = null; try { f(); } catch {} }
   // Parar o Codex pode levar ate 1,5s (ele espera o turn/interrupt) e na VPS vai por ssh.
@@ -1093,8 +1094,112 @@ function userMsg(P, text, anexos) {
     for (const a of anexos) cx.appendChild(fichaAnexo(a, false, null, P));
   }
   $('.msg-body', d).textContent = text;
+  // marca onde esta mensagem entra na fila de edições: é o que permite voltar no tempo
+  d.dataset.edicoes = String((P.edicoes || []).length);
+  d.dataset.hist = String(P.hist.length);
+  botoesDaMinhaMensagem(P, d, text);
   P.chat.appendChild(d); scroll(P, true);
   P.hist.push({ quem: 'Você', texto: text });
+}
+
+/* ---- na minha própria mensagem: corrigir e mandar de novo, ou voltar no tempo ---- */
+function botoesDaMinhaMensagem(P, d, texto) {
+  const barra = document.createElement('div');
+  barra.className = 'msg-bts';
+  const bEdit = document.createElement('button');
+  bEdit.className = 'msg-bt'; bEdit.title = 'Corrigir e mandar de novo'; bEdit.innerHTML = ico('pencil');
+  bEdit.onclick = () => editarMinhaMensagem(P, d, texto);
+  const bVolta = document.createElement('button');
+  bVolta.className = 'msg-bt'; bVolta.title = 'Voltar no tempo até aqui'; bVolta.innerHTML = ico('rotate-cw');
+  bVolta.onclick = () => menuVoltarNoTempo(P, d, texto);
+  barra.appendChild(bEdit); barra.appendChild(bVolta);
+  d.appendChild(barra);
+}
+
+function editarMinhaMensagem(P, d, texto) {
+  if ($('.msg-edita', d)) return;
+  const corpo = $('.msg-body', d);
+  const cx = document.createElement('div');
+  cx.className = 'msg-edita';
+  cx.innerHTML = '<textarea class="me-txt"></textarea>'
+    + '<div class="me-bts"><button class="me-x">Cancelar</button>'
+    + '<button class="me-ok destaque">Mandar de novo</button></div>';
+  const ta = $('.me-txt', cx);
+  ta.value = texto;
+  corpo.style.display = 'none';
+  d.insertBefore(cx, corpo.nextSibling);
+  const fim = () => { cx.remove(); corpo.style.display = ''; };
+  $('.me-x', cx).onclick = fim;
+  $('.me-ok', cx).onclick = () => {
+    const novo = ta.value.trim();
+    fim();
+    if (!novo) return;
+    const inp = $('.p-input', P.el);
+    inp.value = novo;
+    inp.dispatchEvent(new Event('input'));
+    send(P);
+  };
+  ta.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('.me-ok', cx).click(); }
+    if (e.key === 'Escape') { e.preventDefault(); fim(); }
+  });
+  ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.style.height = Math.min(ta.scrollHeight + 4, 260) + 'px';
+}
+
+/* ---- voltar no tempo ----
+   Desfazer o código é de verdade: cada edição guardou o antes e o depois, então basta
+   aplicar o contrário, de trás para frente. Voltar a CONVERSA o motor não deixa (a sessão
+   dele não anda para trás), então o que se faz é abrir um chat novo levando o que foi dito
+   até aquele ponto — que é a ramificação. */
+function menuVoltarNoTempo(P, d, texto) {
+  const desde = Number(d.dataset.edicoes || 0);
+  const feitas = (P.edicoes || []).slice(desde);
+  const m = novoMenu(P);
+  m.appendChild(tituloPopup('Voltar até aqui'));
+  m.appendChild(subPopup('"' + texto.slice(0, 60).replace(/\s+/g, ' ') + (texto.length > 60 ? '…' : '') + '"'));
+  m.appendChild(elItem({
+    ic: 'rotate-cw',
+    nome: 'Desfazer o código feito depois daqui',
+    desc: feitas.length ? feitas.length + ' edição(ões) para desfazer' : 'nada foi editado depois desta mensagem',
+  }, () => desfazerDaqui(P, feitas)));
+  m.appendChild(elItem({
+    ic: 'sparkles',
+    nome: 'Ramificar a conversa a partir daqui',
+    desc: 'abre um chat novo levando só o que foi dito até este ponto',
+  }, () => ramificarDaqui(P, d)));
+}
+
+async function desfazerDaqui(P, feitas) {
+  if (!feitas.length) { avisoEnvio(P, 'Nada foi editado depois dessa mensagem.'); return; }
+  let ok = 0; const problemas = [];
+  // de trás para frente: a última edição é a primeira a sair, senão o texto não bate mais
+  for (let i = feitas.length - 1; i >= 0; i--) {
+    const ed = feitas[i];
+    for (let j = (ed.partes || []).length - 1; j >= 0; j--) {
+      const p = ed.partes[j];
+      const r = await window.api.desfazerEdicao({ arquivo: ed.arquivo, antes: p.antes, depois: p.depois });
+      if (r && r.ok) ok++; else problemas.push(nomePasta(ed.arquivo) + ': ' + ((r && r.error) || 'erro'));
+    }
+  }
+  avisoTemp(P, ok + ' mudança(s) desfeita(s)' + (problemas.length ? ' · ' + problemas.length + ' não deu: ' + problemas[0] : ''));
+}
+
+function ramificarDaqui(P, d) {
+  const ate = Number(d.dataset.hist || 0);
+  const pedaco = P.hist.slice(0, ate + 1);
+  if (panes.size >= 12) { avisoEnvio(P, 'Feche um chat para abrir a ramificação.'); return; }
+  const Q = novoChatNaAba(P.engine);
+  if (!Q) return;
+  Q.cwd = P.cwd;
+  $('.p-cwd', Q.el).textContent = nomePasta(Q.cwd);
+  Q.hist = pedaco.slice();
+  Q.passarContexto = pedaco.map(h => '### ' + h.quem + ':\n' + (h.texto || '').trim()).join('\n\n');
+  Q.titulo = 'Ramo de: ' + (P.titulo || 'conversa'); Q.nomeManual = true;
+  pintarNome(Q);
+  avisoTemp(Q, 'Este chat continua de onde aquela mensagem estava. O chat de origem segue intacto.');
+  $('.p-input', Q.el).focus();
 }
 function pintarAvatar(el) {
   if (cfg.foto) el.innerHTML = '<img src="' + cfg.foto + '" alt="">';
@@ -1455,12 +1560,160 @@ function textFinal(P, key, text) {
   const ult = P.hist[P.hist.length - 1];
   if (ult && ult.quem === quem) ult.texto = text; else P.hist.push({ quem, texto: text });
 }
-function toolStart(P, id, name, arg) {
+/* ============ antes e depois de cada edição ============
+   O motor mexe no arquivo e a tela mostrava só o nome dele. Aqui a mudança aparece pintada:
+   vermelho o que saiu, verde o que entrou — e um botão que desfaz aquele pedaço. */
+
+/* diff por linhas. LCS puro estoura em arquivo grande (matriz N×M), então acima do teto
+   a tela mostra os dois blocos inteiros em vez de casar linha a linha. */
+const DIFF_TETO = 500;
+function linhasDoDiff(antes, depois) {
+  const a = String(antes || '').split('\n');
+  const b = String(depois || '').split('\n');
+  if (a.length > DIFF_TETO || b.length > DIFF_TETO) {
+    return [...a.filter((_, i) => i < DIFF_TETO).map(t => ({ t: '-', txt: t })),
+            ...b.filter((_, i) => i < DIFF_TETO).map(t => ({ t: '+', txt: t }))];
+  }
+  // tabela do maior pedaço em comum
+  const m = a.length, n = b.length;
+  const tab = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      tab[i][j] = a[i] === b[j] ? tab[i + 1][j + 1] + 1 : Math.max(tab[i + 1][j], tab[i][j + 1]);
+    }
+  }
+  const saida = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { saida.push({ t: ' ', txt: a[i] }); i++; j++; }
+    else if (tab[i + 1][j] >= tab[i][j + 1]) { saida.push({ t: '-', txt: a[i] }); i++; }
+    else { saida.push({ t: '+', txt: b[j] }); j++; }
+  }
+  while (i < m) saida.push({ t: '-', txt: a[i++] });
+  while (j < n) saida.push({ t: '+', txt: b[j++] });
+  return saida;
+}
+
+/* patch unificado (o Codex às vezes já manda pronto) vira as mesmas linhas coloridas */
+function linhasDoPatch(patch) {
+  return String(patch || '').split('\n')
+    .filter(l => !/^(diff |index |--- |\+\+\+ )/.test(l))
+    .map(l => l.startsWith('+') ? { t: '+', txt: l.slice(1) }
+            : l.startsWith('-') ? { t: '-', txt: l.slice(1) }
+            : l.startsWith('@@') ? { t: '@', txt: l }
+            : { t: ' ', txt: l.replace(/^ /, '') });
+}
+
+/* esconde o miolo que ninguém precisa ver: 3 linhas de contexto em volta de cada mudança */
+const CONTEXTO = 3;
+function comContexto(linhas) {
+  const perto = new Set();
+  linhas.forEach((l, i) => {
+    if (l.t === ' ') return;
+    for (let k = i - CONTEXTO; k <= i + CONTEXTO; k++) if (k >= 0 && k < linhas.length) perto.add(k);
+  });
+  const saida = [];
+  let pulando = 0;
+  linhas.forEach((l, i) => {
+    if (perto.has(i)) {
+      if (pulando) { saida.push({ t: '@', txt: '⋯ ' + pulando + ' linha' + (pulando > 1 ? 's' : '') + ' sem mudança' }); pulando = 0; }
+      saida.push(l);
+    } else pulando++;
+  });
+  if (pulando) saida.push({ t: '@', txt: '⋯ ' + pulando + ' linha' + (pulando > 1 ? 's' : '') + ' sem mudança' });
+  return saida;
+}
+
+function cartaoDeDiff(P, ed) {
+  const cx = document.createElement('div');
+  cx.className = 'dif';
+  const nome = (ed.arquivo || '').split('/').pop();
+  const partes = ed.patch ? [{ patch: ed.patch }] : (ed.partes || []);
+  let mais = 0, menos = 0;
+  const corpos = [];
+
+  for (const p of partes) {
+    const cru = p.patch ? linhasDoPatch(p.patch) : linhasDoDiff(p.antes, p.depois);
+    for (const l of cru) { if (l.t === '+') mais++; else if (l.t === '-') menos++; }
+    const bloco = document.createElement('div');
+    bloco.className = 'dif-bloco';
+    for (const l of comContexto(cru)) {
+      const linha = document.createElement('div');
+      linha.className = 'dl ' + (l.t === '+' ? 'mais' : l.t === '-' ? 'menos' : l.t === '@' ? 'pula' : 'igual');
+      linha.textContent = (l.t === '@' ? '' : l.t === ' ' ? '  ' : l.t + ' ') + l.txt;
+      bloco.appendChild(linha);
+    }
+    if (!p.patch && ed.arquivo) {
+      const bt = document.createElement('button');
+      bt.className = 'dif-desfaz';
+      bt.textContent = 'Desfazer esta mudança';
+      bt.onclick = async () => {
+        bt.disabled = true; bt.textContent = 'desfazendo…';
+        const r = await window.api.desfazerEdicao({ arquivo: ed.arquivo, antes: p.antes, depois: p.depois });
+        if (r && r.ok) { bt.textContent = 'desfeito'; bt.classList.add('feito'); bloco.classList.add('desfeito'); }
+        else { bt.disabled = false; bt.textContent = 'não deu: ' + ((r && r.error) || 'erro'); bt.classList.add('falhou'); }
+      };
+      bloco.appendChild(bt);
+    }
+    corpos.push(bloco);
+  }
+
+  const cab = document.createElement('div');
+  cab.className = 'dif-hd';
+  cab.innerHTML = '<span class="dif-nm"></span><span class="dif-cnt"></span>'
+    + '<button class="dif-abrir" title="Abrir o arquivo">' + ico('file-text') + '</button>';
+  $('.dif-nm', cab).textContent = (ed.novo ? 'criou ' : '') + nome;
+  $('.dif-nm', cab).title = ed.arquivo || '';
+  $('.dif-cnt', cab).innerHTML = '<b class="v">+' + mais + '</b> <b class="r">−' + menos + '</b>';
+  $('.dif-abrir', cab).onclick = (e) => { e.stopPropagation(); verArquivo(P, ed.arquivo); };
+  cab.addEventListener('click', () => cx.classList.toggle('fechado'));
+  cx.appendChild(cab);
+  for (const c of corpos) cx.appendChild(c);
+  // mudança grande nasce fechada: não empurra a conversa toda para longe
+  if (mais + menos > 40) cx.classList.add('fechado');
+  return cx;
+}
+
+/* ---- lista de tarefas: era só a frase "Organizando as tarefas" ---- */
+function cartaoDeTarefas(tarefas) {
+  const cx = document.createElement('div');
+  cx.className = 'tar';
+  for (const t of tarefas) {
+    const st = String(t.status || '');
+    const l = document.createElement('div');
+    l.className = 'tar-l ' + (st === 'completed' ? 'ok' : st === 'in_progress' ? 'agora' : 'espera');
+    l.innerHTML = '<span class="tar-ic"></span><span class="tar-t"></span>';
+    $('.tar-ic', l).innerHTML = st === 'completed' ? ico('check') : st === 'in_progress' ? ico('circle') : '';
+    $('.tar-t', l).textContent = (st === 'in_progress' && t.activeForm) ? t.activeForm : (t.content || '');
+    cx.appendChild(l);
+  }
+  return cx;
+}
+
+function toolStart(P, id, name, arg, extra) {
   const d = passo(P, fraseDoPasso(name, arg), id);
-  if (d) P.tools.set(id, { el: d, out: $('.exec-out', d), buf: '' });
+  if (!d) return;
+  P.tools.set(id, { el: d, out: $('.exec-out', d), buf: '' });
+  const ex = extra || {};
+  if (ex.edicao) {
+    const alvo = $('.exec-out', d);
+    alvo.textContent = '';
+    alvo.appendChild(cartaoDeDiff(P, ex.edicao));
+    d.classList.add('aberto', 'tem-dif');       // edição nasce aberta: é o que ele quer ver
+    P.tools.get(id).semTexto = true;            // o resultado cru não sobrescreve o diff
+    P.edicoes = P.edicoes || [];
+    P.edicoes.push(ex.edicao);                  // guardado para o "voltar no tempo"
+  }
+  if (ex.tarefas && ex.tarefas.length) {
+    const alvo = $('.exec-out', d);
+    alvo.textContent = '';
+    alvo.appendChild(cartaoDeTarefas(ex.tarefas));
+    d.classList.add('aberto');
+    P.tools.get(id).semTexto = true;
+  }
 }
 function toolOutput(P, id, text) {
-  const t = P.tools.get(id); if (!t) return;
+  const t = P.tools.get(id); if (!t || t.semTexto) return;
   t.buf += text;
   if (t.buf.length > 20000) t.buf = t.buf.slice(-20000);
   t.out.textContent = t.buf;
@@ -1468,6 +1721,7 @@ function toolOutput(P, id, text) {
 function toolEnd(P, id, output, isErr) {
   passoPronto(P, id, isErr);
   const t = P.tools.get(id); if (!t) return;
+  if (t.semTexto && !isErr) return;      // o diff (ou a lista de tarefas) vale mais que o texto cru
   let txt = (output || t.buf || '').toString().trim();
   if (txt.length > 20000) txt = txt.slice(0, 20000) + '\n… (cortado)';
   t.out.textContent = txt;
@@ -1637,7 +1891,7 @@ window.api.onPaneEvent((ev) => {
     case 'text-delta': textDelta(P, ev.id, ev.text); break;
     case 'think-delta': thinkDelta(P, ev.text); break;
     case 'text-final': textFinal(P, ev.id, ev.text); break;
-    case 'tool-start': toolStart(P, ev.id, ev.name, ev.arg); break;
+    case 'tool-start': toolStart(P, ev.id, ev.name, ev.arg, { edicao: ev.edicao, tarefas: ev.tarefas }); break;
     case 'tool-output': toolOutput(P, ev.id, ev.text); break;
     case 'tool-end': toolEnd(P, ev.id, ev.output, ev.error); break;
     case 'compactou': avisoEnvio(P, 'Conversa resumida. O que importa foi mantido.'); break;
@@ -2255,6 +2509,87 @@ function menuAnexo(P) {
   }));
 }
 
+/* ---- puxar a aba aberta do navegador para dentro da conversa ---- */
+async function puxarAbaDoNavegador(P) {
+  const r = await window.api.abaDoNavegador();
+  if (!r || r.error) { avisoEnvio(P, (r && r.error) || 'não consegui falar com o navegador'); return; }
+  inserirNoInput(P, r.titulo ? r.titulo + ' — ' + r.url : r.url);
+}
+
+/* ---- o que manda no comportamento do Claude, numa tela só ---- */
+async function janelaConfiguracao(P) {
+  fecharMenus();
+  const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
+  modal.classList.remove('hidden');
+  modal.onclick = (e) => { if (e.target === modal) fecharModal(P); };
+  cx.onclick = (e) => e.stopPropagation();
+  const topo = '<div class="mo-top"><span class="mo-tit">Configurar o Claude</span>'
+    + '<button class="mo-x">' + ico('x') + '</button></div>';
+  cx.innerHTML = topo + '<div class="mo-carregando">Lendo os arquivos de configuração…</div>';
+  $('.mo-x', cx).onclick = () => fecharModal(P);
+
+  const c = await window.api.configClaude();
+  if (modal.classList.contains('hidden')) return;
+  if (!c || c.error) { cx.innerHTML = topo + '<div class="mo-sub">Não consegui ler: ' + ((c && c.error) || 'erro') + '</div>'; $('.mo-x', cx).onclick = () => fecharModal(P); return; }
+
+  const kb = (n) => n ? Math.max(1, Math.round(n / 1024)) + ' KB' : 'vazio';
+  const linha = (rot, valor, acao) => '<div class="cf-l"><span class="cf-r">' + rot + '</span>'
+    + '<span class="cf-v">' + valor + '</span>'
+    + (acao ? '<button class="cf-bt" data-abrir="' + acao + '">abrir</button>' : '') + '</div>';
+
+  cx.innerHTML = topo
+    + '<div class="mo-sub">O que está valendo hoje. Mexer nestes arquivos muda o Claude em <b>todos</b> os projetos, então a edição é por sua conta: clique em abrir.</div>'
+    + '<div class="cf">'
+    + '<div class="cf-sec">Memória</div>'
+    + linha('Regras globais', kb(c.memoria.global.tamanho), c.memoria.global.caminho)
+    + linha('Mapa da casa', kb(c.memoria.casa.tamanho), c.memoria.casa.caminho)
+    + '<div class="cf-sec">Agentes e skills</div>'
+    + linha('Agentes', c.agentes.length ? c.agentes.length + ': ' + c.agentes.slice(0, 6).join(', ') + (c.agentes.length > 6 ? '…' : '') : 'nenhum', '')
+    + linha('Skills instaladas', String(c.skills), '')
+    + '<div class="cf-sec">Automação e permissões</div>'
+    + linha('Hooks ligados', c.hooks.length ? c.hooks.join(', ') : 'nenhum', '')
+    + linha('Modo padrão', String(c.permissoes.modo), '')
+    + linha('Regras de permissão', c.permissoes.liberado + ' liberadas · ' + c.permissoes.negado + ' negadas · ' + c.permissoes.pergunta + ' perguntam', c.arquivoAjustes)
+    + '</div>';
+  $('.mo-x', cx).onclick = () => fecharModal(P);
+  $$('.cf-bt', cx).forEach(b => b.onclick = () => window.api.openPath(b.dataset.abrir));
+}
+
+/* ---- modo foco: só a pergunta e a resposta ----
+   Os passos do motor (comandos, leituras, buscas) são muitos e roubam a atenção. Este botão
+   esconde tudo isso de uma vez, na tela inteira, e fica lembrado. */
+function alternarFoco() {
+  const ligado = !document.body.classList.contains('foco');
+  document.body.classList.toggle('foco', ligado);
+  cfg.foco = ligado; window.api.setConfig(cfg);
+  for (const P of panes.values()) scroll(P, true);
+  return ligado;
+}
+
+/* ---- reabrir o último chat fechado ---- */
+const fechadosRecentes = [];
+function guardarFechado(P) {
+  if (!P.resumeId && !P.sessaoId && !P.hist.length) return;   // chat vazio não vale guardar
+  fechadosRecentes.push({
+    engine: P.engine, cwd: P.cwd, titulo: P.titulo,
+    resumeId: P.sessaoId || P.resumeId || '', arquivo: P.sessaoFile || '',
+    aid: P.aid,
+  });
+  if (fechadosRecentes.length > 20) fechadosRecentes.shift();
+}
+async function reabrirUltimoFechado() {
+  const f = fechadosRecentes.pop();
+  if (!f) { if (focusPane) avisoTemp(focusPane, 'Nenhum chat fechado nesta sessão.'); return; }
+  if (panes.size >= 12) { if (focusPane) avisoEnvio(focusPane, 'Feche um chat para reabrir o anterior.'); return; }
+  if (f.resumeId) {
+    await openSession({ id: f.resumeId, engine: f.engine, cwd: f.cwd, title: f.titulo || '', file: f.arquivo }, null);
+    return;
+  }
+  const A = abas.get(f.aid) || abaAtiva;
+  const Q = newPane({ engine: f.engine, aba: A, cwd: f.cwd, titulo: f.titulo });
+  if (Q) setFocus(Q);
+}
+
 /* ---- as skills que ele mais usa sobem para o topo ---- */
 const QUANTAS_FAVORITAS = 8;
 function contarUsoDeSkill(nome) {
@@ -2289,6 +2624,10 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Contexto', ic: 'sparkles', nome: 'Começar conversa nova', act: () => novaConversa(P.engine) },
     { sec: 'Contexto', ic: 'file-text', nome: 'Resumir a conversa', desc: 'libera espaço sem perder o fio', act: () => compactarConversa(P) },
     { sec: 'Contexto', ic: 'search', nome: 'Buscar nesta conversa', desc: '⌘F', act: () => abrirBuscaConversa(P) },
+    { sec: 'Contexto', ic: 'lock', nome: 'Modo foco', desc: 'esconde os passos, deixa só pergunta e resposta · ⌘⇧F', tag: document.body.classList.contains('foco') ? 'ligado' : '', act: () => alternarFoco() },
+    { sec: 'Chat', ic: 'rotate-cw', nome: 'Reabrir o último chat fechado', desc: '⌘⇧W', act: () => reabrirUltimoFechado() },
+    { sec: 'Contexto', ic: 'plug', nome: 'Puxar a aba aberta do navegador', desc: 'manda o endereço e o título da aba de agora', act: () => puxarAbaDoNavegador(P) },
+    { sec: 'Painel', ic: 'sliders-horizontal', nome: 'Configurar o Claude', desc: 'memória, agentes, hooks e permissões', act: () => janelaConfiguracao(P) },
     { sec: 'Contexto', ic: 'book', nome: 'Salvar no Obsidian', desc: 'vira nota no vault, na pasta do cliente', act: () => salvarConversaNoVault(P) },
     { sec: 'Contexto', ic: 'mic', nome: 'Ditar', desc: 'falar em vez de digitar · ⌘⇧D', act: () => alternarDitado(P) },
     { sec: 'Chat', ic: 'columns-2', nome: 'Perguntar aos dois motores', desc: 'a mesma pergunta no Claude e no Codex · ⌘D', act: () => perguntarAosDois(P) },
@@ -3814,6 +4153,8 @@ window.api.onMenu((a) => {
     $('.p-input', P.el).focus();
     return;
   }
+  if (a === 'foco') { const on = alternarFoco(); if (focusPane) avisoTemp(focusPane, on ? 'Modo foco ligado: só pergunta e resposta.' : 'Modo foco desligado.'); return; }
+  if (a === 'reabrirFechado') return reabrirUltimoFechado();
   if (a === 'buscarNaConversa') return abrirBuscaConversa(focusPane);
   if (a === 'perguntarAosDois') return focusPane && perguntarAosDois(focusPane);
   if (a === 'ditar') return focusPane && alternarDitado(focusPane);
@@ -3869,6 +4210,7 @@ window.api.onMenu((a) => {
     $$('.hist-item, .new-chat').forEach(() => {});
   }
   aplicarTema(cfg.tema);
+  document.body.classList.toggle('foco', !!cfg.foco);   // o modo foco continua como ele deixou
   $('#verLine').textContent = 'Cockpit 1.0 · uma aba por projeto, chats lado a lado dentro dela';
   repintarAvatares();
   const noTelefone = !!window.SEM_ELECTRON;

@@ -160,6 +160,78 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .pe-logo{width:26px;height:26px;border-radius:7px;background:var(--accent)}
 .pe-txt{font-size:12px;color:var(--fg-dim)}
 
+/* ===== janela de configuração do Claude ===== */
+.cf{margin-top:10px}
+.cf-sec{font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--fg-fraco);
+  margin:12px 0 5px}
+.cf-l{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:7px;background:var(--bg2);
+  margin-bottom:4px}
+.cf-r{flex:none;width:135px;font-size:12px;color:var(--fg-dim)}
+.cf-v{flex:1;min-width:0;font-size:12px;color:var(--fg-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cf-bt{flex:none;padding:3px 9px;border-radius:6px;border:1px solid var(--line2);
+  background:var(--bg);color:var(--fg-dim);font-size:11px}
+.cf-bt:hover{background:var(--hover3);color:var(--fg)}
+
+/* ===== modo foco: some com os passos do motor ===== */
+body.foco .exec,body.foco .think{display:none !important}
+
+/* ===== botões na minha própria mensagem ===== */
+.msg.user{position:relative}
+.msg-bts{position:absolute;top:0;right:14px;display:flex;gap:4px;opacity:0;transition:opacity .12s}
+.msg.user:hover .msg-bts{opacity:1}
+.msg-bt{width:24px;height:24px;border-radius:6px;border:1px solid var(--line2);background:var(--bg2);
+  color:var(--fg-dim);display:grid;place-items:center}
+.msg-bt:hover{background:var(--hover3);color:var(--fg)}
+.msg-bt .ic{width:12px;height:12px}
+.msg-edita{padding:0 18px}
+.me-txt{width:100%;min-height:60px;background:var(--fundo-fundo);border:1px solid var(--accent);
+  border-radius:8px;padding:8px 10px;color:var(--fg);font:13px/1.5 var(--sans);outline:none;resize:vertical}
+.me-bts{display:flex;justify-content:flex-end;gap:7px;margin-top:6px}
+.me-bts button{padding:5px 11px;border-radius:7px;border:1px solid var(--line2);
+  background:var(--bg2);color:var(--fg);font-size:12px}
+.me-bts .destaque{background:var(--accent);color:var(--sobre-accent);border-color:transparent}
+
+/* ===== antes e depois de cada edição ===== */
+.dif{border:1px solid var(--line2);border-radius:9px;overflow:hidden;background:var(--fundo-fundo);margin:2px 0}
+.dif-hd{display:flex;align-items:center;gap:8px;padding:6px 9px;background:var(--bg3);cursor:pointer;
+  border-bottom:1px solid var(--line)}
+.dif.fechado .dif-hd{border-bottom:none}
+.dif-nm{flex:1;min-width:0;font:11.5px var(--mono);color:var(--fg-strong);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dif-cnt{font:10.5px var(--mono);flex:none;letter-spacing:.3px}
+.dif-cnt .v{color:var(--green)}
+.dif-cnt .r{color:var(--red);margin-left:5px}
+.dif-abrir{width:22px;height:22px;border-radius:5px;color:var(--fg-fraco);display:grid;place-items:center;flex:none}
+.dif-abrir:hover{background:var(--hover3);color:var(--fg)}
+.dif-abrir .ic{width:12px;height:12px}
+.dif-bloco{padding:5px 0;border-top:1px solid var(--line)}
+.dif-bloco:first-of-type{border-top:none}
+.dif.fechado .dif-bloco{display:none}
+.dif-bloco.desfeito{opacity:.45}
+.dl{font:11px/1.55 var(--mono);padding:0 10px;white-space:pre-wrap;word-break:break-word}
+.dl.mais{background:color-mix(in srgb,var(--green) 17%,transparent);color:var(--fg-strong)}
+.dl.menos{background:color-mix(in srgb,var(--red) 15%,transparent);color:var(--fg-strong)}
+.dl.igual{color:var(--fg-dim)}
+.dl.pula{color:var(--fg-fraco);font-size:10px;padding:3px 10px;background:var(--bg2)}
+.dif-desfaz{margin:7px 10px 4px;padding:4px 9px;border-radius:6px;border:1px solid var(--line2);
+  background:var(--bg2);color:var(--fg-dim);font-size:11px}
+.dif-desfaz:hover{background:var(--hover3);color:var(--fg)}
+.dif-desfaz.feito{color:var(--green);border-color:var(--green)}
+.dif-desfaz.falhou{color:var(--red);border-color:var(--red)}
+
+/* ===== lista de tarefas do motor ===== */
+.tar{padding:4px 2px}
+.tar-l{display:flex;align-items:flex-start;gap:7px;padding:3px 8px;font-size:11.5px;line-height:1.45}
+.tar-ic{width:13px;height:13px;flex:none;display:grid;place-items:center;margin-top:1px}
+.tar-ic .ic{width:11px;height:11px}
+.tar-l.ok{color:var(--fg-fraco)}
+.tar-l.ok .tar-t{text-decoration:line-through}
+.tar-l.ok .tar-ic{color:var(--green)}
+.tar-l.agora{color:var(--fg-strong);font-weight:600}
+.tar-l.agora .tar-ic{color:var(--accent)}
+.tar-l.espera{color:var(--fg-dim)}
+.tar-l.espera .tar-ic::before{content:'';width:7px;height:7px;border-radius:50%;border:1.5px solid var(--fg-fraco)}
+
 /* barra de busca dentro da conversa (⌘F) */
 .p-busca{flex:none;display:flex;align-items:center;gap:6px;margin:0 12px 6px;padding:5px 8px;
   background:var(--bg2);border:1px solid var(--accent);border-radius:9px}
