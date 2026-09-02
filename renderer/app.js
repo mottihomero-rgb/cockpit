@@ -23,6 +23,13 @@ const LOGO = {
   codex: 'M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z',
 };
 const ICONES = {"hand": "<path d=\"M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2\" /> <path d=\"M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2\" /> <path d=\"M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8\" /> <path d=\"M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15\" />", "code-xml": "<path d=\"m18 16 4-4-4-4\" /> <path d=\"m6 8-4 4 4 4\" /> <path d=\"m14.5 4-5 16\" />", "clipboard-list": "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /> <path d=\"M12 11h4\" /> <path d=\"M12 16h4\" /> <path d=\"M8 11h.01\" /> <path d=\"M8 16h.01\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "unlock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 9.9-1\" />", "upload": "<path d=\"M12 3v12\" /> <path d=\"m17 8-5-5-5 5\" /> <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "folder": "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "eraser": "<path d=\"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21\" /> <path d=\"m5.082 11.09 8.828 8.828\" />", "sparkles": "<path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\" /> <path d=\"M20 2v4\" /> <path d=\"M22 4h-4\" /> <circle cx=\"4\" cy=\"20\" r=\"2\" />", "brain": "<path d=\"M12 18V5\" /> <path d=\"M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4\" /> <path d=\"M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5\" /> <path d=\"M17.997 5.125a4 4 0 0 1 2.526 5.77\" /> <path d=\"M18 18a4 4 0 0 0 2-7.464\" /> <path d=\"M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517\" /> <path d=\"M6 18a4 4 0 0 1-2-7.464\" /> <path d=\"M6.003 5.125a4 4 0 0 0-2.526 5.77\" />", "sliders-horizontal": "<path d=\"M10 5H3\" /> <path d=\"M12 19H3\" /> <path d=\"M14 3v4\" /> <path d=\"M16 17v4\" /> <path d=\"M21 12h-9\" /> <path d=\"M21 19h-5\" /> <path d=\"M21 5h-7\" /> <path d=\"M8 10v4\" /> <path d=\"M8 12H3\" />", "lock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />", "arrow-left-right": "<path d=\"M8 3 4 7l4 4\" /> <path d=\"M4 7h16\" /> <path d=\"m16 21 4-4-4-4\" /> <path d=\"M20 17H4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "plug": "<path d=\"M12 22v-5\" /> <path d=\"M15 8V2\" /> <path d=\"M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z\" /> <path d=\"M9 8V2\" />", "key-round": "<path d=\"M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z\" /> <circle cx=\"16.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "log-out": "<path d=\"m16 17 5-5-5-5\" /> <path d=\"M21 12H9\" /> <path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "file-code": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 12.5 8 15l2 2.5\" /> <path d=\"m14 12.5 2 2.5-2 2.5\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "braces": "<path d=\"M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1\" /> <path d=\"M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1\" />", "terminal": "<path d=\"M12 19h8\" /> <path d=\"m4 17 6-6-6-6\" />", "file": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" />", "refresh-cw": "<path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" /> <path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\" /> <path d=\"M8 16H3v5\" />", "circle-help": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\" /> <path d=\"M12 17h.01\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "panel-left": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" /> <path d=\"M9 3v18\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "arrow-up": "<path d=\"m5 12 7-7 7 7\" /> <path d=\"M12 19V5\" />", "square": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" />", "rotate-cw": "<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" />", "circle": "<circle cx=\"12\" cy=\"12\" r=\"10\" />", "minus": "<path d=\"M5 12h14\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "search": "<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />", "server": "<rect width=\"20\" height=\"8\" x=\"2\" y=\"2\" rx=\"2\" /> <rect width=\"20\" height=\"8\" x=\"2\" y=\"14\" rx=\"2\" /> <path d=\"M6 6h.01\" /> <path d=\"M6 18h.01\" />", "star": "<path d=\"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z\" />"};
+/* icones que faltavam para as coisas novas (copiar, ditar, mandar nos dois, guardar no vault) */
+Object.assign(ICONES, {
+  'copy': '<rect width="14" height="14" x="8" y="8" rx="2" ry="2" /> <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />',
+  'mic': '<path d="M12 19v3" /> <path d="M19 10v2a7 7 0 0 1-14 0v-2" /> <rect x="9" y="2" width="6" height="13" rx="3" />',
+  'columns-2': '<rect width="18" height="18" x="3" y="3" rx="2" /> <path d="M12 3v18" />',
+  'book': '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />',
+});
 const ico = (n) => '<svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + (ICONES[n] || '') + '</svg>';
 const svgMotor = (eng) => '<svg viewBox="0 0 24 24" class="logo-motor"><path d="' + LOGO[eng === 'codex' ? 'codex' : 'claude'] + '"/></svg>';
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -524,8 +531,15 @@ function newPane(opts = {}) {
   // botao /  (comandos)
   $('.p-slash', el).addEventListener('click', (e) => { e.stopPropagation(); menuSkills(P); });
 
+  // botao do microfone (ditar em vez de digitar)
+  const btMic = document.createElement('button');
+  btMic.className = 'cb p-mic'; btMic.title = 'Ditar (⌘⇧D)'; btMic.innerHTML = ico('mic');
+  btMic.addEventListener('click', (e) => { e.stopPropagation(); alternarDitado(P); });
+  $('.p-slash', el).insertAdjacentElement('afterend', btMic);
+
   btnCwd.textContent = nomePasta(P.cwd);
   fillModels(P); paintEngine(P); pintarModo(P); pintarUso(P); lerUso(P.engine);
+  if (!opts.model) aplicarEscolhaDaPasta(P);   // esta pasta ja tem cerebro preferido?
 
   if (opts.indice == null || opts.indice >= A.ordem.length) A.ordem.push(id);
   else A.ordem.splice(opts.indice, 0, id);
@@ -1129,6 +1143,269 @@ function thinkDelta(P, text) {
   const agora = Date.now();
   if (agora - ultimoPensar > 8000) ultimoPensar = agora;
 }
+/* ---- buscar DENTRO da conversa aberta (⌘F) ----
+   Conversa de tres horas so se navegava rolando. Aqui as ocorrencias sao marcadas de amarelo
+   e o Enter pula de uma para a outra. Nao usa o buscador do Chrome porque ele procura na tela
+   inteira: acharia coisa nos outros chats abertos ao lado. */
+const NAO_ENTRAR = ['SCRIPT', 'STYLE', 'MARK', 'INPUT', 'TEXTAREA', 'BUTTON', 'SVG'];
+
+function limparAchados(P) {
+  if (!P.achados || !P.achados.length) { P.achados = null; return; }
+  for (const m of P.achados) {
+    const pai = m.parentNode;
+    if (!pai) continue;
+    pai.replaceChild(document.createTextNode(m.textContent), m);
+    pai.normalize();
+  }
+  P.achados = null; P.achouI = -1;
+}
+
+function buscarNaConversa(P, termo) {
+  limparAchados(P);
+  const t = (termo || '').trim();
+  const marcas = [];
+  if (t) {
+    const alvo = t.toLowerCase();
+    const andar = (no) => {
+      for (const f of [...no.childNodes]) {
+        if (f.nodeType === 3) {
+          const txt = f.textContent, baixo = txt.toLowerCase();
+          let i = baixo.indexOf(alvo);
+          if (i < 0) continue;
+          const frag = document.createDocumentFragment();
+          let ult = 0;
+          while (i >= 0) {
+            if (i > ult) frag.appendChild(document.createTextNode(txt.slice(ult, i)));
+            const m = document.createElement('mark');
+            m.className = 'acha'; m.textContent = txt.slice(i, i + t.length);
+            frag.appendChild(m); marcas.push(m);
+            ult = i + t.length;
+            i = baixo.indexOf(alvo, ult);
+          }
+          if (ult < txt.length) frag.appendChild(document.createTextNode(txt.slice(ult)));
+          f.parentNode.replaceChild(frag, f);
+        } else if (f.nodeType === 1 && !NAO_ENTRAR.includes(f.tagName)) andar(f);
+      }
+    };
+    andar(P.chat);
+  }
+  P.achados = marcas;
+  P.achouI = marcas.length ? 0 : -1;
+  irAoAchado(P, 0);
+}
+
+function irAoAchado(P, passo) {
+  const lista = P.achados || [];
+  const cx = $('.pb-conta', P.el);
+  if (!lista.length) { if (cx) cx.textContent = P.buscaTermo ? 'nada' : ''; return; }
+  P.achouI = ((P.achouI + passo) % lista.length + lista.length) % lista.length;
+  lista.forEach((m, i) => m.classList.toggle('agora', i === P.achouI));
+  lista[P.achouI].scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (cx) cx.textContent = (P.achouI + 1) + ' de ' + lista.length;
+}
+
+function abrirBuscaConversa(P) {
+  if (!P) return;
+  let barra = $('.p-busca', P.el);
+  if (!barra) {
+    barra = document.createElement('div');
+    barra.className = 'p-busca';
+    barra.innerHTML = '<span class="pb-ic">' + ico('search') + '</span>'
+      + '<input class="pb-inp" placeholder="Buscar nesta conversa…" spellcheck="false">'
+      + '<span class="pb-conta"></span>'
+      + '<button class="pb-bt" data-vai="-1" title="Anterior">' + ico('chevron-down') + '</button>'
+      + '<button class="pb-bt pb-baixo" data-vai="1" title="Próximo">' + ico('chevron-down') + '</button>'
+      + '<button class="pb-bt pb-x" title="Fechar (Esc)">' + ico('x') + '</button>';
+    P.chat.parentElement.insertBefore(barra, P.chat);
+    const inp = $('.pb-inp', barra);
+    let timer = 0;
+    inp.addEventListener('input', () => {
+      clearTimeout(timer);
+      P.buscaTermo = inp.value;
+      timer = setTimeout(() => buscarNaConversa(P, inp.value), 160);
+    });
+    inp.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); irAoAchado(P, e.shiftKey ? -1 : 1); }
+      if (e.key === 'Escape') { e.preventDefault(); fecharBuscaConversa(P); }
+    });
+    $$('.pb-bt[data-vai]', barra).forEach(b => b.onclick = () => irAoAchado(P, Number(b.dataset.vai)));
+    $('.pb-x', barra).onclick = () => fecharBuscaConversa(P);
+  }
+  barra.classList.remove('hidden');
+  const inp = $('.pb-inp', barra);
+  inp.focus(); inp.select();
+}
+
+function fecharBuscaConversa(P) {
+  const barra = $('.p-busca', P.el);
+  if (barra) barra.classList.add('hidden');
+  P.buscaTermo = '';
+  limparAchados(P);
+  $('.p-input', P.el).focus();
+}
+
+/* ---- o cerebro preferido de cada pasta ----
+   Cliente pesado merece Opus, rascunho nao. Escolher na mao toda vez fazia ele cair no modelo
+   errado e queimar limite a toa. A escolha fica colada na PASTA (e no motor), nao no chat. */
+function chaveDaPasta(P) { return (P.cwd || '') + '|' + P.engine; }
+function lembrarEscolhaDaPasta(P) {
+  if (!P.cwd) return;
+  cfg.porPasta = cfg.porPasta || {};
+  cfg.porPasta[chaveDaPasta(P)] = { model: P.model || '', effort: P.effort || '' };
+  window.api.setConfig(cfg);
+}
+function aplicarEscolhaDaPasta(P) {
+  const g = cfg.porPasta && cfg.porPasta[chaveDaPasta(P)];
+  if (!g) return false;
+  if (g.model && modelosDe(P).some(m => m.id === g.model)) P.model = g.model;
+  if (g.effort && esforcosDe(P).some(e => e.id === g.effort)) P.effort = g.effort;
+  fillModels(P);
+  return true;
+}
+
+/* ---- a mesma pergunta nos dois motores (⌘D) ----
+   Dava para abrir Claude e Codex lado a lado, mas a pergunta era digitada duas vezes. */
+async function perguntarAosDois(P) {
+  const inp = $('.p-input', P.el);
+  const texto = inp.value.trim();
+  if (!texto) { avisoEnvio(P, 'Escreva a pergunta primeiro — ela vai para os dois.'); return; }
+  const outro = P.engine === 'codex' ? 'claude' : 'codex';
+  const A = abaDe(P);
+  let Q = A ? A.ordem.map(id => panes.get(id)).find(q => q && q !== P && q.engine === outro) : null;
+  if (!Q) {
+    if (panes.size >= 12) { avisoEnvio(P, 'Feche um chat para abrir o outro motor.'); return; }
+    Q = novoChatNaAba(outro);
+    if (!Q) return;
+    Q.cwd = P.cwd;                       // os dois olham a MESMA pasta, senao a resposta muda
+    $('.p-cwd', Q.el).textContent = nomePasta(Q.cwd);
+    aplicarEscolhaDaPasta(Q);
+  }
+  const outroInp = $('.p-input', Q.el);
+  outroInp.value = texto;
+  outroInp.dispatchEvent(new Event('input'));
+  await send(P);
+  await send(Q);
+  setFocus(P);
+}
+
+/* ---- guardar a conversa no Obsidian ----
+   Texto mora no vault, nao no chat. Copiar e colar na mao dava tanto trabalho que nunca ia. */
+async function salvarConversaNoVault(P) {
+  if (!P.hist.length) { avisoEnvio(P, 'Esta conversa ainda está vazia.'); return; }
+  const linhas = P.hist.map(h => '## ' + (h.quem === 'Você' ? 'Homero' : h.quem) + '\n\n' + (h.texto || '').trim());
+  const r = await window.api.salvarNoVault({
+    titulo: (P.titulo || 'Conversa do Cockpit').trim(),
+    cwd: P.cwd,
+    motor: P.engine === 'codex' ? 'Codex' : 'Claude',
+    texto: linhas.join('\n\n'),
+  });
+  if (!r || r.error) { avisoEnvio(P, 'Não deu para salvar: ' + ((r && r.error) || 'erro')); return; }
+  const nota = note(P, 'Guardado no Obsidian: ' + r.curto);
+  if (nota && nota.querySelector) {
+    const bt = document.createElement('button');
+    bt.className = 'nota-link'; bt.textContent = 'abrir a pasta';
+    bt.onclick = () => window.api.openPath(r.pasta);
+    nota.appendChild(document.createTextNode(' · ')); nota.appendChild(bt);
+  }
+}
+
+/* ---- ditar em vez de digitar ----
+   Roda no proprio Mac (whisper.cpp), sem internet e sem custo. Aperta, fala, solta. */
+const DITADO = { rec: null, pedacos: [], P: null };
+async function alternarDitado(P) {
+  if (DITADO.rec && DITADO.P === P) { pararDitado(); return; }
+  if (DITADO.rec) pararDitado();
+  let fluxo;
+  try {
+    fluxo = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    avisoEnvio(P, 'Não consegui usar o microfone. Libere em Ajustes do Sistema › Privacidade › Microfone.');
+    return;
+  }
+  DITADO.pedacos = []; DITADO.P = P;
+  DITADO.rec = new MediaRecorder(fluxo);
+  DITADO.rec.ondataavailable = (e) => { if (e.data && e.data.size) DITADO.pedacos.push(e.data); };
+  DITADO.rec.onstop = async () => {
+    fluxo.getTracks().forEach(t => t.stop());
+    const bt = $('.p-mic', P.el);
+    if (bt) { bt.classList.remove('gravando'); bt.classList.add('pensando'); }
+    const blob = new Blob(DITADO.pedacos, { type: 'audio/webm' });
+    DITADO.rec = null; DITADO.pedacos = []; DITADO.P = null;
+    if (blob.size < 2000) { if (bt) bt.classList.remove('pensando'); return; }
+    const b64 = await new Promise(ok => {
+      const fr = new FileReader();
+      fr.onload = () => ok(String(fr.result).split(',')[1] || '');
+      fr.readAsDataURL(blob);
+    });
+    const r = await window.api.ditar({ audio: b64 });
+    if (bt) bt.classList.remove('pensando');
+    if (!r || r.error) { avisoEnvio(P, 'Não entendi o áudio: ' + ((r && r.error) || 'erro')); return; }
+    const inp = $('.p-input', P.el);
+    inp.value = (inp.value ? inp.value.replace(/\s*$/, ' ') : '') + (r.texto || '').trim();
+    inp.dispatchEvent(new Event('input'));
+    inp.focus();
+  };
+  DITADO.rec.start();
+  const bt = $('.p-mic', P.el);
+  if (bt) bt.classList.add('gravando');
+  avisoEnvio(P, 'Gravando. Clique no microfone de novo (ou ⌘⇧D) quando terminar de falar.');
+}
+function pararDitado() {
+  if (DITADO.rec && DITADO.rec.state !== 'inactive') DITADO.rec.stop();
+}
+
+/* ---- avisar quando a resposta fica pronta ----
+   So avisa se ele NAO estiver na janela e se a espera tiver valido a pena (menos de 8s ele
+   ainda esta olhando a tela; recado nessa hora e barulho). */
+const ESPERA_PRA_AVISAR = 8000;
+function avisarQueTerminou(P) {
+  if (!P.busy || !P.comecouEm) return;
+  const demorou = Date.now() - P.comecouEm;
+  P.comecouEm = 0;
+  if (demorou < ESPERA_PRA_AVISAR || document.hasFocus()) return;
+  const b = P.blocks.get('resp');
+  const resposta = (b && b.raw ? b.raw : '').replace(/[#*`>_-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const onde = (P.titulo || nomePasta(P.cwd) || 'Cockpit').slice(0, 50);
+  window.api.avisarPronto({
+    paneId: P.id,
+    titulo: (P.engine === 'codex' ? 'Codex' : 'Claude') + ' terminou · ' + onde,
+    texto: resposta || 'A resposta está pronta.',
+  });
+}
+
+/* ---- copiar com um clique: a resposta inteira e cada bloco de codigo ----
+   Antes nao havia botao nenhum: a unica saida era arrastar o mouse pelo texto. */
+function copiarTexto(txt, botao) {
+  navigator.clipboard.writeText(txt).then(() => {
+    if (!botao) return;
+    const antes = botao.innerHTML;
+    botao.innerHTML = ico('check');
+    botao.classList.add('copiou');
+    setTimeout(() => { botao.innerHTML = antes; botao.classList.remove('copiou'); }, 1400);
+  }).catch(() => {});
+}
+function botaoCopiar(titulo, pegarTexto) {
+  const b = document.createElement('button');
+  b.className = 'bt-copiar'; b.title = titulo; b.innerHTML = ico('copy');
+  b.addEventListener('click', (e) => { e.stopPropagation(); copiarTexto(pegarTexto(), b); });
+  return b;
+}
+function botoesDeCopia(b) {
+  const msg = b.el.closest('.msg');
+  if (msg && !$('.bt-copiar.da-msg', msg)) {
+    const bt = botaoCopiar('Copiar a resposta', () => b.raw || b.el.innerText);
+    bt.classList.add('da-msg');
+    msg.appendChild(bt);
+  }
+  // cada innerHTML novo joga fora os botoes de codigo antigos: refazer sempre
+  for (const pre of b.el.querySelectorAll('pre')) {
+    if ($('.bt-copiar', pre)) continue;
+    pre.classList.add('com-copia');
+    pre.appendChild(botaoCopiar('Copiar o código', () => (pre.querySelector('code') || pre).innerText));
+  }
+}
+
 function marcarLinksWeb(el) {
   for (const a of el.querySelectorAll('a[href^="http"]')) {
     a.classList.add('link-web');
@@ -1175,7 +1452,7 @@ function textFinal(P, key, text) {
     P.execEl = null;
   }
   b.raw = text; b.el.innerHTML = marked.parse(text);
-  linkarArquivos(P, b.el); marcarLinksWeb(b.el);
+  linkarArquivos(P, b.el); marcarLinksWeb(b.el); botoesDeCopia(b);
   if (P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
   const quem = P.engine === 'codex' ? 'Codex' : 'Claude';
@@ -1266,7 +1543,8 @@ async function send(P) {
       setDot(P, 'off'); note(P, 'Não consegui ligar: ' + (e && e.message || e), true); return;
     }
   }
-  P.busy = true; setDot(P, 'busy'); P.blocks.clear(); pararTrabalho(P); limparPassos(P); trabalhando(P);
+  P.busy = true; P.comecouEm = Date.now(); setDot(P, 'busy');
+  P.blocks.clear(); pararTrabalho(P); limparPassos(P); trabalhando(P);
   subirNaLista(P);
   let envio = text;
   if (anexos.length) {
@@ -1375,6 +1653,7 @@ window.api.onPaneEvent((ev) => {
     case 'janela': P.janela = ev.total; pintarTokens(P); break;
     case 'note': note(P, ev.text, ev.error); break;
     case 'turn-end':
+      avisarQueTerminou(P);
       P.busy = false; escondePerm(P);          // o pedido morre junto com o turno
       setDot(P, 'idle'); P.blocks.clear(); pararTrabalho(P); limparPassos(P);
       setTimeout(() => { if (!P.busy) { pararTrabalho(P); limparPassos(P); } }, 400);
@@ -3001,7 +3280,7 @@ async function openSession(s, el) {
   const msgs = await window.api.sessionHistory({ engine: s.engine, file: s.file });
   for (const m of (msgs || [])) {
     if (m.role === 'user') userMsg(P, m.text);
-    else if (m.role === 'bot') { const b = botBlock(P, 'h' + Math.random()); b.raw = m.text; b.el.innerHTML = marked.parse(m.text); P.hist.push({ quem: P.engine === 'codex' ? 'Codex' : 'Claude', texto: m.text }); }
+    else if (m.role === 'bot') { const b = botBlock(P, 'h' + Math.random()); b.raw = m.text; b.el.innerHTML = marked.parse(m.text); botoesDeCopia(b); P.hist.push({ quem: P.engine === 'codex' ? 'Codex' : 'Claude', texto: m.text }); }
     else if (m.role === 'tool') { toolStart(P, 'h' + Math.random(), m.name, m.arg); }
   }
   document.querySelectorAll('.tool-st').forEach(x => { if (x.classList.contains('run')) { x.className = 'tool-st ok'; x.innerHTML = ico('check'); } });
@@ -3496,6 +3775,20 @@ document.addEventListener('keydown', (e) => {
 window.addEventListener('resize', () => { for (const P of panes.values()) paintEngine(P); encostarAbas(); });
 
 window.api.onMenu((a) => {
+  // clicou no recado do sistema: traz a aba e o chat que ficaram prontos para a frente
+  if (a.startsWith('ir:')) {
+    const P = panes.get(a.slice(3));
+    if (!P) return;
+    const A = abaDe(P);
+    if (A && A !== abaAtiva) ativarAbaProjeto(A);
+    setFocus(P); piscar(P);
+    $('.p-input', P.el).focus();
+    return;
+  }
+  if (a === 'buscarNaConversa') return abrirBuscaConversa(focusPane);
+  if (a === 'perguntarAosDois') return focusPane && perguntarAosDois(focusPane);
+  if (a === 'ditar') return focusPane && alternarDitado(focusPane);
+  if (a === 'salvarVault') return focusPane && salvarConversaNoVault(focusPane);
   if (a === 'newPane') novoChatNaAba();
   else if (a === 'newTab') telaNovaAba();
   else if (a === 'closePane' && focusPane) closePane(focusPane.id);

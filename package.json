@@ -28,7 +28,6 @@
       "preload.js",
       "plataforma.js",
       "servidor-web.js",
-      "app.js",
       "package.json",
       "renderer/**/*",
       "!renderer/**/*.bak*",

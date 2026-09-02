@@ -39,6 +39,9 @@ contextBridge.exposeInMainWorld('api', {
   usoLer: (e) => ipcRenderer.invoke('uso:ler', e),
   mcpList: (e) => ipcRenderer.invoke('mcp:list', e),
   mcpAcao: (o) => ipcRenderer.invoke('mcp:acao', o),
+  avisarPronto: (o) => ipcRenderer.invoke('aviso:pronto', o),
+  salvarNoVault: (o) => ipcRenderer.invoke('vault:salvar', o),
+  ditar: (o) => ipcRenderer.invoke('voz:transcrever', o),
 
   termRun: (o) => ipcRenderer.invoke('term:run', o),
   termInput: (o) => ipcRenderer.invoke('term:input', o),

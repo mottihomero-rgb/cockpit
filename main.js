@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, powerSaveBlocker, Notification } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -1629,6 +1629,7 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false },
   });
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
+  win.on('focus', zerarBadge);   // voltou para a janela: o numero no Dock nao serve mais
 
   // menu do botao direito: copiar, colar, procurar, etc. — o do sistema mesmo
   win.webContents.on('context-menu', (_ev, props) => {
@@ -1757,6 +1758,36 @@ handle('vps:testar', async () => {
   if (rr.error) return { error: rr.error };
   return { ok: true, versao: (rr.out || '').split('\n')[1] || '' };
 });
+/* ---------- avisar que a resposta ficou pronta ----------
+   Ele sai da frente do Mac enquanto o motor trabalha e voltava so para descobrir se ja tinha
+   acabado. Agora chega recado do sistema e o icone no Dock ganha o numero de chats prontos.
+   Clicar no recado traz a janela para a frente E abre o chat certo. */
+let prontosParados = 0;
+handle('aviso:pronto', (_e, { paneId, titulo, texto }) => {
+  if (!win || win.isFocused()) return { ok: false };
+  prontosParados++;
+  if (app.dock) app.dock.setBadge(String(prontosParados));
+  if (Notification.isSupported()) {
+    const n = new Notification({
+      title: titulo || 'Terminou',
+      body: (texto || '').slice(0, 220),
+      silent: false,
+    });
+    n.on('click', () => {
+      if (!win) return;
+      if (win.isMinimized()) win.restore();
+      win.show(); win.focus();
+      win.webContents.send('menu', 'ir:' + paneId);
+    });
+    n.show();
+  }
+  return { ok: true };
+});
+function zerarBadge() {
+  prontosParados = 0;
+  if (app.dock) app.dock.setBadge('');
+}
+
 handle('shell:open', (_e, p) => shell.openPath(p));
 handle('shell:link', (_e, url) => {
   if (/^https?:\/\//i.test(url)) return shell.openExternal(url);
@@ -1916,6 +1947,12 @@ function menu() {
       { type: 'separator' },
       { label: 'Trocar a pasta desta aba…', accelerator: 'CmdOrCtrl+O', click: () => win && win.webContents.send('menu', 'pickFolder') },
       { label: 'Limpar conversa', accelerator: 'CmdOrCtrl+K', click: () => win && win.webContents.send('menu', 'clearPane') },
+      { type: 'separator' },
+      { label: 'Buscar nesta conversa', accelerator: 'CmdOrCtrl+F', click: () => win && win.webContents.send('menu', 'buscarNaConversa') },
+      { label: 'Perguntar aos dois motores', accelerator: 'CmdOrCtrl+D', click: () => win && win.webContents.send('menu', 'perguntarAosDois') },
+      { label: 'Ditar (segure para falar)', accelerator: 'CmdOrCtrl+Shift+D', click: () => win && win.webContents.send('menu', 'ditar') },
+      { type: 'separator' },
+      { label: 'Salvar conversa no Obsidian', accelerator: 'CmdOrCtrl+S', click: () => win && win.webContents.send('menu', 'salvarVault') },
     ]},
     { role: 'editMenu', label: 'Editar' },
     { label: 'Ver', submenu: [
