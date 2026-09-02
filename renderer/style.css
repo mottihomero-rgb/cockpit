@@ -292,6 +292,11 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .hist-item{display:flex;align-items:center;gap:7px;padding:3px 8px;border-radius:6px;cursor:pointer}
 .hist-item:hover{background:var(--hover)}
 .hist-item.on{background:var(--hover3)}
+/* conversa que esta aberta em algum chat: mesma borda da caixa de texto em foco.
+   laranja = Claude, azul = Codex. Usa outline pra nao empurrar o texto do item. */
+.hist-item.aberta{outline:1.5px solid var(--claude);outline-offset:-1px}
+.hist-item.aberta.ab-codex{outline-color:var(--codex)}
+.hist-item.aberta.ab-claude{outline-color:var(--claude)}
 .hi-t{flex:1;min-width:0;font-size:11.5px;color:var(--fg-strong);overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .hi-w{flex:none;font-size:9.5px;color:var(--fg-fraco)}
@@ -532,6 +537,10 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .term-link button{padding:5px 9px;border-radius:7px;border:1px solid var(--line2);
   font-size:11.5px;color:var(--fg);flex:none}
 .term-link button:hover{background:var(--hover2)}
+/* no login quem abre o navegador e o proprio CLI. O botao fica aqui de rede de seguranca,
+   entao precisa saltar aos olhos quando o navegador nao abrir sozinho */
+.term-link.destaque button{background:var(--accent);color:var(--sobre-accent);border-color:transparent}
+.term-link.destaque button:hover{filter:brightness(1.08)}
 
 /* anexos acima do campo de escrita */
 .p-anexos{display:flex;flex-wrap:wrap;gap:7px;padding:2px 3px 8px}

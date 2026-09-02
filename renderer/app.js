@@ -226,6 +226,7 @@ async function fecharAba(A) {
     P.el.remove(); panes.delete(pid);
   }
   A.ordem = [];
+  marcarAbertas();          // fechou a aba inteira: apaga a borda de todas as conversas dela
   Promise.all(paraParar.map(x => window.api.paneStop({ paneId: x.pid, engine: x.engine }).catch(() => {})));
   const lista = [...abas.values()];
   const i = lista.indexOf(A);
@@ -598,6 +599,9 @@ let restaurando = false;
 let abasQueNaoVoltaram = [];
 let clienteQueEstavaAberto = '';
 function savePanes() {
+  // todo vai-e-vem de chat passa por aqui: e o lugar certo pra acender/apagar a borda
+  // das conversas que estao abertas na lista lateral
+  marcarAbertas();
   if (restaurando) return;   // remontando a tela: nao gravar estado pela metade
   delete cfg.panes; delete cfg.grupos;
   const listaAbas = [...abas.values()];
@@ -859,6 +863,7 @@ async function closePane(id, semPerguntar) {
   // O chat tem de sumir no clique: o processo principal termina de matar o turno sozinho.
   window.api.paneStop({ paneId: id, engine: P.engine }).catch(() => {});
   P.el.remove(); panes.delete(id);
+  marcarAbertas();          // fechou o chat: a borda da conversa na lista apaga junto
   if (focusPane === P) focusPane = null;
   if (!A) return;
   const i = A.ordem.indexOf(id);
@@ -1998,11 +2003,9 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Chat', ic: 'plus', nome: 'Abrir outro chat nesta aba', act: () => { if (panes.size < 12) novoChatNaAba(P.engine); } },
     { sec: 'Conectores', ic: 'plug', nome: 'conectores', desc: 'ver, reconectar ou adicionar um conector', act: () => janelaConectores(P) },
     { sec: 'Painel', ic: 'terminal', nome: 'terminal', desc: 'rodar comandos aqui dentro, sem abrir o Terminal do Mac', act: () => janelaTerminal(P, 'cd ' + JSON.stringify(P.cwd) + ' 2>/dev/null; exec ${SHELL:-/bin/zsh} -l', 'Terminal — ' + nomePasta(P.cwd)) },
-    { sec: 'Conta', ic: 'key-round', nome: 'trocar conta', desc: 'sair da atual e entrar em outra ' + (P.engine === 'codex' ? 'do Codex' : 'do Claude') + (NA_VPS(P.cwd) ? ' NA VPS' : ''), act: () => contaAcao(P, 'trocar') },
-    { sec: 'Conta', ic: 'plug', nome: 'entrar com código', desc: 'quando o navegador não abre sozinho', act: () => contaAcao(P, 'trocarCodigo') },
-    { sec: 'Conta', ic: 'log-out', nome: 'logout', desc: 'sair da conta atual', act: () => contaAcao(P, 'logout') },
-    { sec: 'Conta', ic: 'user', nome: 'conta', desc: 'quem está entrado e quanto do limite já foi', act: () => janelaConta(P) },
-    { sec: 'Conta', ic: 'refresh-cw', nome: 'ver conta', desc: 'checa agora quem está entrado' + (NA_VPS(P.cwd) ? ' na VPS' : ''), act: () => contaAcao(P, 'status') },
+    // Eram cinco linhas aqui (trocar conta, entrar com codigo, logout, conta, ver conta) e as
+    // cinco levavam ao mesmo lugar. Ficou UMA: a janela da conta ja tem todos esses botoes.
+    { sec: 'Conta', ic: 'user', nome: 'conta', desc: 'quem está entrado, limite de uso, trocar ou sair' + (NA_VPS(P.cwd) ? ' · na VPS' : ''), act: () => janelaConta(P) },
   ];
 
   let skills = [];
@@ -2151,6 +2154,13 @@ function formConector(P) {
 let termSeq = 0;
 const termsVivos = new Map();
 const REG_LINK = /https?:\/\/[^\s"'<>)\]]+/g;
+/* O CLI escreve o link como "hyperlink de terminal" (OSC 8): o endereco vem DUAS vezes,
+   coladinho, com codigos de escape no meio. Sem limpar isso, o que a gente pescava era um
+   endereco grudado no outro — link quebrado. */
+const semEscapes = (s) => s
+  .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, ' ')
+  .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, ' ')
+  .replace(/\x1b[@-Z\\-_]/g, ' ');
 
 window.api.onTermEvent(({ id, kind, data, code }) => {
   const t = termsVivos.get(id);
@@ -2174,7 +2184,7 @@ function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
   cx.innerHTML =
     '<div class="mo-top"><span class="mo-tit"></span><button class="mo-x">' + ico('x') + '</button></div>'
     + '<div class="mo-sub">' + (op.abrirSozinho
-        ? 'Abri o navegador para você entrar. <b>Não feche esta janela até terminar lá</b> — fechar aqui cancela a entrada.'
+        ? 'O próprio Claude/Codex abre o navegador. <b>Não feche esta janela até terminar lá</b> — fechar aqui cancela a entrada. Se o navegador não abrir, clique em <b>Abrir link</b> aqui embaixo.'
         : 'Rodando aqui dentro do Cockpit. Se pedir para escolher ou colar algo, clique na tela preta e digite.') + '</div>'
     + '<div class="term-wrap"><div class="term-tela"></div></div>'
     + '<div class="term-link"><span class="mono"></span><button>Abrir link</button></div>'
@@ -2195,7 +2205,7 @@ function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
     term, buf: '', vivo: true,
     viu(d) {
       this.buf = (this.buf + d).slice(-8000);
-      const achou = this.buf.match(REG_LINK);
+      const achou = semEscapes(this.buf).match(REG_LINK);
       if (!achou) return;
       const limpos = achou.map(x => x.replace(/[.,;]+$/, ''));
       // o CLI imprime o endereco do servidorzinho local ANTES do link de entrar.
@@ -2204,10 +2214,10 @@ function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
       const u = deFora.length ? deFora[deFora.length - 1] : limpos[limpos.length - 1];
       if (txtLink.textContent === u) return;
       txtLink.textContent = u; elLink.classList.add('ver');
-      // no login, abrir o navegador sozinho: e o passo que o usuario sempre esquece
-      if (op.abrirSozinho && deFora.length && !this.jaAbriu) {
-        this.jaAbriu = true; window.ultimoLinkAberto = u; window.api.openUrl(u);
-      }
+      // Aqui o Cockpit TAMBEM abria o navegador. So que o `claude auth login` ja diz
+      // "Opening browser to sign in..." e o `codex login` faz o mesmo: davam duas abas
+      // iguais toda vez. Quem abre e o CLI; aqui fica so o botao, para quando ele falhar.
+      if (op.abrirSozinho) elLink.classList.add('destaque');
     },
   };
   termsVivos.set(id, reg);
@@ -2319,9 +2329,11 @@ async function janelaConta(P, motorPedido) {
   if (modal.classList.contains('hidden')) return;
   if (!c || !c.entrou) {
     cx.innerHTML = topo + '<div class="mo-sub">Você não está entrado no ' + motor + ' neste Mac.</div>'
-      + '<div class="mo-rodape"><button class="mo-btn destaque" id="ctEntrar">Entrar</button></div>';
+      + '<div class="mo-rodape"><button class="mo-btn" id="ctCodigo">Entrar com código</button>'
+      + '<button class="mo-btn destaque" id="ctEntrar">Entrar</button></div>';
     $('.mo-x', cx).onclick = () => fecharModal(P);
     $('#ctEntrar', cx).onclick = () => { fecharModal(P); contaAcao(P, 'login'); };
+    $('#ctCodigo', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocarCodigo'); };
     return;
   }
 
@@ -2353,7 +2365,11 @@ async function janelaConta(P, motorPedido) {
     + barra('Semana', c.semana)
     + (!c.sessao && !c.semana ? '<div class="mo-sub">Não consegui ler o limite agora.</div>' : '')
     + extra
-    + '<div class="mo-rodape"><button class="mo-btn" id="ctTrocar">Trocar de conta</button>'
+    // tudo que antes eram cinco linhas soltas no menu "/" mora aqui, junto de quem esta entrado
+    + '<div class="mo-rodape">'
+    + (NA_VPS(P.cwd) ? '<button class="mo-btn" id="ctVps">Ver a conta da VPS</button>' : '')
+    + '<button class="mo-btn" id="ctCodigo">Entrar com código</button>'
+    + '<button class="mo-btn" id="ctTrocar">Trocar de conta</button>'
     + '<button class="mo-btn" id="ctSair">Sair</button></div>';
 
   $('.mo-x', cx).onclick = () => fecharModal(P);
@@ -2363,6 +2379,9 @@ async function janelaConta(P, motorPedido) {
   if (c.plano) $('.ct-plano', cx).textContent = c.plano;
   $('#ctTrocar', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocar'); };
   $('#ctSair', cx).onclick = () => { fecharModal(P); contaAcao(P, 'logout'); };
+  $('#ctCodigo', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocarCodigo'); };
+  // o cartao acima le a conta DESTE Mac; com o chat na VPS quem responde e o servidor
+  if ($('#ctVps', cx)) $('#ctVps', cx).onclick = () => { fecharModal(P); contaAcao(P, 'status'); };
 }
 
 /* ---------- aviso de limite do plano, em cima da caixa de texto ----------
@@ -2779,9 +2798,34 @@ function marcarTermo(el, texto, termo) {
   el.appendChild(document.createTextNode(texto.slice(i + termo.length)));
 }
 
+/* ---- conversa que esta aberta em algum chat ganha borda da cor do motor ----
+   laranja = Claude, azul = Codex. Fechou o chat, a borda some. A cor vem do motor do CHAT
+   (e nao do item da lista) porque o painel pode ter trocado de motor no meio do caminho. */
+function motorQueAbriu(id, arquivo) {
+  if (!id) return null;
+  for (const P of panes.values()) {
+    if (P.resumeId !== id && P.sessaoId !== id) continue;
+    // O Codex repete o MESMO numero de conversa em varios arquivos (cada vez que ela e
+    // retomada nasce outro). So pelo numero, abrir uma acendia a borda de 17 linhas iguais.
+    if (P.sessaoFile && arquivo && P.sessaoFile !== arquivo) continue;
+    return P.engine;
+  }
+  return null;
+}
+function pintarAberta(d) {
+  const eng = motorQueAbriu(d.dataset.sid, d.dataset.sfile);
+  d.classList.toggle('aberta', !!eng);
+  d.classList.toggle('ab-claude', eng === 'claude');
+  d.classList.toggle('ab-codex', eng === 'codex');
+}
+function marcarAbertas() {
+  document.querySelectorAll('.hist-item[data-sid]').forEach(pintarAberta);
+}
+
 function linhaConversa(s, termo, trecho) {
   const d = document.createElement('div');
   d.className = 'hist-item' + (trecho ? ' com-trecho' : '');
+  d.dataset.sid = s.id;
   d.innerHTML = '<span class="hi-w"></span><span class="hi-t"></span>'
     + (trecho ? '<span class="hi-trecho"></span>' : '')
     + '<button class="hi-fav" title="Deixar no topo"></button>'
@@ -2834,6 +2878,7 @@ function linhaConversa(s, termo, trecho) {
     });
     inp.addEventListener('blur', () => fim(true));
   });
+  pintarAberta(d);
   return d;
 }
 
@@ -2976,6 +3021,7 @@ async function novaConversa(engine) {
   P.effort = EF_NOVO; P.ultraAvisado = false;   // conversa nova sempre volta ao Extra alto
   P.blocks.clear(); P.tools.clear(); voltarVazio(P); pintarNome(P);
   fillModels(P); paintEngine(P); setDot(P, 'off'); setFocus(P);
+  marcarAbertas();          // a conversa que estava aqui deixou de estar aberta
   $('.p-input', P.el).focus();
 }
 
