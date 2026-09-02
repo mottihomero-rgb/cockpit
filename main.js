@@ -818,7 +818,13 @@ const IND_ARQ = path.join(HOME, '.cockpit', 'indice-busca.json');
 const IND_MAX = 40000;              // caracteres de texto guardados por conversa
 let indBusca = null, indiceSujo = false, indiceTimer = null;
 
+/* O indice inteiro pesa umas dezenas de MB. Carregar leva 150ms, entao nao vale manter na
+   memoria o dia todo: depois de 5 minutos sem ninguem buscar, ele e solto e o app volta ao
+   tamanho de antes. A proxima busca recarrega sem ninguem notar. */
+let soltarIndTimer = null;
 function lerIndiceBusca() {
+  clearTimeout(soltarIndTimer);
+  soltarIndTimer = setTimeout(() => { if (!indiceSujo) indBusca = null; }, 5 * 60000);
   if (indBusca) return indBusca;
   try { indBusca = JSON.parse(fs.readFileSync(IND_ARQ, 'utf8')); } catch { indBusca = {}; }
   return indBusca;
@@ -913,6 +919,12 @@ function montarIndiceDeFundo() {
         noIndice(f);
         await new Promise(r => setTimeout(r, 12));   // devagar de proposito: nada de travar a tela
       }
+      // conversa apagada nao pode ficar ocupando o indice para sempre
+      const ind = lerIndiceBusca();
+      const vivos = new Set(arquivos);
+      let tirou = 0;
+      for (const f of Object.keys(ind)) if (!vivos.has(f) && !fs.existsSync(f)) { delete ind[f]; tirou++; }
+      if (tirou) gravarIndiceDepois();
     } catch {}
   }, 20000);
 }
