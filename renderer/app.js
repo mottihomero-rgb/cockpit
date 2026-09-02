@@ -2422,7 +2422,12 @@ function elItem({ ic, nome, desc, tag, on }, aoClicar) {
     + (on ? '<div class="mi-ck">' + ico('check') + '</div>' : (tag ? '<div class="mi-tag"></div>' : ''));
   $('.mi-ic', d).innerHTML = ic ? (ICONES[ic] ? ico(ic) : '<span class="ic-txt">' + ic + '</span>') : '';
   $('.mi-n', d).textContent = nome;
-  if (desc) { const e = document.createElement('div'); e.className = 'mi-d'; e.textContent = desc; $('.mi-txt', d).appendChild(e); }
+  // a explicação continua existindo; quando a lista é de uma linha só, ela vira o balão do mouse
+  if (desc) {
+    const e = document.createElement('div'); e.className = 'mi-d'; e.textContent = desc;
+    $('.mi-txt', d).appendChild(e);
+    d.title = nome + ' — ' + desc;
+  }
   if (tag && !on) $('.mi-tag', d).textContent = tag;
   d.addEventListener('click', () => { fecharMenus(); aoClicar && aoClicar(); });
   return d;
@@ -2609,6 +2614,7 @@ function maisUsadas(skills) {
 /* ---- menu do / (ações, modelo e comandos) ---- */
 async function menuSkills(P, filtroInicial, focar) {
   const m = novoMenu(P);
+  m.classList.add('menu-1linha');   // uma linha por item; a explicação vira o balão do mouse
   m.appendChild(tituloPopup('Ações e comandos'));
   const busca = document.createElement('input');
   busca.className = 'menu-search';
