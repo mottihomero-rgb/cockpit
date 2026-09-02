@@ -10,7 +10,41 @@ const { EH_WIN, acharBin, spawnBin, abrirPty } = plataforma;
 
 const HOME = os.homedir();
 // no Mac o Claude mora sempre no mesmo lugar; no Windows a gente procura
-const CLAUDE_BIN = EH_WIN ? acharBin('claude') : path.join(HOME, '.local/bin/claude');
+let CLAUDE_BIN = EH_WIN ? acharBin('claude') : path.join(HOME, '.local/bin/claude');
+
+/* ---------- por que existe uma copia do Claude aqui dentro ----------
+   O macOS guarda a permissao (Acesso Total ao Disco, Documentos, Mesa) pelo CAMINHO do
+   programa. O Claude Code se atualiza sozinho e cada versao mora num caminho novo
+   (~/.local/share/claude/versions/2.1.226, depois 2.1.227...). Resultado: a cada atualizacao
+   o Mac pedia tudo de novo, e a tela de Ajustes mostrava "claude" JA LIGADO — que era a versao
+   velha. Dava para liberar a vida inteira sem nunca ficar liberado.
+
+   A permissao que o Mac grava nao esta presa a versao, e sim a assinatura da Anthropic
+   (identifier "com.anthropic.claude-code", equipe Q6L2SF6YDW) — conferido no banco do TCC.
+   Entao basta o CAMINHO parar de mudar: mantemos uma copia em ~/.cockpit/bin/claude, sempre
+   igual a versao atual. Ele libera uma vez e acabou. A copia preserva a assinatura original. */
+const CLAUDE_FIXO = path.join(HOME, '.cockpit', 'bin', 'claude');
+function usarClaudeDeCaminhoFixo() {
+  if (EH_WIN) return;
+  try {
+    const real = fs.realpathSync(path.join(HOME, '.local/bin/claude'));
+    const nova = fs.statSync(real);
+    let atual = null;
+    try { atual = fs.statSync(CLAUDE_FIXO); } catch {}
+    if (!atual || atual.size !== nova.size || Math.round(atual.mtimeMs) !== Math.round(nova.mtimeMs)) {
+      fs.mkdirSync(path.dirname(CLAUDE_FIXO), { recursive: true });
+      const meio = CLAUDE_FIXO + '.novo';
+      fs.copyFileSync(real, meio);
+      fs.chmodSync(meio, 0o755);
+      fs.utimesSync(meio, nova.atime, nova.mtime);   // a data igual e o que diz "ja copiei esta"
+      fs.renameSync(meio, CLAUDE_FIXO);              // troca atomica: quem esta rodando nao cai
+      anota('copiei o Claude para o caminho fixo', real);
+    }
+    CLAUDE_BIN = CLAUDE_FIXO;
+  } catch (e) {
+    anota('nao consegui usar o caminho fixo do Claude', e.message);   // segue com o original
+  }
+}
 const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
 const LOG = () => path.join(app.getPath('userData'), 'cockpit.log');
 function anota(...partes) {
@@ -2198,7 +2232,7 @@ handle('web:ligar', async (_e, ligar) => {
   return { ligado: !!web, endereco: web ? web.endereco : '', senha: senhaDoTelefone() };
 });
 
-app.whenReady().then(() => { anota('app iniciou'); menu(); createWindow(); montarIndiceDeFundo();
+app.whenReady().then(() => { anota('app iniciou'); usarClaudeDeCaminhoFixo(); menu(); createWindow(); montarIndiceDeFundo();
   try {
     const cfgInicial = loadConfig();
     // Quem já usava o iPhone não precisa caçar um novo botão após atualizar.
