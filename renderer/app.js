@@ -1301,13 +1301,7 @@ async function salvarConversaNoVault(P) {
     texto: linhas.join('\n\n'),
   });
   if (!r || r.error) { avisoEnvio(P, 'Não deu para salvar: ' + ((r && r.error) || 'erro')); return; }
-  const nota = note(P, 'Guardado no Obsidian: ' + r.curto);
-  if (nota && nota.querySelector) {
-    const bt = document.createElement('button');
-    bt.className = 'nota-link'; bt.textContent = 'abrir a pasta';
-    bt.onclick = () => window.api.openPath(r.pasta);
-    nota.appendChild(document.createTextNode(' · ')); nota.appendChild(bt);
-  }
+  avisoTemp(P, 'Guardado no Obsidian em ' + r.curto);
 }
 
 /* ---- ditar em vez de digitar ----
@@ -1376,14 +1370,16 @@ function avisarQueTerminou(P) {
 
 /* ---- copiar com um clique: a resposta inteira e cada bloco de codigo ----
    Antes nao havia botao nenhum: a unica saida era arrastar o mouse pelo texto. */
-function copiarTexto(txt, botao) {
-  navigator.clipboard.writeText(txt).then(() => {
-    if (!botao) return;
-    const antes = botao.innerHTML;
-    botao.innerHTML = ico('check');
-    botao.classList.add('copiou');
-    setTimeout(() => { botao.innerHTML = antes; botao.classList.remove('copiou'); }, 1400);
-  }).catch(() => {});
+async function copiarTexto(txt, botao) {
+  // quem copia e o processo principal: dentro do app o clipboard do navegador as vezes e
+  // barrado, e um botao de copiar que as vezes nao copia e pior do que nao ter botao
+  try { await window.api.copiar(txt); }
+  catch { try { await navigator.clipboard.writeText(txt); } catch { return; } }
+  if (!botao) return;
+  const antes = botao.innerHTML;
+  botao.innerHTML = ico('check');
+  botao.classList.add('copiou');
+  setTimeout(() => { botao.innerHTML = antes; botao.classList.remove('copiou'); }, 1400);
 }
 function botaoCopiar(titulo, pegarTexto) {
   const b = document.createElement('button');
@@ -2037,6 +2033,7 @@ function barraEsforco(P) {
 async function trocarEsforco(P, id) {
   // vale só para este painel: conversa nova continua nascendo em EF_NOVO
   P.effort = id; P.ultraAvisado = false;
+  lembrarEscolhaDaPasta(P);
   if (P.engine === 'claude' && P.started) await desligarMotor(P);
   savePanes();
 }
@@ -2223,6 +2220,7 @@ async function menuModelos(P) {
         const ef = esforcosDe(P);
         if (!ef.find(e => e.id === P.effort)) P.effort = mo.padraoEffort || ef[0].id;
         fillModels(P);
+        lembrarEscolhaDaPasta(P);        // esta pasta passa a nascer com este cérebro
         await desligarMotor(P); savePanes();
       }));
     }
@@ -2257,6 +2255,22 @@ function menuAnexo(P) {
   }));
 }
 
+/* ---- as skills que ele mais usa sobem para o topo ---- */
+const QUANTAS_FAVORITAS = 8;
+function contarUsoDeSkill(nome) {
+  if (!nome) return;
+  cfg.usoSkills = cfg.usoSkills || {};
+  cfg.usoSkills[nome] = (cfg.usoSkills[nome] || 0) + 1;
+  window.api.setConfig(cfg);
+}
+function maisUsadas(skills) {
+  const uso = cfg.usoSkills || {};
+  return skills
+    .filter(sk => uso[sk.name])
+    .sort((a, b) => uso[b.name] - uso[a.name])
+    .slice(0, QUANTAS_FAVORITAS);
+}
+
 /* ---- menu do / (ações, modelo e comandos) ---- */
 async function menuSkills(P, filtroInicial, focar) {
   const m = novoMenu(P);
@@ -2274,6 +2288,10 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Contexto', ic: 'eraser', nome: 'Limpar a tela', desc: 'a conversa continua', act: () => { P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); } },
     { sec: 'Contexto', ic: 'sparkles', nome: 'Começar conversa nova', act: () => novaConversa(P.engine) },
     { sec: 'Contexto', ic: 'file-text', nome: 'Resumir a conversa', desc: 'libera espaço sem perder o fio', act: () => compactarConversa(P) },
+    { sec: 'Contexto', ic: 'search', nome: 'Buscar nesta conversa', desc: '⌘F', act: () => abrirBuscaConversa(P) },
+    { sec: 'Contexto', ic: 'book', nome: 'Salvar no Obsidian', desc: 'vira nota no vault, na pasta do cliente', act: () => salvarConversaNoVault(P) },
+    { sec: 'Contexto', ic: 'mic', nome: 'Ditar', desc: 'falar em vez de digitar · ⌘⇧D', act: () => alternarDitado(P) },
+    { sec: 'Chat', ic: 'columns-2', nome: 'Perguntar aos dois motores', desc: 'a mesma pergunta no Claude e no Codex · ⌘D', act: () => perguntarAosDois(P) },
     { sec: 'Modelo', ic: 'brain', nome: 'Trocar modelo…', tag: modeloAtual(P).nome, act: () => menuModelos(P) },
     { sec: 'Modelo', ic: 'sliders-horizontal', nome: 'Esforço', tag: EF_PT[P.effort] || P.effort, act: () => menuModelos(P) },
     { sec: 'Modelo', ic: 'lock', nome: 'Modos de permissão', tag: modoDe(P).nome, act: () => menuModos(P) },
@@ -2304,14 +2322,25 @@ async function menuSkills(P, filtroInicial, focar) {
     // quem bate no nome vem antes de quem so bate na descricao
     const porNome = skills.filter(sk => q && sk.name.toLowerCase().includes(q));
     const porDesc = q ? skills.filter(sk => !sk.name.toLowerCase().includes(q) && (sk.desc || '').toLowerCase().includes(q)) : skills;
+    const usarSkill = (sk) => {
+      const inp = $('.p-input', P.el);
+      if (inp.value.startsWith('/') && !inp.value.includes(' ')) inp.value = '';
+      contarUsoDeSkill(sk.name);
+      inserirNoInput(P, '/' + sk.name);
+    };
+    // Sao 382 skills e o menu so mostra 150, em ordem fixa: as que ele usa todo dia podiam nem
+    // aparecer. Agora as mais usadas sobem para o topo, com secao propria.
+    if (!q) {
+      const favoritas = maisUsadas(skills);
+      if (favoritas.length) {
+        corpo.appendChild(elSecao('As que você mais usa'));
+        for (const sk of favoritas) corpo.appendChild(elItem({ ic: '/', nome: sk.name, desc: sk.desc }, () => usarSkill(sk)));
+      }
+    }
     const vis = (q ? [...porNome, ...porDesc] : skills).slice(0, 150);
     if (vis.length) {
       corpo.appendChild(elSecao('Comandos e skills' + (skills.length ? ' (' + skills.length + ')' : '')));
-      for (const sk of vis) corpo.appendChild(elItem({ ic: '/', nome: sk.name, desc: sk.desc }, () => {
-        const inp = $('.p-input', P.el);
-        if (inp.value.startsWith('/') && !inp.value.includes(' ')) inp.value = '';
-        inserirNoInput(P, '/' + sk.name);
-      }));
+      for (const sk of vis) corpo.appendChild(elItem({ ic: '/', nome: sk.name, desc: sk.desc }, () => usarSkill(sk)));
     } else if (!corpo.children.length) {
       corpo.innerHTML = '<div class="menu-empty">Nada encontrado.</div>';
     }

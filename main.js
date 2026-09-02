@@ -809,31 +809,113 @@ function acharNaConversa(file, alvo, engine) {
   } catch { return null; }
 }
 
-/* Buscar era sincrono: abria conversa por conversa (podem ser mais de mil arquivos, varios GB)
-   sem largar o processo principal. E TODO o app passa por ele, entao a resposta do Claude
-   parava no meio da frase e a janela nem arrastava. Agora devolve a vez do processador entre
-   um arquivo e outro, e desiste depois de 4 segundos: melhor resposta parcial rapida do que o
-   app congelado. */
+/* ---------- indice de busca ----------
+   Buscar abria conversa por conversa (mais de 600 arquivos, varios GB) e desistia em 4
+   segundos dizendo "olhei so as mais recentes". Agora cada conversa e lida UMA vez, o texto
+   limpo fica guardado em ~/.cockpit/indice-busca.json, e a busca roda em memoria: instantanea
+   e completa. Arquivo que nao mudou (mesma data e mesmo tamanho) nem e reaberto. */
+const IND_ARQ = path.join(HOME, '.cockpit', 'indice-busca.json');
+const IND_MAX = 40000;              // caracteres de texto guardados por conversa
+let indBusca = null, indiceSujo = false, indiceTimer = null;
+
+function lerIndiceBusca() {
+  if (indBusca) return indBusca;
+  try { indBusca = JSON.parse(fs.readFileSync(IND_ARQ, 'utf8')); } catch { indBusca = {}; }
+  return indBusca;
+}
+function gravarIndiceDepois() {
+  indiceSujo = true;
+  clearTimeout(indiceTimer);
+  indiceTimer = setTimeout(() => {
+    if (!indiceSujo) return;
+    try {
+      fs.mkdirSync(path.dirname(IND_ARQ), { recursive: true });
+      fs.writeFileSync(IND_ARQ, JSON.stringify(indBusca));
+      indiceSujo = false;
+    } catch {}
+  }, 4000);
+}
+/* tira do .jsonl so o que e texto de gente ou do motor: o resto e encanamento */
+function textoLegivel(file) {
+  let dados;
+  try {
+    const st = fs.statSync(file);
+    dados = st.size > 8 * 1024 * 1024 ? tailRead(file, 8 * 1024 * 1024) : fs.readFileSync(file, 'utf8');
+  } catch { return ''; }
+  const pega = (c) => typeof c === 'string' ? c
+    : Array.isArray(c) ? c.map(x => x && (x.text || x.thinking || '')).filter(Boolean).join(' ') : '';
+  const partes = [];
+  let tam = 0;
+  for (const linha of dados.split('\n')) {
+    if (!linha || linha[0] !== '{') continue;
+    let t = '';
+    try {
+      const d = JSON.parse(linha);
+      t = pega(d.message && d.message.content) || pega(d.payload && d.payload.content) || '';
+    } catch { continue; }
+    t = String(t).replace(/\s+/g, ' ').trim();
+    if (!t) continue;
+    partes.push(t); tam += t.length + 1;
+    if (tam >= IND_MAX) break;
+  }
+  return partes.join('\n');
+}
+function noIndice(file) {
+  const ind = lerIndiceBusca();
+  let st;
+  try { st = fs.statSync(file); } catch { return null; }
+  const e = ind[file];
+  if (e && e.m === st.mtimeMs && e.t === st.size) return e;
+  const novo = { m: st.mtimeMs, t: st.size, x: textoLegivel(file) };
+  ind[file] = novo;
+  gravarIndiceDepois();
+  return novo;
+}
+function trechoDoIndice(texto, alvo) {
+  const j = texto.toLowerCase().indexOf(alvo);
+  if (j < 0) return null;
+  const de = Math.max(0, j - 45);
+  return (de > 0 ? '…' : '') + texto.slice(de, de + 150).replace(/\s+/g, ' ').trim() + '…';
+}
+
 handle('sessions:buscar', async (_e, { engine, termo, itens }) => {
   const alvo = String(termo || '').toLowerCase().trim();
   if (!alvo) return [];
   const achados = [];
-  const ateQuando = Date.now() + 4000;
   const lista = itens || [];
-  let vistos = 0;
-  let cortou = false;
+  // teto largo: so entra em acao na primeira busca, quando o indice ainda esta sendo montado
+  const ateQuando = Date.now() + 20000;
+  let vistos = 0, cortou = false;
   for (const it of lista) {
     vistos++;
     if (!it.file) continue;
-    const t = acharNaConversa(it.file, alvo, engine);
-    if (t) achados.push({ id: it.id, trecho: t });
+    const e = noIndice(it.file);
+    if (e) {
+      const t = trechoDoIndice(e.x, alvo);
+      if (t) achados.push({ id: it.id, trecho: t });
+    }
     if (achados.length >= 40) break;
     if (Date.now() > ateQuando) { cortou = true; break; }
-    await new Promise(r => setImmediate(r));
+    if (vistos % 25 === 0) await new Promise(r => setImmediate(r));
   }
   // o corte por tempo nao pode ser silencioso: se sobrou conversa sem olhar, a tela avisa
   return { achados, parcial: cortou ? { vistos, total: lista.length } : null };
 });
+
+/* Montar o indice ANTES de ele precisar: passados 20s de app aberto, indexa devagarinho,
+   um arquivo por vez, deixando o processador respirar entre eles. */
+function montarIndiceDeFundo() {
+  setTimeout(async () => {
+    try {
+      const listas = [claudeSessions(5000, true) || [], codexSessions(true, {}) || []];
+      const arquivos = listas.flat().map(s => s && s.file).filter(Boolean);
+      for (const f of arquivos) {
+        noIndice(f);
+        await new Promise(r => setTimeout(r, 12));   // devagar de proposito: nada de travar a tela
+      }
+    } catch {}
+  }, 20000);
+}
 
 function tailRead(file, bytes) {
   try {
@@ -1630,6 +1712,8 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
   win.on('focus', zerarBadge);   // voltou para a janela: o numero no Dock nao serve mais
+  // o ditado precisa do microfone; a pagina e o proprio app, entao o pedido e liberado
+  win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(true));
 
   // menu do botao direito: copiar, colar, procurar, etc. — o do sistema mesmo
   win.webContents.on('context-menu', (_ev, props) => {
@@ -1758,6 +1842,60 @@ handle('vps:testar', async () => {
   if (rr.error) return { error: rr.error };
   return { ok: true, versao: (rr.out || '').split('\n')[1] || '' };
 });
+/* ---------- guardar a conversa no Obsidian ----------
+   Regra da casa: texto mora no vault. Conversa de cliente vai para a pasta dele; o resto cai
+   em "3 - Operação". O nome do cliente sai da pasta do chat (…/Projetos-claude/<Cliente>/…). */
+const VAULT = path.join(HOME, 'Documents', 'Adsure - Copy Lançamentos');
+function pastaNoVault(cwd) {
+  const m = String(cwd || '').match(/Projetos-claude\/([^/]+)/);
+  const cliente = m && m[1];
+  const genericos = ['Homero', 'Adsure'];
+  if (cliente && !genericos.includes(cliente)) {
+    const dele = path.join(VAULT, '2 - Clientes', cliente, '_Fontes');
+    if (fs.existsSync(path.join(VAULT, '2 - Clientes', cliente))) return dele;
+  }
+  return path.join(VAULT, '3 - Operação', 'Conversas do Cockpit');
+}
+handle('vault:salvar', (_e, { titulo, cwd, motor, texto }) => {
+  try {
+    if (!fs.existsSync(VAULT)) return { error: 'não achei o vault do Obsidian' };
+    const pasta = pastaNoVault(cwd);
+    fs.mkdirSync(pasta, { recursive: true });
+    const d = new Date();
+    const dia = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const limpo = String(titulo || 'Conversa').replace(/[\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 70);
+    let arq = path.join(pasta, dia + ' - ' + limpo + '.md');
+    let n = 2;
+    while (fs.existsSync(arq)) arq = path.join(pasta, dia + ' - ' + limpo + ' (' + (n++) + ').md');
+    const cab = '---\nfonte: Cockpit\nmotor: ' + (motor || '') + '\npasta: ' + (cwd || '') + '\ndata: ' + dia + '\n---\n\n# ' + limpo + '\n\n';
+    fs.writeFileSync(arq, cab + (texto || ''), 'utf8');
+    return { ok: true, caminho: arq, pasta, curto: arq.replace(VAULT + '/', '') };
+  } catch (e) { return { error: e.message }; }
+});
+
+/* ---------- ditar: o audio vira texto aqui no Mac ----------
+   whisper.cpp com o modelo small. Sem internet, sem conta, sem custo por minuto. */
+const VOZ_MODELO = path.join(HOME, '.cockpit', 'modelos', 'ggml-small.bin');
+handle('voz:transcrever', async (_e, { audio }) => {
+  try {
+    if (!fs.existsSync(VOZ_MODELO)) return { error: 'falta o modelo de voz em ~/.cockpit/modelos' };
+    const whisper = acharBin('whisper-cli');
+    const ff = acharBin('ffmpeg');
+    if (!whisper || !ff) return { error: 'falta o whisper-cli ou o ffmpeg' };
+    const base = path.join(os.tmpdir(), 'ck-voz-' + process.pid);
+    fs.writeFileSync(base + '.webm', Buffer.from(audio, 'base64'));
+    // o whisper so aceita wav de 16 kHz mono: o navegador grava em webm/opus
+    const conv = await rodar(ff, ['-y', '-i', base + '.webm', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', base + '.wav'], 60000);
+    if (!fs.existsSync(base + '.wav')) return { error: 'não converti o áudio' + (conv.errout ? ': ' + String(conv.errout).slice(-120) : '') };
+    await rodar(whisper, ['-m', VOZ_MODELO, '-l', 'pt', '-nt', '-otxt', '-of', base, base + '.wav'], 180000);
+    const saida = base + '.txt';
+    const texto = fs.existsSync(saida) ? fs.readFileSync(saida, 'utf8').trim() : '';
+    for (const f of [base + '.webm', base + '.wav', saida]) { try { fs.unlinkSync(f); } catch {} }
+    if (!texto) return { error: 'não saiu texto nenhum' };
+    return { texto };
+  } catch (e) { return { error: e.message }; }
+});
+
 /* ---------- avisar que a resposta ficou pronta ----------
    Ele sai da frente do Mac enquanto o motor trabalha e voltava so para descobrir se ja tinha
    acabado. Agora chega recado do sistema e o icone no Dock ganha o numero de chats prontos.
@@ -1788,6 +1926,7 @@ function zerarBadge() {
   if (app.dock) app.dock.setBadge('');
 }
 
+handle('clipboard:copiar', (_e, txt) => { clipboard.writeText(String(txt || '')); return { ok: true }; });
 handle('shell:open', (_e, p) => shell.openPath(p));
 handle('shell:link', (_e, url) => {
   if (/^https?:\/\//i.test(url)) return shell.openExternal(url);
@@ -2047,7 +2186,7 @@ handle('web:ligar', async (_e, ligar) => {
   return { ligado: !!web, endereco: web ? web.endereco : '', senha: senhaDoTelefone() };
 });
 
-app.whenReady().then(() => { anota('app iniciou'); menu(); createWindow();
+app.whenReady().then(() => { anota('app iniciou'); menu(); createWindow(); montarIndiceDeFundo();
   try {
     const cfgInicial = loadConfig();
     // Quem já usava o iPhone não precisa caçar um novo botão após atualizar.

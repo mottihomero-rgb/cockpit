@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('api', {
   mcpList: (e) => ipcRenderer.invoke('mcp:list', e),
   mcpAcao: (o) => ipcRenderer.invoke('mcp:acao', o),
   avisarPronto: (o) => ipcRenderer.invoke('aviso:pronto', o),
+  copiar: (t) => ipcRenderer.invoke('clipboard:copiar', t),
   salvarNoVault: (o) => ipcRenderer.invoke('vault:salvar', o),
   ditar: (o) => ipcRenderer.invoke('voz:transcrever', o),
 

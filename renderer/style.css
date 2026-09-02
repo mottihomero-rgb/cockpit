@@ -263,6 +263,11 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
   display:grid;place-items:center;border:1px solid transparent}
 .cb:hover{background:var(--hover2);color:var(--fg)}
 .p-slash{font-family:var(--mono);font-size:12px;border-color:var(--line2)}
+/* microfone: vermelho pulsando enquanto grava, girando enquanto vira texto */
+.p-mic.gravando{background:var(--red);color:#fff;animation:mic-pulsa 1.1s ease-in-out infinite}
+.p-mic.pensando{color:var(--accent);animation:mic-gira 1s linear infinite}
+@keyframes mic-pulsa{0%,100%{opacity:1}50%{opacity:.45}}
+@keyframes mic-gira{to{transform:rotate(360deg)}}
 .modo-btn{display:flex;align-items:center;gap:6px;padding:3px 9px;border-radius:7px;
   font-size:11.5px;color:var(--fg-dim);border:1px solid transparent;white-space:nowrap}
 .modo-btn:hover{background:var(--hover2);color:var(--fg);border-color:var(--line2)}
