@@ -75,7 +75,11 @@ const ULTRACODE_MSG = 'MODO ULTRACODE LIGADO PELO USUÁRIO: eu autorizo explicit
 const MODELOS_CLAUDE = [
   { id: 'claude-opus-5[1m]', nome: 'Opus 5 (1M)', desc: 'O mais forte, com memória gigante',
     efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'xhigh', padrao: true },
-  { id: 'claude-fable-5', nome: 'Fable 5', desc: 'O mais novo da casa',
+  // Fable 5.1 so existe do CLI 2.1.251 para cima. Com o CLI velho o modelo devolve erro 400
+  // pedindo 'claude update' — o app copia a versao nova para o caminho fixo no arranque.
+  { id: 'claude-fable-5-1[1m]', nome: 'Fable 5.1', desc: 'O mais novo, com memória gigante',
+    efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'xhigh' },
+  { id: 'claude-fable-5', nome: 'Fable 5', desc: 'A geração anterior do Fable',
     efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'xhigh' },
   { id: 'claude-opus-5', nome: 'Opus 5', desc: 'O mais forte',
     efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'xhigh' },
