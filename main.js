@@ -1129,7 +1129,26 @@ function claudeSessions(limit, incluirRobos) {
   return out;
 }
 
-function claudeHistory(file, maxMsgs) {
+/* ---- quanto da conversa volta para a tela ----
+   Antes era um `slice(-60)` cru sobre TUDO, e cada Edit, Bash ou Read conta como item. Numa
+   conversa de trabalho as ferramentas comem as 60 vagas sozinhas: medido em 03/09/2026, uma
+   conversa de 10 falas do Homero + 59 respostas + 363 ferramentas voltava com 4 falas e 11
+   respostas. Ou seja, o que sumia era justamente a CONVERSA — e ela ainda alimenta o P.hist,
+   de onde sai o contexto quando o chat volta sem o fio. Agora quem manda no corte e a fala:
+   elas voltam todas (ate maxFalas) e so as ferramentas mais ANTIGAS sao podadas, ate maxTools. */
+function cortarHistorico(msgs, maxFalas, maxTools) {
+  let falas = 0, ini = 0;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'tool') continue;
+    if (++falas > maxFalas) { ini = i + 1; break; }
+  }
+  const trecho = msgs.slice(ini);
+  let sobra = trecho.filter(m => m.role === 'tool').length - (maxTools || 250);
+  if (sobra <= 0) return trecho;
+  return trecho.filter(m => !(m.role === 'tool' && sobra-- > 0));
+}
+
+function claudeHistory(file, maxFalas, maxTools) {
   const msgs = [];
   let data = '';
   try {
@@ -1156,10 +1175,10 @@ function claudeHistory(file, maxMsgs) {
       }
     }
   }
-  return msgs.slice(-(maxMsgs || 60));
+  return cortarHistorico(msgs, maxFalas || 600, maxTools);
 }
 
-function codexHistory(file, maxMsgs) {
+function codexHistory(file, maxFalas, maxTools) {
   const msgs = [];
   let data = '';
   try { data = fs.readFileSync(file, 'utf8'); } catch { return msgs; }
@@ -1181,7 +1200,7 @@ function codexHistory(file, maxMsgs) {
       msgs.push({ role: 'tool', name: p.name === 'shell' || p.type === 'local_shell_call' ? 'Terminal' : (p.name || 'Ferramenta'), arg });
     }
   }
-  return msgs.slice(-(maxMsgs || 60));
+  return cortarHistorico(msgs, maxFalas || 600, maxTools);
 }
 
 handle('sessions:claude', (_e, incluirRobos) => claudeSessions(5000, incluirRobos));
@@ -1341,7 +1360,7 @@ handle('sessions:history', (_e, { engine, file, id, cwd }) => {
   // existe mais: nos dois casos, procurar pelo id
   if (!alvo && engine === 'claude') alvo = acharConversaClaude(id, cwd);
   if (!alvo) return [];
-  return engine === 'claude' ? claudeHistory(alvo, 60) : codexHistory(alvo, 60);
+  return engine === 'claude' ? claudeHistory(alvo, 600, 250) : codexHistory(alvo, 600, 250);
 });
 
 /* ======================= comandos e skills ======================= */
