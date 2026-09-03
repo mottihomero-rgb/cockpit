@@ -359,7 +359,7 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
   font-size:11.5px;color:var(--fg-dim);border:1px solid transparent;white-space:nowrap}
 .modo-btn:hover{background:var(--hover2);color:var(--fg);border-color:var(--line2)}
 .modo-ic{font-size:11px;opacity:.85}
-.p-send,.p-stop{width:25px;height:25px;border-radius:6px;display:grid;place-items:center;font-size:12px;flex:none}
+.p-send,.p-stop{width:26px;height:24px;border-radius:6px;display:grid;place-items:center;font-size:12px;flex:none}
 .p-send{background:var(--accent);color:var(--sobre-accent)}
 .p-send:disabled{background:#3f3f3f;color:#7a7a7a;cursor:default}
 .p-stop{background:var(--bg3);border:1px solid var(--line2);color:var(--red);font-size:9px}
@@ -1296,10 +1296,15 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .ag-vazio-tit{font-size:14px;font-weight:600;color:var(--fg-strong);margin-bottom:8px}
 .ag-vazio-txt{font-size:12.5px;color:var(--fg-dim);line-height:1.6}
 
-/* o botão na barra de baixo, colado no raio */
-.p-agentes{display:flex;align-items:center;gap:4px}
+/* o botão na barra de baixo, ao lado do modelo.
+   O número só existe quando há agente: com o <span> vazio ligado, o gap do flex continuava
+   valendo e empurrava o ícone para a esquerda dentro do botão — de fora parecia espaço
+   desigual entre os ícones da barra. Sem número, o span some e o ícone volta ao centro. */
+.p-agentes{display:flex;align-items:center;justify-content:center;gap:4px;padding:0}
 .p-agentes.vazio{opacity:.55}
-.p-agentes .pa-n{font-size:10px;font-weight:700;letter-spacing:.2px}
+.p-agentes .pa-n{display:none;font-size:10px;font-weight:700;letter-spacing:.2px}
+.p-agentes.tem-n{width:auto;min-width:26px;padding:0 6px}
+.p-agentes.tem-n .pa-n{display:inline}
 .p-agentes.vivo{color:var(--claude);border-color:color-mix(in srgb,var(--claude) 45%,var(--line))}
 .p-agentes.vivo .ic{animation:ag-pisca 1.6s ease-in-out infinite}
 @keyframes ag-pisca{0%,100%{opacity:1}50%{opacity:.45}}

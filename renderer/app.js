@@ -3176,7 +3176,9 @@ function pintarBotaoAgentes(P) {
   bt.classList.toggle('vazio', total === 0);
   bt.classList.toggle('vivo', vivos > 0);
   const sel = $('.pa-n', bt);
-  if (sel) sel.textContent = vivos > 0 ? String(vivos) : (total ? String(total) : '');
+  const n = vivos > 0 ? String(vivos) : (total ? String(total) : '');
+  if (sel) sel.textContent = n;
+  bt.classList.toggle('tem-n', !!n);
   bt.title = vivos > 0
     ? vivos + (vivos === 1 ? ' agente trabalhando agora' : ' agentes trabalhando agora') + ' — clique para ver o fluxo'
     : (total ? 'Ver o time de agentes deste chat' : 'O time de agentes aparece aqui quando você usa um OS ou liga o ultracode');
