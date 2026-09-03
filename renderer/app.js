@@ -1679,9 +1679,9 @@ function cartaoDeDiff(P, ed) {
   cab.addEventListener('click', () => cx.classList.toggle('fechado'));
   cx.appendChild(cab);
   for (const c of corpos) cx.appendChild(c);
-  // NASCE FECHADO, sempre. Só o cabeçalho (nome do arquivo e +x/−y) fica à vista; o resto
-  // aparece quando ele clicar. Diff aberto sozinho empurrava a conversa inteira para longe.
-  cx.classList.add('fechado');
+  // Quem nasce fechado é o PASSO que segura este cartão (ver toolStart). Fechar o cartão aqui
+  // também obrigaria a dois cliques para ver a mesma coisa. Aberto, um clique basta — e o
+  // cabeçalho continua servindo de interruptor para quem quiser recolher só o diff.
   return cx;
 }
 
