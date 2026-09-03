@@ -1180,3 +1180,117 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .sp-q{flex:none;font-size:10px;color:var(--fg-fraco)}
 
 .sc-aviso{margin-top:4px;color:var(--yellow)}
+
+/* ============ painel do time de agentes (fluxo de cima para baixo) ============
+   O corredor vertical entre um bloco e outro (.ag-liga) é onde a linha é desenhada: encolher
+   isso devolve o visual de lista e mata a leitura de fluxo. A cor viva do momento é --ag, que
+   o JS troca conforme o motor do chat (Claude ou Codex). */
+#agPainel{position:fixed;inset:38px 0 0 0;z-index:500;display:grid;place-items:center;
+  background:var(--veu);backdrop-filter:blur(8px);padding:22px;--ag:var(--claude)}
+#agPainel.hidden{display:none !important}
+.ag-cx{width:min(1000px,96vw);height:min(86vh,880px);display:flex;flex-direction:column;
+  background:var(--bg-flutua);border:1px solid var(--line2);border-radius:16px;
+  box-shadow:0 24px 70px var(--sombra2);overflow:hidden}
+.ag-top{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);
+  background:var(--bg2);flex:none}
+.ag-tit{font-size:13.5px;font-weight:650;color:var(--fg-strong);letter-spacing:.2px}
+.ag-sub{font-size:11px;color:var(--fg-fraco);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-gap{flex:1}
+.ag-conta{font-size:11px;color:var(--fg-dim);white-space:nowrap}
+.ag-x{width:26px;height:26px;display:grid;place-items:center;border-radius:7px;color:var(--fg-dim);
+  background:transparent;border:0;cursor:pointer}
+.ag-x:hover{background:var(--erro-fundo);color:#fff}
+.ag-x .ic{width:15px;height:15px}
+.ag-corpo{flex:1;overflow-y:auto;overflow-x:hidden;padding:26px 22px 40px;display:flex;
+  background:radial-gradient(circle at 50% 0,var(--hover) 0,transparent 60%)}
+/* margem automatica em vez de justify-content: com pouco conteudo centraliza, com muito
+   conteudo o topo NAO e cortado (que e o defeito do justify-content:center num scroll) */
+.ag-fluxo{margin:auto}
+
+.ag-fluxo{display:flex;flex-direction:column;align-items:center;min-width:min-content}
+/* fase que ainda nao chegou: existe no desenho, mas apagada */
+.ag-fase-futura{display:flex;align-items:center;gap:10px;padding:7px 16px;border-radius:10px;
+  background:transparent;border:1px dashed var(--line2);opacity:.6}
+
+/* os nós de começo e fim */
+.ag-no{border:1px solid var(--line2);background:var(--bg3);border-radius:12px;padding:10px 16px;
+  text-align:center;max-width:520px}
+.ag-no-rot{font-size:9.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--fg-fraco);margin-bottom:2px}
+.ag-no-txt{font-size:12.5px;color:var(--fg-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-inicio{border-color:var(--ag);box-shadow:0 0 0 3px color-mix(in srgb,var(--ag) 12%,transparent)}
+.ag-fim.ok{border-color:var(--green)}
+.ag-fim.ok .ag-no-rot{color:var(--green)}
+.ag-fim.esperando{border-style:dashed}
+
+/* o corredor onde a linha é desenhada */
+.ag-liga{width:2px;height:26px;background:var(--line2);flex:none;border-radius:2px}
+.ag-liga.feita{background:var(--green);opacity:.55}
+.ag-liga.viva{background:linear-gradient(180deg,var(--line2) 0%,var(--ag) 35%,var(--ag) 55%,var(--line2) 100%);
+  background-size:100% 220%;animation:ag-desce 1.1s linear infinite}
+@keyframes ag-desce{from{background-position:0 -100%}to{background-position:0 100%}}
+
+/* faixa do workflow */
+.ag-titulo-bloco{display:flex;align-items:center;gap:8px;padding:5px 14px;border-radius:999px;
+  background:var(--bg4);border:1px solid var(--line2)}
+.ag-bloco-rot{font-size:9px;text-transform:uppercase;letter-spacing:.9px;color:var(--fg-fraco)}
+.ag-bloco-nome{font-size:12px;font-weight:600;color:var(--fg-strong)}
+
+/* fase + os agentes dela */
+.ag-grupo{display:flex;flex-direction:column;align-items:center;width:100%}
+.ag-fase{display:flex;align-items:center;gap:10px;padding:7px 16px;border-radius:10px;
+  background:var(--bg2);border:1px solid var(--line)}
+.ag-grupo.rodando .ag-fase{border-color:var(--ag);background:color-mix(in srgb,var(--ag) 8%,var(--bg2))}
+.ag-grupo.pronto .ag-fase{border-color:color-mix(in srgb,var(--green) 45%,var(--line))}
+.ag-fase-rot{font-size:9px;text-transform:uppercase;letter-spacing:.9px;color:var(--fg-fraco)}
+.ag-fase-tit{font-size:12.5px;font-weight:650;color:var(--fg-strong)}
+.ag-fase-cont{font-size:10.5px;color:var(--fg-dim)}
+.ag-tronco{width:2px;height:16px;background:var(--line2);border-radius:2px}
+.ag-grupo.rodando .ag-tronco{background:var(--ag)}
+
+/* o leque: uma barra horizontal ligando as pernas de cada cartão */
+.ag-cards{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;padding-top:0}
+.ag-col{position:relative;padding-top:20px;display:flex;flex-direction:column;align-items:center}
+.ag-perna{position:absolute;top:0;left:50%;width:2px;height:20px;background:var(--line2);transform:translateX(-50%)}
+.ag-cards.varios .ag-col::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--line2)}
+.ag-cards.varios .ag-col:first-child::after{left:50%}
+.ag-cards.varios .ag-col:last-child::after{right:50%}
+.ag-grupo.rodando .ag-perna,.ag-grupo.rodando .ag-cards.varios .ag-col::after{background:color-mix(in srgb,var(--ag) 55%,var(--line2))}
+
+/* cartão de um agente */
+.ag-card{width:212px;text-align:left;background:var(--bg3);border:1px solid var(--line);
+  border-radius:12px;padding:11px 13px 9px;transition:.15s}
+.ag-card-top{display:flex;align-items:flex-start;gap:7px;margin-bottom:5px}
+.ag-card-top .ag-bola{margin-top:4px}
+.ag-bola{width:8px;height:8px;border-radius:50%;background:var(--fg-fraco);flex:none}
+.ag-nome{font-size:12.5px;font-weight:650;color:var(--fg-strong);line-height:1.3;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ag-fazendo{font-size:11.5px;color:var(--fg-dim);margin-bottom:3px}
+.ag-detalhe{font-family:var(--mono);font-size:10.5px;color:var(--fg-fraco);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;margin-bottom:5px}
+.ag-pe{font-size:10px;color:var(--fg-fraco);letter-spacing:.2px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+
+.ag-card.agora{border-color:var(--ag);background:color-mix(in srgb,var(--ag) 7%,var(--bg3));
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--ag) 10%,transparent)}
+.ag-card.agora .ag-bola{background:var(--ag);animation:ag-pulsa 1.3s ease-in-out infinite}
+.ag-card.agora .ag-fazendo{color:var(--ag);font-weight:600}
+@keyframes ag-pulsa{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ag) 55%,transparent)}
+  50%{box-shadow:0 0 0 5px transparent}}
+.ag-card.pronto{border-color:color-mix(in srgb,var(--green) 40%,var(--line))}
+.ag-card.pronto .ag-bola{background:var(--green)}
+.ag-card.erro{border-color:var(--red)}
+.ag-card.erro .ag-bola{background:var(--red)}
+.ag-card.erro .ag-fazendo{color:var(--red)}
+.ag-card.espera{border-style:dashed;opacity:.62}
+
+.ag-vazio{max-width:420px;margin:60px auto 0;text-align:center}
+.ag-vazio-tit{font-size:14px;font-weight:600;color:var(--fg-strong);margin-bottom:8px}
+.ag-vazio-txt{font-size:12.5px;color:var(--fg-dim);line-height:1.6}
+
+/* o botão na barra de baixo, colado no raio */
+.p-agentes{display:flex;align-items:center;gap:4px}
+.p-agentes.vazio{opacity:.55}
+.p-agentes .pa-n{font-size:10px;font-weight:700;letter-spacing:.2px}
+.p-agentes.vivo{color:var(--claude);border-color:color-mix(in srgb,var(--claude) 45%,var(--line))}
+.p-agentes.vivo .ic{animation:ag-pisca 1.6s ease-in-out infinite}
+@keyframes ag-pisca{0%,100%{opacity:1}50%{opacity:.45}}

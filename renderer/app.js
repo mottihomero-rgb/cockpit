@@ -29,6 +29,8 @@ Object.assign(ICONES, {
   'mic': '<path d="M12 19v3" /> <path d="M19 10v2a7 7 0 0 1-14 0v-2" /> <rect x="9" y="2" width="6" height="13" rx="3" />',
   'columns-2': '<rect width="18" height="18" x="3" y="3" rx="2" /> <path d="M12 3v18" />',
   'book': '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />',
+  // um no em cima que se abre em tres embaixo: e o desenho do time de agentes
+  'agentes': '<circle cx="12" cy="4" r="2" /> <circle cx="5" cy="20" r="2" /> <circle cx="12" cy="20" r="2" /> <circle cx="19" cy="20" r="2" /> <path d="M12 6v4" /> <path d="M5 18v-2a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2" /> <path d="M12 15v3" />',
 });
 const ico = (n) => '<svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + (ICONES[n] || '') + '</svg>';
 const svgMotor = (eng) => '<svg viewBox="0 0 24 24" class="logo-motor"><path d="' + LOGO[eng === 'codex' ? 'codex' : 'claude'] + '"/></svg>';
@@ -534,6 +536,9 @@ function newPane(opts = {}) {
   $('.p-plus', el).addEventListener('click', (e) => { e.stopPropagation(); menuAnexo(P); });
   // botao /  (comandos)
   $('.p-slash', el).addEventListener('click', (e) => { e.stopPropagation(); menuSkills(P); });
+
+  // botao do time de agentes, grudado no raio: e ali que ele olha quando solta um OS
+  criarBotaoAgentes(P, el);
 
   // botao do microfone (ditar em vez de digitar)
   const btMic = document.createElement('button');
@@ -2413,6 +2418,8 @@ document.addEventListener('keydown', (e) => {
   // dentro do terminal embutido, Esc é do terminal, não fecha a janelinha
   const dentroTerm = document.activeElement && document.activeElement.closest && document.activeElement.closest('.term-wrap');
   if (dentroTerm) return;
+  // o painel dos agentes fica por cima de tudo: e o primeiro a sair no Esc
+  if (agPainelAberto()) { fecharPainelAgentes(); return; }
   const visorAberto = [...panes.values()].some(P => !$('.p-visor', P.el).classList.contains('hidden'));
   if (visorAberto) { fecharVisor(); return; }
   const popupAberto = [...panes.values()].some(P => !$('.p-modal', P.el).classList.contains('hidden'));
@@ -2920,6 +2927,386 @@ function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
     if (r && r.error) term.write('\r\n\x1b[31m[não consegui rodar: ' + r.error + ']\x1b[0m\r\n');
   });
   setTimeout(() => term.focus(), 60);
+}
+
+
+/* ============ painel dos agentes (o fluxo, de cima para baixo) ============
+   Quando ele solta um OS, liga o ultracode ou manda um workflow, o trabalho deixa de ser uma
+   conversa e vira um TIME. Na tela isso saia como mais uma linha de "Executado N comandos" —
+   do mesmo tamanho de um Read. Aqui o time aparece desenhado: o pedido em cima, a fase, os
+   agentes daquela fase lado a lado, a proxima fase, e o fim embaixo.
+   A fonte e o proprio motor: os avisos task_started / task_progress / task_updated /
+   task_notification que o CLI ja manda e que o app jogava fora. Nada de ler arquivo no disco. */
+
+const AG_FERR_PT = {
+  Bash: 'rodando um comando', Read: 'lendo um arquivo', Write: 'escrevendo um arquivo',
+  Edit: 'mexendo num arquivo', NotebookEdit: 'mexendo num notebook',
+  Glob: 'procurando arquivos', Grep: 'procurando no código', LS: 'olhando a pasta',
+  WebSearch: 'pesquisando na web', WebFetch: 'lendo uma página',
+  Agent: 'chamando outro agente', Task: 'chamando outro agente', SendMessage: 'falando com outro agente',
+  Workflow: 'tocando um workflow', Skill: 'usando uma skill', TodoWrite: 'organizando as tarefas',
+  StructuredOutput: 'montando a resposta', TaskOutput: 'buscando o resultado',
+  ToolSearch: 'procurando ferramenta', Monitor: 'ficando de olho', Artifact: 'publicando a página',
+  ReportFindings: 'relatando o que achou', KillShell: 'encerrando um processo',
+};
+const AG_MCP_PT = {
+  browser_navigate: 'abrindo uma página', browser_click: 'clicando na página',
+  browser_type: 'digitando na página', browser_take_screenshot: 'tirando um print',
+  browser_snapshot: 'lendo a página', browser_evaluate: 'mexendo na página',
+  execute_sql: 'consultando o banco', search: 'buscando', query_corpus: 'buscando na memória',
+};
+const AG_AGENTE_PT = {
+  'general-purpose': 'Pesquisador geral', Explore: 'Explorador', Plan: 'Arquiteto',
+  claude: 'Assistente', 'workflow-subagent': 'Agente do workflow',
+  'code-reviewer': 'Revisor de código', 'statusline-setup': 'Ajustes da barra',
+};
+/* O nome vem em ingles do motor. Traduzir aqui e barato e e o que faz o painel ser lido de
+   relance; o que nao estiver no dicionario aparece com o nome de origem, entao ferramenta nova
+   da Anthropic nunca quebra a tela — so aparece em ingles ate alguem traduzir. */
+function agNomeFerramenta(n) {
+  if (!n) return '';
+  if (AG_FERR_PT[n]) return AG_FERR_PT[n];
+  if (n.startsWith('mcp__')) {
+    const p = n.split('__');
+    const fim = p[p.length - 1] || '';
+    if (AG_MCP_PT[fim]) return AG_MCP_PT[fim];
+    return 'usando ' + (p[1] || 'um conector').replace(/^(plugin_|claude_ai_)/, '').replace(/_/g, ' ');
+  }
+  return n;
+}
+function agBonito(s) {
+  return String(s || '').replace(/[-_:]+/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^./, (c) => c.toUpperCase());
+}
+function agNomeAgente(t) {
+  return AG_AGENTE_PT[t] || agBonito(t);
+}
+function agTempo(ms) {
+  if (!ms && ms !== 0) return '';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  return m + 'min' + (s % 60 ? ' ' + (s % 60) + 's' : '');
+}
+function agTokens(n) {
+  if (!n) return '';
+  return n >= 1000 ? Math.round(n / 1000) + 'k palavras-token' : n + ' palavras-token';
+}
+
+function agEstado(P) {
+  if (!P.ag) P.ag = { tarefas: new Map(), ordem: [] };
+  return P.ag;
+}
+/* Um evento do motor entra aqui e vira estado. A tela so e redesenhada se o painel estiver
+   aberto — com o painel fechado isto custa quase nada, e por isso pode ficar sempre ligado. */
+function agentesEvento(P, ev) {
+  const A = agEstado(P);
+  const pega = (id) => {
+    let t = A.tarefas.get(id);
+    if (!t) {
+      t = { id, classe: '', desc: '', tipo: '', workflow: '', inicio: Date.now(), fim: 0,
+        estado: 'rodando', ferramenta: '', resumo: '', uso: null, fases: [], agentes: new Map() };
+      A.tarefas.set(id, t); A.ordem.push(id);
+    }
+    return t;
+  };
+  if (ev.ev === 'inicio') {
+    const t = pega(ev.id);
+    t.classe = ev.classe || ''; t.desc = ev.desc || ''; t.tipo = ev.tipo || '';
+    t.workflow = ev.workflow || ''; t.prompt = ev.prompt || ''; t.inicio = ev.em || Date.now();
+    t.estado = 'rodando';
+  } else if (ev.ev === 'andamento') {
+    const t = pega(ev.id);
+    if (ev.ferramenta) t.ferramenta = ev.ferramenta;
+    if (ev.resumo) t.resumo = ev.resumo;
+    if (ev.uso) t.uso = ev.uso;
+    t.visto = ev.em || Date.now();
+    // O fluxo do workflow as vezes vem vazio (o aviso e so de gasto). Vazio nao pode apagar o
+    // que ja foi desenhado: mistura por indice, mantendo o que ja se sabia de cada agente.
+    if (ev.fluxo && ev.fluxo.length) {
+      const fases = [];
+      for (const it of ev.fluxo) {
+        if (it.type === 'workflow_phase') { fases.push({ i: it.index, titulo: it.title || '' }); continue; }
+        if (it.type !== 'workflow_agent') continue;
+        const ant = t.agentes.get(it.index) || {};
+        // a hora em que ele apareceu pela primeira vez: e dai que sai o tempo correndo no cartao
+        // enquanto o motor ainda nao mandou a duracao final
+        if (!ant.desde) ant.desde = ev.em || Date.now();
+        t.agentes.set(it.index, Object.assign({}, ant, {
+          i: it.index, rotulo: it.label || ant.rotulo || '', fase: it.phaseTitle || ant.fase || '',
+          faseI: it.phaseIndex || ant.faseI || 0, estado: it.state || ant.estado || 'espera',
+          ferramenta: it.lastToolName || ant.ferramenta || '', detalhe: it.lastToolSummary || ant.detalhe || '',
+          tokens: it.tokens || ant.tokens || 0, chamadas: it.toolCalls || ant.chamadas || 0,
+          duracao: it.durationMs || ant.duracao || 0, agentId: it.agentId || ant.agentId || '',
+          pedido: it.promptPreview || ant.pedido || '',
+        }));
+      }
+      if (fases.length) t.fases = fases;
+    }
+  } else if (ev.ev === 'mudou') {
+    const t = pega(ev.id);
+    const p = ev.patch || {};
+    if (p.status) t.estado = p.status === 'completed' ? 'pronto' : (p.status === 'killed' ? 'parado' : p.status);
+    if (p.end_time) t.fim = p.end_time;
+  } else if (ev.ev === 'fim') {
+    const t = pega(ev.id);
+    t.estado = ev.estado === 'completed' ? 'pronto' : (ev.estado === 'killed' ? 'parado' : 'erro');
+    t.fim = ev.em || Date.now();
+    if (ev.resumo) t.resumo = ev.resumo;
+    if (ev.uso) t.uso = ev.uso;
+  }
+  pintarBotaoAgentes(P);
+  if (agPaneAberto === P) agAgendarDesenho();
+}
+
+// quantos estao trabalhando NESTE momento: e o numero que aparece grudado no botao
+function agAtivos(P) {
+  const A = P.ag; if (!A) return 0;
+  let n = 0;
+  for (const t of A.tarefas.values()) {
+    if (t.estado !== 'rodando') continue;
+    if (t.agentes.size) {
+      for (const a of t.agentes.values()) if (a.estado === 'start' || a.estado === 'progress') n++;
+    } else n++;
+  }
+  return n;
+}
+function agTotal(P) { return P.ag ? P.ag.tarefas.size : 0; }
+
+function pintarBotaoAgentes(P) {
+  const bt = $('.p-agentes', P.el); if (!bt) return;
+  const vivos = agAtivos(P);
+  const total = agTotal(P);
+  bt.classList.toggle('vazio', total === 0);
+  bt.classList.toggle('vivo', vivos > 0);
+  const sel = $('.pa-n', bt);
+  if (sel) sel.textContent = vivos > 0 ? String(vivos) : (total ? String(total) : '');
+  bt.title = vivos > 0
+    ? vivos + (vivos === 1 ? ' agente trabalhando agora' : ' agentes trabalhando agora') + ' — clique para ver o fluxo'
+    : (total ? 'Ver o time de agentes deste chat' : 'O time de agentes aparece aqui quando você usa um OS ou liga o ultracode');
+}
+
+function criarBotaoAgentes(P, el) {
+  const bt = document.createElement('button');
+  bt.className = 'cb p-agentes vazio';
+  bt.innerHTML = ico('agentes') + '<span class="pa-n"></span>';
+  bt.addEventListener('click', (e) => { e.stopPropagation(); abrirPainelAgentes(P); });
+  const raio = $('.p-modoenvio', el);
+  if (raio) raio.insertAdjacentElement('afterend', bt); else $('.cmp-bar', el).appendChild(bt);
+  pintarBotaoAgentes(P);
+}
+
+/* ---- a janela ---- */
+let agPaneAberto = null;
+let agDesenhoPedido = false;
+let agRelogio = null;
+function agAgendarDesenho() {
+  if (agDesenhoPedido) return;
+  agDesenhoPedido = true;
+  requestAnimationFrame(() => { agDesenhoPedido = false; agDesenhar(); });
+}
+function agCaixa() {
+  let el = document.getElementById('agPainel');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'agPainel'; el.className = 'hidden';
+  el.innerHTML = '<div class="ag-cx">'
+    + '<div class="ag-top"><span class="ag-tit">Time de agentes</span>'
+    + '<span class="ag-sub"></span><span class="ag-gap"></span><span class="ag-conta"></span>'
+    + '<button class="ag-x" title="Fechar (Esc)">' + ico('x') + '</button></div>'
+    + '<div class="ag-corpo"></div></div>';
+  el.addEventListener('click', (e) => { if (e.target === el) fecharPainelAgentes(); });
+  $('.ag-x', el).addEventListener('click', fecharPainelAgentes);
+  document.body.appendChild(el);
+  return el;
+}
+function abrirPainelAgentes(P) {
+  agPaneAberto = P;
+  const el = agCaixa();
+  // a cor viva do painel e a do motor daquele chat: laranja no Claude, azul no Codex
+  el.style.setProperty('--ag', P.engine === 'codex' ? 'var(--codex)' : 'var(--claude)');
+  el.classList.remove('hidden');
+  agDesenhar();
+  // o tempo de cada agente anda sozinho enquanto a janela esta aberta
+  if (agRelogio) clearInterval(agRelogio);
+  agRelogio = setInterval(() => { if (agPaneAberto) agDesenhar(); }, 1000);
+}
+function fecharPainelAgentes() {
+  const el = document.getElementById('agPainel');
+  if (el) el.classList.add('hidden');
+  agPaneAberto = null;
+  if (agRelogio) { clearInterval(agRelogio); agRelogio = null; }
+}
+function agPainelAberto() {
+  const el = document.getElementById('agPainel');
+  return !!(el && !el.classList.contains('hidden'));
+}
+
+// bloco de texto sem HTML: tudo que vem do motor entra por textContent, nunca por innerHTML
+function agEl(classe, texto) {
+  const d = document.createElement('div');
+  d.className = classe;
+  if (texto != null) d.textContent = texto;
+  return d;
+}
+function agCartaoAgente(a, agora) {
+  const est = a.estado === 'done' ? 'pronto'
+    : a.estado === 'error' ? 'erro'
+    : (a.estado === 'progress' || a.estado === 'start') ? 'agora' : 'espera';
+  const c = agEl('ag-card ' + est);
+  const topo = agEl('ag-card-top');
+  topo.appendChild(agEl('ag-bola'));
+  topo.appendChild(agEl('ag-nome', agBonito(a.rotulo) || 'Agente ' + a.i));
+  c.appendChild(topo);
+  const fazendo = est === 'pronto' ? 'terminou'
+    : est === 'erro' ? 'deu erro'
+    : est === 'espera' ? 'esperando a vez'
+    : (a.ferramenta ? agNomeFerramenta(a.ferramenta) : 'pensando');
+  c.appendChild(agEl('ag-fazendo', fazendo));
+  if (a.detalhe && est !== 'espera') c.appendChild(agEl('ag-detalhe', a.detalhe));
+  const pe = agEl('ag-pe');
+  const dur = a.duracao || (est === 'agora' ? agora - (a.desde || agora) : 0);
+  const bits = [];
+  if (dur) bits.push(agTempo(dur));
+  if (a.tokens) bits.push(agTokens(a.tokens));
+  if (a.chamadas) bits.push(a.chamadas + (a.chamadas === 1 ? ' passo' : ' passos'));
+  pe.textContent = bits.join(' · ');
+  c.appendChild(pe);
+  if (a.pedido) c.title = a.pedido.slice(0, 300);
+  return c;
+}
+/* Mais de quatro agentes na mesma fase nao cabem numa linha so. Em vez de deixar o leque
+   quebrar sozinho — o que fazia a segunda linha parecer OUTRA fase — os cartoes sao repartidos
+   em fileiras de quatro, com um pedaco de tronco ligando uma fileira na outra. */
+const AG_POR_FILA = 4;
+function agGrupo(titulo, etiqueta, cartoes, estado) {
+  const g = agEl('ag-grupo ' + (estado || ''));
+  const fx = agEl('ag-fase');
+  if (etiqueta) fx.appendChild(agEl('ag-fase-rot', etiqueta));
+  fx.appendChild(agEl('ag-fase-tit', titulo));
+  fx.appendChild(agEl('ag-fase-cont', cartoes.length + (cartoes.length === 1 ? ' agente' : ' agentes')));
+  g.appendChild(fx);
+  for (let i = 0; i < cartoes.length; i += AG_POR_FILA) {
+    const fila = cartoes.slice(i, i + AG_POR_FILA);
+    g.appendChild(agEl('ag-tronco'));
+    const linha = agEl('ag-cards' + (fila.length > 1 ? ' varios' : ''));
+    for (const c of fila) {
+      const col = agEl('ag-col');
+      col.appendChild(agEl('ag-perna'));
+      col.appendChild(c);
+      linha.appendChild(col);
+    }
+    g.appendChild(linha);
+  }
+  return g;
+}
+function agDesenhar() {
+  const el = document.getElementById('agPainel'); if (!el || !agPaneAberto) return;
+  const P = agPaneAberto;
+  const corpo = $('.ag-corpo', el);
+  const A = P.ag;
+  const agora = Date.now();
+  corpo.innerHTML = '';
+  $('.ag-sub', el).textContent = nomePasta(P.cwd) + (P.titulo ? ' · ' + P.titulo.slice(0, 46) : '');
+
+  const tarefas = A ? A.ordem.map(id => A.tarefas.get(id)).filter(Boolean) : [];
+  // o placar do topo: quantos estao trabalhando, quantos ja entregaram, quantos deram errado
+  let feitos = 0, ruins = 0;
+  for (const t of tarefas) {
+    if (t.agentes.size) {
+      for (const a of t.agentes.values()) { if (a.estado === 'done') feitos++; else if (a.estado === 'error') ruins++; }
+    } else if (t.estado === 'pronto') feitos++;
+    else if (t.estado === 'erro') ruins++;
+  }
+  const placar = [];
+  if (agAtivos(P)) placar.push(agAtivos(P) + ' trabalhando');
+  if (feitos) placar.push(feitos + (feitos === 1 ? ' pronto' : ' prontos'));
+  if (ruins) placar.push(ruins + (ruins === 1 ? ' com erro' : ' com erro'));
+  $('.ag-conta', el).textContent = placar.join(' · ');
+
+  if (!tarefas.length) {
+    const v = agEl('ag-vazio');
+    v.appendChild(agEl('ag-vazio-tit', 'Ninguém trabalhando aqui ainda'));
+    v.appendChild(agEl('ag-vazio-txt',
+      'Quando você soltar um OS, ligar o ultracode ou pedir um workflow, o time aparece aqui: '
+      + 'cada fase, cada agente e o que ele está fazendo naquele instante.'));
+    corpo.appendChild(v);
+    return;
+  }
+
+  const fluxo = agEl('ag-fluxo');
+  const inicio = agEl('ag-no ag-inicio');
+  inicio.appendChild(agEl('ag-no-rot', 'o pedido'));
+  inicio.appendChild(agEl('ag-no-txt', P.titulo || 'esta conversa'));
+  fluxo.appendChild(inicio);
+
+  let vivo = false;
+  const soltos = tarefas.filter(t => !t.agentes.size && t.classe === 'local_agent');
+  /* Agente solto (a ferramenta Agent, sem workflow) vem logo depois do pedido, e nao no fim:
+     ele nasce ANTES ou junto do workflow, e jogado la embaixo parecia uma etapa final. */
+  if (soltos.length) {
+    const cartoes = soltos.map(t => agCartaoAgente({
+      i: 0, rotulo: t.desc || agNomeAgente(t.tipo), estado: t.estado === 'rodando' ? 'progress'
+        : (t.estado === 'pronto' ? 'done' : (t.estado === 'parado' ? 'espera' : 'error')),
+      ferramenta: t.ferramenta, detalhe: t.resumo,
+      tokens: t.uso ? t.uso.total_tokens : 0, chamadas: t.uso ? t.uso.tool_uses : 0,
+      duracao: t.uso ? t.uso.duration_ms : (t.fim ? t.fim - t.inicio : agora - t.inicio),
+      pedido: t.prompt,
+    }, agora));
+    const rodando = soltos.some(t => t.estado === 'rodando');
+    fluxo.appendChild(agEl('ag-liga' + (rodando ? ' viva' : ' feita')));
+    fluxo.appendChild(agGrupo('Agentes lançados direto', 'sem fase', cartoes, rodando ? 'rodando' : 'pronto'));
+  }
+  for (const t of tarefas) {
+    if (t.estado === 'rodando') vivo = true;
+    if (t.agentes.size) {
+      // workflow: uma faixa por fase, com os agentes daquela fase lado a lado
+      const lista = [...t.agentes.values()].sort((a, b) => a.i - b.i);
+      const porFase = new Map();
+      for (const a of lista) {
+        const k = a.fase || 'Trabalho';
+        if (!porFase.has(k)) porFase.set(k, []);
+        porFase.get(k).push(a);
+      }
+      const cab = agEl('ag-titulo-bloco');
+      cab.appendChild(agEl('ag-bloco-rot', 'workflow'));
+      cab.appendChild(agEl('ag-bloco-nome', agBonito(t.workflow) || t.desc || 'Time de agentes'));
+      fluxo.appendChild(agEl('ag-liga'));
+      fluxo.appendChild(cab);
+      /* O caminho INTEIRO aparece desde o comeco: as fases que ainda nao chegaram entram
+         tracejadas. Sem isso a tela mentia — parecia que o trabalho acabava na fase de agora. */
+      const nomes = (t.fases.length ? t.fases.map(f => f.titulo) : [...porFase.keys()]);
+      for (const k of porFase.keys()) if (!nomes.includes(k)) nomes.push(k);
+      let n = 1;
+      for (const fase of nomes) {
+        const ags = porFase.get(fase) || [];
+        const rodando = ags.some(a => a.estado === 'start' || a.estado === 'progress');
+        const tudoPronto = ags.length && ags.every(a => a.estado === 'done');
+        fluxo.appendChild(agEl('ag-liga' + (rodando ? ' viva' : (tudoPronto ? ' feita' : ''))));
+        if (!ags.length) {
+          const espera = agEl('ag-fase-futura');
+          espera.appendChild(agEl('ag-fase-rot', 'fase ' + n));
+          espera.appendChild(agEl('ag-fase-tit', agBonito(fase)));
+          espera.appendChild(agEl('ag-fase-cont', 'ainda não começou'));
+          fluxo.appendChild(espera);
+        } else {
+          fluxo.appendChild(agGrupo(agBonito(fase), 'fase ' + n, ags.map(a => agCartaoAgente(a, agora)),
+            rodando ? 'rodando' : (tudoPronto ? 'pronto' : '')));
+        }
+        n++;
+      }
+    }
+  }
+
+  fluxo.appendChild(agEl('ag-liga' + (vivo ? '' : ' feita')));
+  const fim = agEl('ag-no ag-fim' + (vivo ? ' esperando' : ' ok'));
+  const quantos = agAtivos(P);
+  fim.appendChild(agEl('ag-no-rot', vivo ? 'acontecendo agora' : 'fim'));
+  fim.appendChild(agEl('ag-no-txt', vivo
+    ? (quantos ? quantos + (quantos === 1 ? ' agente trabalhando' : ' agentes trabalhando') : 'começando')
+    : 'todo mundo terminou'));
+  fluxo.appendChild(fim);
+  corpo.appendChild(fluxo);
 }
 
 
