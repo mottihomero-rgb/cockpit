@@ -1679,8 +1679,9 @@ function cartaoDeDiff(P, ed) {
   cab.addEventListener('click', () => cx.classList.toggle('fechado'));
   cx.appendChild(cab);
   for (const c of corpos) cx.appendChild(c);
-  // mudança grande nasce fechada: não empurra a conversa toda para longe
-  if (mais + menos > 40) cx.classList.add('fechado');
+  // NASCE FECHADO, sempre. Só o cabeçalho (nome do arquivo e +x/−y) fica à vista; o resto
+  // aparece quando ele clicar. Diff aberto sozinho empurrava a conversa inteira para longe.
+  cx.classList.add('fechado');
   return cx;
 }
 
@@ -1705,11 +1706,13 @@ function toolStart(P, id, name, arg, extra) {
   if (!d) return;
   P.tools.set(id, { el: d, out: $('.exec-out', d), buf: '' });
   const ex = extra || {};
+  // Nada nasce aberto. O passo mostra só a frase do que está fazendo; o conteúdo (diff,
+  // saída do comando, lista de tarefas) só aparece se ele clicar.
   if (ex.edicao) {
     const alvo = $('.exec-out', d);
     alvo.textContent = '';
     alvo.appendChild(cartaoDeDiff(P, ex.edicao));
-    d.classList.add('aberto', 'tem-dif');       // edição nasce aberta: é o que ele quer ver
+    d.classList.add('tem-dif');
     P.tools.get(id).semTexto = true;            // o resultado cru não sobrescreve o diff
     P.edicoes = P.edicoes || [];
     P.edicoes.push(ex.edicao);                  // guardado para o "voltar no tempo"
@@ -1718,7 +1721,6 @@ function toolStart(P, id, name, arg, extra) {
     const alvo = $('.exec-out', d);
     alvo.textContent = '';
     alvo.appendChild(cartaoDeTarefas(ex.tarefas));
-    d.classList.add('aberto');
     P.tools.get(id).semTexto = true;
   }
 }
