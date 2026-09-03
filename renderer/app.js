@@ -1104,16 +1104,15 @@ function userMsg(P, text, anexos) {
 
 /* ---- na minha própria mensagem: corrigir e mandar de novo, ou voltar no tempo ---- */
 function botoesDaMinhaMensagem(P, d, texto) {
-  const barra = document.createElement('div');
-  barra.className = 'msg-bts';
+  const barra = barraDeAcoes(d);
   const bEdit = document.createElement('button');
   bEdit.className = 'msg-bt'; bEdit.title = 'Corrigir e mandar de novo'; bEdit.innerHTML = ico('pencil');
   bEdit.onclick = () => editarMinhaMensagem(P, d, texto);
+  const bCopia = botaoCopiar('Copiar o que eu escrevi', () => texto);
   const bVolta = document.createElement('button');
   bVolta.className = 'msg-bt'; bVolta.title = 'Voltar no tempo até aqui'; bVolta.innerHTML = ico('rotate-cw');
   bVolta.onclick = () => menuVoltarNoTempo(P, d, texto);
-  barra.appendChild(bEdit); barra.appendChild(bVolta);
-  d.appendChild(barra);
+  barra.appendChild(bCopia); barra.appendChild(bEdit); barra.appendChild(bVolta);
 }
 
 function editarMinhaMensagem(P, d, texto) {

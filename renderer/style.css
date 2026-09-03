@@ -175,14 +175,18 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 /* ===== modo foco: some com os passos do motor ===== */
 body.foco .exec,body.foco .think{display:none !important}
 
-/* ===== botões na minha própria mensagem ===== */
-.msg.user{position:relative}
-.msg-bts{position:absolute;top:0;right:14px;display:flex;gap:4px;opacity:0;transition:opacity .12s}
-.msg.user:hover .msg-bts{opacity:1}
-.msg-bt{width:24px;height:24px;border-radius:6px;border:1px solid var(--line2);background:var(--bg2);
-  color:var(--fg-dim);display:grid;place-items:center}
-.msg-bt:hover{background:var(--hover3);color:var(--fg)}
-.msg-bt .ic{width:12px;height:12px}
+/* ===== barrinha de ações no PÉ da mensagem =====
+   Antes os botões flutuavam por cima do texto, no canto de cima. Agora ficam embaixo, no
+   fluxo, alinhados com a margem do texto: fazem parte da mensagem, não pairam sobre ela.
+   Sem borda e sem fundo — só o ícone, apagado, que acende no hover. */
+.msg-acoes{display:flex;gap:1px;padding:3px 18px 0;margin-left:-4px;
+  opacity:0;transition:opacity .12s}
+.msg:hover .msg-acoes,.msg-acoes:focus-within{opacity:1}
+.msg-acoes button{width:22px;height:22px;border-radius:5px;border:none;background:none;
+  color:var(--fg-fraco);display:grid;place-items:center;opacity:1}
+.msg-acoes button:hover{background:var(--hover2);color:var(--fg-dim)}
+.msg-acoes button .ic{width:12px;height:12px;stroke-width:1.6}
+.msg-bt{display:grid;place-items:center}
 .msg-edita{padding:0 18px}
 .me-txt{width:100%;min-height:60px;background:var(--fundo-fundo);border:1px solid var(--accent);
   border-radius:8px;padding:8px 10px;color:var(--fg);font:13px/1.5 var(--sans);outline:none;resize:vertical}
@@ -248,16 +252,18 @@ mark.acha{background:color-mix(in srgb,var(--yellow) 45%,transparent);color:inhe
 mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 
 .msg{padding:0 18px 14px;user-select:text;position:relative}
-/* copiar com um clique: aparece no passar do mouse, na resposta e em cada bloco de codigo */
-.bt-copiar{position:absolute;top:0;right:14px;width:24px;height:24px;border-radius:6px;
-  border:1px solid var(--line2);background:var(--bg2);color:var(--fg-dim);
-  display:grid;place-items:center;opacity:0;transition:opacity .12s;z-index:2}
-.bt-copiar .ic{width:12px;height:12px}
-.msg:hover > .bt-copiar,pre:hover .bt-copiar,.bt-copiar:focus-visible{opacity:1}
-.bt-copiar:hover{background:var(--hover3);color:var(--fg)}
-.bt-copiar.copiou{opacity:1;color:var(--green);border-color:var(--green)}
+/* Copiar com um clique. Na mensagem o botao vive na barrinha do pe (.msg-acoes), sem moldura
+   nenhuma. Dentro do bloco de codigo ele continua flutuando no canto, que ali faz sentido. */
+.bt-copiar{width:22px;height:22px;border-radius:5px;border:none;background:none;
+  color:var(--fg-fraco);display:grid;place-items:center;transition:opacity .12s}
+.bt-copiar .ic{width:12px;height:12px;stroke-width:1.6}
+.bt-copiar:hover{background:var(--hover2);color:var(--fg-dim)}
+.bt-copiar.copiou{color:var(--green)}
 .msg-body pre.com-copia{position:relative}
-.msg-body pre.com-copia .bt-copiar{top:6px;right:6px}
+.msg-body pre.com-copia .bt-copiar{position:absolute;top:6px;right:6px;opacity:0;z-index:2;
+  border:1px solid var(--line2);background:var(--bg2)}
+.msg-body pre.com-copia:hover .bt-copiar,.msg-body pre.com-copia .bt-copiar:focus-visible{opacity:1}
+.msg-body pre.com-copia .bt-copiar.copiou{opacity:1;border-color:var(--green)}
 .msg-role{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;text-transform:uppercase;
   letter-spacing:.6px;color:var(--fg-dim);margin-bottom:6px}
 .msg-role .av{width:15px;height:15px;border-radius:4px;display:grid;place-items:center;font-size:9px;color:#fff}
