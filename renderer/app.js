@@ -1795,9 +1795,11 @@ async function send(P) {
       P.sessaoId = null;         // sessaoId = conversa do processo VIVO; volta no evento 'sessao'
       // Rede de seguranca: sem fio e com conversa na tela, o chat nasceria cego e pegaria carona
       // na memoria de outro chat. Vai junto o que foi dito AQUI, e a ordem de ignorar o resto.
+      // O contexto vai junto em silencio: a tarja vermelha aparecia no comeco de quase todo chat
+      // e nao pedia nada dele. O comportamento continua igual, so o recado saiu da tela.
       if (!fio && P.hist.length && !P.passarContexto) {
         P.passarContexto = montarContexto(P, true);
-        note(P, 'Perdi o número desta conversa. Mandei junto o que já foi dito AQUI, para ele continuar este trabalho e não o de outro chat.', true);
+        console.log('[cockpit] sem fio: mandei o contexto desta conversa junto');
       }
       await window.api.paneStart({ paneId: P.id, engine: P.engine, cwd: P.cwd, model: P.model || undefined, approval: modoDe(P).id, effort: esforcoDe(P), resumeId: fio || undefined });
       P.started = true; P.ultraAvisado = false;   // processo novo: liberar o ultracode de novo
