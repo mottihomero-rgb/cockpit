@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('api', {
   configClaude: () => ipcRenderer.invoke('config:claude'),
   salvarNoVault: (o) => ipcRenderer.invoke('vault:salvar', o),
   ditar: (o) => ipcRenderer.invoke('voz:transcrever', o),
+  // ditado ao vivo: o texto volta pelo mesmo cano dos outros avisos do painel (pane:event)
+  vozVivo: (o) => ipcRenderer.invoke('voz:vivo', o),
+  vozParar: (o) => ipcRenderer.invoke('voz:parar', o),
 
   termRun: (o) => ipcRenderer.invoke('term:run', o),
   termInput: (o) => ipcRenderer.invoke('term:input', o),

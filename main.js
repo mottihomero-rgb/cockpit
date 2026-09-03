@@ -2061,6 +2061,62 @@ handle('voz:transcrever', async (_e, { audio }) => {
    Ele sai da frente do Mac enquanto o motor trabalha e voltava so para descobrir se ja tinha
    acabado. Agora chega recado do sistema e o icone no Dock ganha o numero de chats prontos.
    Clicar no recado traz a janela para a frente E abre o chat certo. */
+/* ---------- ditado AO VIVO (motor de fala do proprio macOS) ----------
+   O ditado antigo grava tudo, para, converte e so entao transcreve: ele fala 40 segundos
+   olhando para uma tela muda. Aqui quem ouve e o motor nativo do Mac (SpeechAnalyzer, o mesmo
+   do Eco), num programinha Swift que cospe uma linha JSON por evento — parcial enquanto fala,
+   final quando fecha a frase, e para sozinho quando o silencio passa de N segundos.
+   Nada de ffmpeg, nada de arquivo temporario, nada de modelo de 465 MB na memoria. */
+const VOZ_BIN = app.isPackaged
+  ? path.join(process.resourcesPath, 'ditado-vivo')
+  : path.join(__dirname, 'voz', 'ditado-vivo');
+const vozAtiva = new Map();     // paneId -> processo do ditado
+function vozMatar(paneId) {
+  const p = vozAtiva.get(paneId);
+  if (!p) return;
+  vozAtiva.delete(paneId);
+  try { p.kill('SIGTERM'); } catch {}
+}
+handle('voz:vivo', (_e, { paneId, silencio, teto }) => {
+  if (process.platform !== 'darwin') return { error: 'o ditado ao vivo só existe no Mac' };
+  if (!fs.existsSync(VOZ_BIN)) return { error: 'falta o programa de ditado' };
+  vozMatar(paneId);
+  let proc;
+  try {
+    proc = spawn(VOZ_BIN, ['pt-BR', String(silencio || 1.8), String(teto || 180), '15'],
+      { stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch (e) { return { error: String(e && e.message || e) }; }
+  vozAtiva.set(paneId, proc);
+  let buf = '';
+  proc.stdout.on('data', (d) => {
+    buf += d.toString();
+    const linhas = buf.split('\n');
+    buf = linhas.pop();
+    for (const l of linhas) {
+      const t = l.trim(); if (!t) continue;
+      let m; try { m = JSON.parse(t); } catch { continue; }
+      emit(paneId, 'voz', m);
+    }
+  });
+  // stderr do Swift so interessa quando o programa morre sem dizer nada
+  let erro = '';
+  proc.stderr.on('data', (d) => { erro = (erro + d.toString()).slice(-500); });
+  proc.on('close', () => {
+    if (vozAtiva.get(paneId) === proc) vozAtiva.delete(paneId);
+    emit(paneId, 'voz', { type: 'status', msg: 'fim', erro: erro || undefined });
+  });
+  proc.on('error', (e) => emit(paneId, 'voz', { type: 'error', msg: String(e && e.message || e) }));
+  return { ok: true };
+});
+handle('voz:parar', (_e, { paneId, cancelar }) => {
+  const p = vozAtiva.get(paneId);
+  if (!p) return { ok: false };
+  // "stop" fecha bonito e ainda devolve o texto final; cancelar mata na hora e joga fora
+  if (cancelar) vozMatar(paneId);
+  else { try { p.stdin.write('stop\n'); } catch { vozMatar(paneId); } }
+  return { ok: true };
+});
+
 let prontosParados = 0;
 handle('aviso:pronto', (_e, { paneId, titulo, texto }) => {
   if (!win || win.isFocused()) return { ok: false };
