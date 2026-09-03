@@ -1919,6 +1919,7 @@ window.api.onPaneEvent((ev) => {
       pintarTokens(P);
       break;
     case 'janela': P.janela = ev.total; pintarTokens(P); break;
+    case 'agentes': agentesEvento(P, ev); break;
     case 'note': note(P, ev.text, ev.error); break;
     case 'turn-end':
       avisarQueTerminou(P);

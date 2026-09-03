@@ -712,6 +712,39 @@ function claudeMessage(paneId, m) {
     emit(paneId, 'sessao', { id: m.session_id, file: path.join(CLAUDE_PROJ, encodeCwd(claudeCwd.get(paneId) || HOME), m.session_id + '.jsonl') });
     return;
   }
+  /* ---------- o time de agentes ----------
+     Quando ele lanca subagente (ferramenta Agent) ou um workflow, o CLI ja conta TUDO por aqui:
+     quem comecou, em que fase esta, que ferramenta cada um esta usando agora e quando terminou.
+     Nada disso ia para a tela — o app so via o "tool_use" da chamada, uma linha igual a de um
+     Read. Estes quatro avisos sao o que alimenta o painel de agentes; nao precisa de flag nova
+     no CLI nem de ler arquivo no disco. */
+  if (m.type === 'system' && m.subtype === 'task_started') {
+    emit(paneId, 'agentes', { ev: 'inicio', id: m.task_id, toolId: m.tool_use_id,
+      desc: m.description || '', tipo: m.subagent_type || '', classe: m.task_type || '',
+      workflow: m.workflow_name || '', fundo: !!m.is_backgrounded, nivel: m.spawn_depth || 1,
+      prompt: String(m.prompt || '').slice(0, 400), em: Date.now() });
+    return;
+  }
+  if (m.type === 'system' && m.subtype === 'task_progress') {
+    emit(paneId, 'agentes', { ev: 'andamento', id: m.task_id, desc: m.description || '',
+      ferramenta: m.last_tool_name || '', resumo: String(m.summary || '').slice(0, 200),
+      uso: m.usage || null, fluxo: Array.isArray(m.workflow_progress) ? m.workflow_progress : null,
+      em: Date.now() });
+    return;
+  }
+  if (m.type === 'system' && m.subtype === 'task_updated') {
+    emit(paneId, 'agentes', { ev: 'mudou', id: m.task_id, patch: m.patch || {}, em: Date.now() });
+    return;
+  }
+  if (m.type === 'system' && m.subtype === 'task_notification') {
+    emit(paneId, 'agentes', { ev: 'fim', id: m.task_id, estado: m.status || 'completed',
+      resumo: String(m.summary || '').slice(0, 300), uso: m.usage || null, em: Date.now() });
+    return;
+  }
+  if (m.type === 'system' && m.subtype === 'background_tasks_changed') {
+    emit(paneId, 'agentes', { ev: 'lista', tarefas: Array.isArray(m.tasks) ? m.tasks : [], em: Date.now() });
+    return;
+  }
   if (m.type === 'result') {
     const u = m.usage || {};
     let janela = 0;
