@@ -1419,8 +1419,103 @@ async function salvarConversaNoVault(P) {
 
 /* ---- ditar em vez de digitar ----
    Roda no proprio Mac (whisper.cpp), sem internet e sem custo. Aperta, fala, solta. */
-const DITADO = { rec: null, pedacos: [], P: null };
+/* ============ ditar ============
+   Dois modos. O de cima e o AO VIVO: quem ouve e o motor de fala do proprio Mac, e a fala vai
+   aparecendo apagadinha dentro da caixa enquanto ele fala; quando ele para, o texto firma
+   sozinho. O de baixo (whisper, grava tudo e transcreve no fim) fica de reserva para quando o
+   ao vivo nao existir — Mac antigo, Windows, ou o programinha faltando. */
+const VIVO = { P: null, base: '', firme: '', parcial: '' };
+
+function vozFantasma(P) {
+  let f = $('.p-fantasma', P.el);
+  if (f) return f;
+  f = document.createElement('div');
+  f.className = 'p-fantasma hidden';
+  f.innerHTML = '<span class="pf-firme"></span><span class="pf-parcial"></span>';
+  $('.cmp-top', P.el).appendChild(f);
+  return f;
+}
+function vozPintar(P) {
+  const f = vozFantasma(P);
+  const inp = $('.p-input', P.el);
+  const firme = (VIVO.base ? VIVO.base.replace(/\s*$/, ' ') : '') + VIVO.firme;
+  $('.pf-firme', f).textContent = firme;
+  $('.pf-parcial', f).textContent = (firme && VIVO.parcial ? ' ' : '') + VIVO.parcial;
+  f.classList.remove('hidden');
+  // a caixa de verdade fica invisivel por baixo, para o cursor e a altura continuarem certos
+  inp.classList.add('mudo');
+  inp.value = firme + (VIVO.parcial ? (firme ? ' ' : '') + VIVO.parcial : '');
+  inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 190) + 'px';
+  // fala longa passa da altura maxima: as duas camadas tem de rolar juntas, senao o que ele ve
+  // (a de cima) congela no comeco enquanto a de baixo ja esta no fim
+  inp.scrollTop = inp.scrollHeight;
+  f.scrollTop = f.scrollHeight;
+}
+function vozEncerrarTela(P, textoFinal) {
+  const f = $('.p-fantasma', P.el);
+  if (f) f.classList.add('hidden');
+  const inp = $('.p-input', P.el);
+  inp.classList.remove('mudo');
+  const bt = $('.p-mic', P.el);
+  if (bt) bt.classList.remove('gravando', 'pensando');
+  if (textoFinal != null) {
+    inp.value = textoFinal;
+    inp.dispatchEvent(new Event('input'));
+    inp.focus();
+    inp.setSelectionRange(inp.value.length, inp.value.length);
+  }
+}
+// silencio puro faz o motor cuspir um "." sozinho: isso nao e fala, e nao pode entrar no texto
+const vozVazio = (t) => !String(t || '').replace(/[\s.,;:!?…]/g, '');
+// chega do motor: parcial (cinza), final (firma), status, erro
+function vozEvento(P, ev) {
+  if (VIVO.P !== P) return;
+  if (ev.type === 'partial') {
+    if (vozVazio(ev.text)) return;
+    VIVO.parcial = ev.text || ''; vozPintar(P); return;
+  }
+  if (ev.type === 'final') {
+    if (vozVazio(ev.text)) { VIVO.parcial = ''; return; }
+    VIVO.firme = (VIVO.firme ? VIVO.firme.replace(/\s*$/, ' ') : '') + String(ev.text || '').trim();
+    VIVO.parcial = ''; vozPintar(P); return;
+  }
+  if (ev.type === 'error') {
+    const msg = String(ev.msg || '');
+    vozEncerrarTela(P, (VIVO.base ? VIVO.base.replace(/\s*$/, ' ') : '') + VIVO.firme);
+    VIVO.P = null;
+    // motor de fala indisponivel (Mac antigo, idioma nao instalado): cai no ditado antigo
+    if (/macOS 26|idioma nao instalado|sem formato|conversor/.test(msg)) { ditadoWhisper(P); return; }
+    avisoEnvio(P, 'Não consegui ouvir: ' + msg);
+    return;
+  }
+  if (ev.type !== 'status') return;
+  if (ev.msg === 'ouvindo') { const bt = $('.p-mic', P.el); if (bt) bt.classList.add('gravando'); return; }
+  if (ev.msg === 'silencio' || ev.msg === 'teto de tempo') {
+    const bt = $('.p-mic', P.el); if (bt) { bt.classList.remove('gravando'); bt.classList.add('pensando'); }
+    return;
+  }
+  if (ev.msg === 'nao ouvi nada') { avisoTemp(P, 'Não ouvi nada. Clique no microfone e fale.'); return; }
+  if (ev.msg === 'fim') {
+    const texto = ((VIVO.base ? VIVO.base.replace(/\s*$/, ' ') : '') + VIVO.firme + (VIVO.parcial ? ' ' + VIVO.parcial : '')).trim();
+    vozEncerrarTela(P, texto);
+    VIVO.P = null; VIVO.base = ''; VIVO.firme = ''; VIVO.parcial = '';
+  }
+}
 async function alternarDitado(P) {
+  // ja esta ditando ao vivo aqui? entao o clique e para PARAR (e o texto fica)
+  if (VIVO.P === P) { window.api.vozParar({ paneId: P.id }); return; }
+  if (VIVO.P) { window.api.vozParar({ paneId: VIVO.P.id }); VIVO.P = null; }
+  if (DITADO.rec) { pararDitado(); return; }
+  if (window.api.vozVivo) {
+    VIVO.P = P; VIVO.base = $('.p-input', P.el).value || ''; VIVO.firme = ''; VIVO.parcial = '';
+    const r = await window.api.vozVivo({ paneId: P.id, silencio: 1.8, teto: 180 });
+    if (r && r.ok) { avisoTemp(P, 'Pode falar. Ele escreve enquanto você fala e para sozinho quando você parar.'); return; }
+    VIVO.P = null;   // sem o programinha (Windows, Mac antigo): segue no modo antigo
+  }
+  ditadoWhisper(P);
+}
+const DITADO = { rec: null, pedacos: [], P: null };
+async function ditadoWhisper(P) {
   if (DITADO.rec && DITADO.P === P) { pararDitado(); return; }
   if (DITADO.rec) pararDitado();
   let fluxo;
@@ -1925,6 +2020,7 @@ window.api.onPaneEvent((ev) => {
       break;
     case 'janela': P.janela = ev.total; pintarTokens(P); break;
     case 'agentes': agentesEvento(P, ev); break;
+    case 'voz': vozEvento(P, ev); break;
     case 'note': note(P, ev.text, ev.error); break;
     case 'turn-end':
       avisarQueTerminou(P);

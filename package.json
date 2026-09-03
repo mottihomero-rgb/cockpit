@@ -22,7 +22,9 @@
   "build": {
     "appId": "com.adsure.cockpit",
     "productName": "Cockpit",
-    "directories": { "output": "dist" },
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "main.js",
       "preload.js",
@@ -44,11 +46,17 @@
       "**/node_modules/@lydell/**"
     ],
     "extraResources": [
-      "ptybridge.py"
+      "ptybridge.py",
+      {
+        "from": "voz/ditado-vivo",
+        "to": "ditado-vivo"
+      }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": ["dir"],
+      "target": [
+        "dir"
+      ],
       "icon": "assets/icon.icns",
       "identity": null
     }

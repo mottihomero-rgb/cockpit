@@ -331,10 +331,19 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 .pane-cmp{flex:none;margin:8px 12px 10px;background:var(--bg2);border:1px solid var(--line2);
   border-radius:10px;padding:8px 8px 6px;position:relative}
 .pane.focus .pane-cmp{border-color:var(--accent)}
-.cmp-top{padding:0 3px}
+.cmp-top{padding:0 3px;position:relative}
 .p-input{width:100%;background:none;border:none;outline:none;resize:none;color:var(--fg);
   font:13px/1.55 var(--sans);max-height:190px;padding:2px 0;user-select:text;display:block}
 .p-input::placeholder{color:var(--fg-fraco)}
+/* ---- ditado ao vivo: a fala aparece apagadinha por cima da caixa ----
+   O texto vive numa camada por cima do textarea (que fica invisivel por baixo, ainda medindo a
+   altura e guardando o valor). E o unico jeito de ter DUAS cores no mesmo campo: textarea nao
+   aceita pedaco colorido. As metricas TEM de ser iguais as do .p-input, senao o texto dança. */
+.p-fantasma{position:absolute;inset:0 3px;padding:2px 0;font:13px/1.55 var(--sans);
+  white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;overflow:hidden;color:var(--fg)}
+.p-fantasma.hidden{display:none}
+.pf-parcial{color:var(--fg-fraco);opacity:.8}
+.p-input.mudo{color:transparent;caret-color:transparent}
 .cmp-bar{display:flex;align-items:center;gap:5px;margin-top:5px}
 .cmp-gap{flex:1}
 .cb{width:26px;height:24px;border-radius:6px;color:var(--fg-dim);font-size:13px;
