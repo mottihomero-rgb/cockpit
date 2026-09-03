@@ -537,7 +537,7 @@ function newPane(opts = {}) {
   // botao /  (comandos)
   $('.p-slash', el).addEventListener('click', (e) => { e.stopPropagation(); menuSkills(P); });
 
-  // botao do time de agentes, grudado no raio: e ali que ele olha quando solta um OS
+  // botao do time de agentes (fica na direita, ao lado do modelo)
   criarBotaoAgentes(P, el);
 
   // botao do microfone (ditar em vez de digitar)
@@ -3187,8 +3187,10 @@ function criarBotaoAgentes(P, el) {
   bt.className = 'cb p-agentes vazio';
   bt.innerHTML = ico('agentes') + '<span class="pa-n"></span>';
   bt.addEventListener('click', (e) => { e.stopPropagation(); abrirPainelAgentes(P); });
-  const raio = $('.p-modoenvio', el);
-  if (raio) raio.insertAdjacentElement('afterend', bt); else $('.cmp-bar', el).appendChild(bt);
+  // fica do lado direito, junto do cerebro do modelo — e ali que ele olha quando quer saber
+  // "com quem eu estou trabalhando agora", nao do lado dos botoes de escrever
+  const modelo = $('.p-model', el);
+  if (modelo) modelo.insertAdjacentElement('afterend', bt); else $('.cmp-bar', el).appendChild(bt);
   pintarBotaoAgentes(P);
 }
 
