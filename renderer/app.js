@@ -1492,12 +1492,23 @@ function botaoCopiar(titulo, pegarTexto) {
   b.addEventListener('click', (e) => { e.stopPropagation(); copiarTexto(pegarTexto(), b); });
   return b;
 }
+/* a barrinha de ações mora no PÉ da mensagem, dentro do bloco de texto — não flutuando por cima */
+function barraDeAcoes(msg) {
+  let barra = $('.msg-acoes', msg);
+  if (!barra) {
+    barra = document.createElement('div');
+    barra.className = 'msg-acoes';
+    msg.appendChild(barra);
+  }
+  return barra;
+}
+
 function botoesDeCopia(b) {
   const msg = b.el.closest('.msg');
   if (msg && !$('.bt-copiar.da-msg', msg)) {
     const bt = botaoCopiar('Copiar a resposta', () => b.raw || b.el.innerText);
     bt.classList.add('da-msg');
-    msg.appendChild(bt);
+    barraDeAcoes(msg).appendChild(bt);
   }
   // cada innerHTML novo joga fora os botoes de codigo antigos: refazer sempre
   for (const pre of b.el.querySelectorAll('pre')) {
