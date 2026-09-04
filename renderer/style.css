@@ -118,6 +118,26 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .hint{font-size:11.5px;color:var(--fg-dim);line-height:1.55;margin-bottom:8px}
 .hint b{color:var(--fg)}
 
+/* ---------- Astra: plano ou creditos, sempre com trava visivel ---------- */
+.astra-card{border:1px solid var(--line2);border-radius:9px;background:var(--bg3);padding:10px}
+.astra-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
+.astra-top b{font-size:13px;color:var(--fg-strong)}
+.astra-top span{font-size:9.5px;line-height:1.2;text-align:right;color:var(--fg-dim)}
+.astra-top span.ok{color:var(--green)}
+.astra-status{font-size:11px;line-height:1.4;color:var(--fg-dim);margin:0 0 8px}
+.astra-status.ok{color:var(--green)}
+.astra-status.erro{color:var(--red)}
+.astra-card .astra-toggle{display:flex;margin:2px 0 9px;text-transform:none;letter-spacing:0;color:var(--fg)}
+.astra-limite{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;color:var(--fg-dim)}
+.astra-limite input{width:48px;padding:3px 4px;border-radius:5px;border:1px solid var(--line2);background:var(--bg);color:var(--fg);font:11px var(--mono);text-align:right}
+.astra-uso{font-size:10.5px;color:var(--fg-fraco);margin:4px 0 8px;font-variant-numeric:tabular-nums}
+.astra-key{width:100%;box-sizing:border-box;padding:6px 7px;border-radius:5px;border:1px solid var(--line2);background:var(--bg);color:var(--fg);font:11px var(--mono)}
+.astra-acoes,.astra-links{display:flex;gap:5px;margin-top:6px}
+.astra-acoes button,.astra-links button{flex:1;min-width:0;border:1px solid var(--line2);border-radius:5px;background:var(--bg4);color:var(--fg);padding:5px 4px;font-size:10.5px}
+.astra-acoes button:hover,.astra-links button:hover{border-color:var(--accent)}
+.astra-links button{background:transparent;color:var(--fg-dim)}
+.astra-card .astra-nota{margin:8px 0 0;font-size:10.5px;line-height:1.4}
+
 /* ---------- paineis lado a lado ---------- */
 #panes{flex:1;display:flex;min-width:0;overflow-x:auto;overflow-y:hidden;scroll-behavior:smooth}
 #panes::-webkit-scrollbar{height:9px}

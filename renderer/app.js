@@ -91,14 +91,30 @@ const MODELOS_CLAUDE = [
     efforts: ['low','medium','high'], padraoEffort: 'high' },
 ];
 let MODELOS_CODEX = null;   // vem do proprio Codex
+let ASTRA_API_STATUS = null;
+const ASTRA_API_ID = 'api:gpt-6-astra';
+const modeloPorCreditos = (id) => String(id || '').startsWith('api:');
+const modeloSemOrigem = (id) => modeloPorCreditos(id) ? String(id).slice(4) : id;
+
+function itemAstraApi() {
+  const s = ASTRA_API_STATUS;
+  let desc = 'Configure a chave e ligue os créditos nos Ajustes';
+  if (s && s.configured && !s.enabled) desc = 'Chave guardada, mas os créditos estão desligados';
+  if (s && s.configured && s.enabled) desc = 'API ligada, com limite mensal de US$ ' + Number(s.capUsd || 10).toFixed(0);
+  return {
+    id: ASTRA_API_ID, nome: 'GPT-6 Astra · créditos', desc,
+    efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'xhigh', porCreditos: true,
+  };
+}
 
 function modelosDe(P) {
   if (P.engine === 'claude') return MODELOS_CLAUDE;
   // testar o TAMANHO, nao so se existe: quando o Codex esta fora do ar a chamada devolve lista
   // vazia, que e "verdadeira" em JS. Sem isto, ms[0] virava undefined e quebrava criar chat
   // do Codex e trocar de motor.
-  return (MODELOS_CODEX && MODELOS_CODEX.length) ? MODELOS_CODEX
+  const base = (MODELOS_CODEX && MODELOS_CODEX.length) ? MODELOS_CODEX
     : [{ id: '', nome: 'padrão do Codex', desc: 'o que está no seu config', efforts: ['low','medium','high','xhigh'], padraoEffort: 'medium' }];
+  return [...base, itemAstraApi()];
 }
 function modeloAtual(P) {
   const ms = modelosDe(P);
@@ -1905,7 +1921,12 @@ async function send(P) {
         P.passarContexto = montarContexto(P, true);
         console.log('[cockpit] sem fio: mandei o contexto desta conversa junto');
       }
-      await window.api.paneStart({ paneId: P.id, engine: P.engine, cwd: P.cwd, model: P.model || undefined, approval: modoDe(P).id, effort: esforcoDe(P), resumeId: fio || undefined });
+      await window.api.paneStart({
+        paneId: P.id, engine: P.engine, cwd: P.cwd,
+        model: modeloSemOrigem(P.model) || undefined,
+        billing: modeloPorCreditos(P.model) ? 'api' : 'plan',
+        approval: modoDe(P).id, effort: esforcoDe(P), resumeId: fio || undefined,
+      });
       P.started = true; P.ultraAvisado = false;   // processo novo: liberar o ultracode de novo
     } catch (e) {
       setDot(P, 'off'); note(P, 'Não consegui ligar: ' + (e && e.message || e), true); return;
@@ -2017,6 +2038,10 @@ window.api.onPaneEvent((ev) => {
       if (ev.janela) P.janela = ev.janela;
       P.tokens = ev.total || 0;
       pintarTokens(P);
+      break;
+    case 'api-usage':
+      ASTRA_API_STATUS = { ...(ASTRA_API_STATUS || {}), ...ev };
+      pintarAstra();
       break;
     case 'janela': P.janela = ev.total; pintarTokens(P); break;
     case 'agentes': agentesEvento(P, ev); break;
@@ -2597,12 +2622,33 @@ async function menuModelos(P) {
     m.appendChild(subPopup('Qual cérebro este painel vai usar, e quanto ele deve pensar.'));
     for (const mo of modelosDe(P)) {
       m.appendChild(elItem({ nome: mo.nome, desc: mo.desc, on: mo.id === P.model }, async () => {
+        const vaiPorCreditos = modeloPorCreditos(mo.id);
+        if (vaiPorCreditos) {
+          const s = await carregarStatusAstra(true);
+          if (!s || !s.configured || !s.enabled) {
+            alert('O Astra por créditos está desligado. Abra Ajustes, guarde a chave da OpenAI e ligue o botão de créditos.');
+            return;
+          }
+          if (Number(s.remainingUsd || 0) <= 0) {
+            alert('O limite mensal de créditos foi atingido. Ajuste o teto antes de usar.');
+            return;
+          }
+        }
+        const mudouOrigem = modeloPorCreditos(P.model) !== vaiPorCreditos;
         P.model = mo.id;
         const ef = esforcosDe(P);
         if (!ef.find(e => e.id === P.effort)) P.effort = mo.padraoEffort || ef[0].id;
         fillModels(P);
         lembrarEscolhaDaPasta(P);        // esta pasta passa a nascer com este cérebro
-        await desligarMotor(P); savePanes();
+        await desligarMotor(P);
+        if (mudouOrigem) {
+          if (P.hist.length) P.passarContexto = montarContexto(P, true);
+          P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
+          note(P, vaiPorCreditos
+            ? 'A próxima mensagem usa créditos da API dentro do limite escolhido.'
+            : 'A próxima mensagem volta a usar o seu plano do Codex.');
+        }
+        savePanes();
       }));
     }
     m.appendChild(elLinha());
@@ -4500,6 +4546,75 @@ $$('.tema-bt').forEach(b => b.addEventListener('click', async () => {
   await window.api.setConfig(cfg);
 }));
 
+function dinheiroAstra(v) {
+  return 'US$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function planoTemAstra() {
+  return !!(MODELOS_CODEX && MODELOS_CODEX.some(m => /^gpt-6-astra(?:$|-)/i.test(String(m.id || ''))));
+}
+function pintarAstra() {
+  const s = ASTRA_API_STATUS;
+  const plano = $('#astraPlano');
+  if (plano) {
+    if (!MODELOS_CODEX) { plano.textContent = 'Vendo seu plano…'; plano.classList.remove('ok'); }
+    else if (planoTemAstra()) { plano.textContent = 'Liberado no plano'; plano.classList.add('ok'); }
+    else { plano.textContent = 'Plano ainda aguardando'; plano.classList.remove('ok'); }
+  }
+  if (!s) return;
+  const chk = $('#chkAstraApi'), cap = $('#astraCap'), uso = $('#astraUso'), status = $('#astraStatus');
+  if (chk) chk.checked = !!s.enabled;
+  if (cap) cap.value = Number(s.capUsd || 10);
+  if (uso) uso.textContent = dinheiroAstra(s.spentUsd) + ' usados de ' + dinheiroAstra(s.capUsd);
+  if (status) {
+    status.classList.remove('ok', 'erro');
+    if (!s.configured) status.textContent = 'Sem chave da API. O uso por créditos está desligado.';
+    else if (!s.enabled) status.textContent = 'Chave guardada com segurança. Créditos desligados.';
+    else {
+      status.textContent = s.testMessage || 'Créditos ligados dentro do limite mensal.';
+      if (s.testStatus === 'pronto') status.classList.add('ok');
+      else if (s.testStatus === 'erro') status.classList.add('erro');
+    }
+  }
+}
+async function carregarStatusAstra(forcar) {
+  if (!forcar && ASTRA_API_STATUS) return ASTRA_API_STATUS;
+  try { ASTRA_API_STATUS = await window.api.codexApiStatus(); }
+  catch { ASTRA_API_STATUS = null; }
+  pintarAstra();
+  return ASTRA_API_STATUS;
+}
+
+if ($('#chkAstraApi')) $('#chkAstraApi').addEventListener('change', async (e) => {
+  const antes = ASTRA_API_STATUS && ASTRA_API_STATUS.enabled;
+  const r = await window.api.codexApiConfig({ enabled: e.target.checked, capUsd: Number($('#astraCap').value || 10) });
+  if (r && r.error) { e.target.checked = !!antes; alert(r.error); return; }
+  ASTRA_API_STATUS = r; pintarAstra();
+});
+if ($('#astraCap')) $('#astraCap').addEventListener('change', async () => {
+  const r = await window.api.codexApiConfig({ capUsd: Number($('#astraCap').value || 10) });
+  if (r && r.error) { alert(r.error); return; }
+  ASTRA_API_STATUS = r; pintarAstra();
+});
+async function guardarAstraDaTela() {
+  const campo = $('#astraKey');
+  const chave = campo && campo.value.trim();
+  if (!chave) { alert('Cole primeiro a chave da OpenAI.'); return; }
+  const r = await window.api.codexApiKey(chave);
+  if (r && r.error) { alert(r.error); return; }
+  campo.value = '';
+  ASTRA_API_STATUS = await window.api.codexApiTest();
+  pintarAstra();
+}
+if ($('#btnAstraSalvar')) $('#btnAstraSalvar').addEventListener('click', guardarAstraDaTela);
+if ($('#astraKey')) $('#astraKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') guardarAstraDaTela(); });
+if ($('#btnAstraTestar')) $('#btnAstraTestar').addEventListener('click', async () => {
+  const r = await window.api.codexApiTest();
+  if (r && r.error) { alert(r.error); return; }
+  ASTRA_API_STATUS = r; pintarAstra();
+});
+if ($('#btnAstraChave')) $('#btnAstraChave').addEventListener('click', () => window.api.openUrl('https://platform.openai.com/api-keys'));
+if ($('#btnAstraCredito')) $('#btnAstraCredito').addEventListener('click', () => window.api.openUrl('https://platform.openai.com/settings/organization/billing/overview'));
+
 async function pintarWeb(st) {
   const box = $('#webInfo');
   if (!box) return;                      // no telefone essa parte dos ajustes nem existe
@@ -4730,7 +4845,11 @@ window.api.onMenu((a) => {
   $('#verLine').textContent = 'Cockpit 1.0 · uma aba por projeto, chats lado a lado dentro dela';
   repintarAvatares();
   const noTelefone = !!window.SEM_ELECTRON;
-  if (!noTelefone) window.api.codexModels().then(ms => { if (ms && ms.length) { MODELOS_CODEX = ms; for (const P of panes.values()) if (P.engine === 'codex') fillModels(P); } });
+  carregarStatusAstra(true);
+  if (!noTelefone) window.api.codexModels().then(ms => {
+    if (ms && ms.length) { MODELOS_CODEX = ms; for (const P of panes.values()) if (P.engine === 'codex') fillModels(P); }
+    pintarAstra();
+  });
   // icones da tela de conversa nova
   $('#naIcClaude').innerHTML = svgMotor('claude');
   $('#naIcCodex').innerHTML = svgMotor('codex');

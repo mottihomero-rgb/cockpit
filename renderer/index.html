@@ -64,6 +64,25 @@
         <div id="webInfo" class="hint hidden"></div>
         <p class="hint">Com isso ligado, abra o endereço no Safari do iPhone e toque em Compartilhar › Adicionar à Tela de Início. Ele vira um app de tela cheia. Só funciona com o Mac ligado e na mesma rede.</p>
 
+        <label>GPT-6 Astra</label>
+        <div class="astra-card">
+          <div class="astra-top"><b>Astra</b><span id="astraPlano">Vendo seu plano…</span></div>
+          <p class="astra-status" id="astraStatus">Vendo a opção por créditos…</p>
+          <label class="chave astra-toggle"><input type="checkbox" id="chkAstraApi"><span>Permitir uso por créditos</span></label>
+          <div class="astra-limite"><span>Limite mensal</span><span>US$ <input id="astraCap" type="number" min="1" max="10000" step="1" value="10"></span></div>
+          <div class="astra-uso" id="astraUso">US$ 0,00 usados</div>
+          <input class="astra-key" id="astraKey" type="password" autocomplete="off" spellcheck="false" placeholder="Cole a chave sk-…">
+          <div class="astra-acoes">
+            <button id="btnAstraSalvar">Guardar chave</button>
+            <button id="btnAstraTestar">Testar</button>
+          </div>
+          <div class="astra-links">
+            <button id="btnAstraChave">Criar chave</button>
+            <button id="btnAstraCredito">Adicionar créditos</button>
+          </div>
+          <p class="hint astra-nota">Desligado, nenhum crédito da API é usado. O Astra do seu plano continua separado.</p>
+        </div>
+
         <label>Tema</label>
         <div class="temas">
           <button class="tema-bt" data-tema="escuro"><span class="tema-am esc"></span>Escuro</button>

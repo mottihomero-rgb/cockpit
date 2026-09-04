@@ -177,11 +177,29 @@ function avisarWeb(canal, dados) {
    Cada painel e uma thread, e o painel lembra em qual destino ele vive. */
 const codexConns = new Map();     // destino ('local' | 'vps') -> conexao
 const codexPaneDest = new Map();  // paneId -> destino
+const codexPaneBilling = new Map(); // paneId -> 'plan' | 'api'
 const codex = {
   threadToPane: new Map(),   // threadId -> paneId
   paneToThread: new Map(),   // paneId -> threadId
   paneTurn: new Map(),       // paneId -> turnId em andamento
 };
+
+/* O Astra por creditos usa a API sem trocar o login normal do Codex. A chave fica no
+   Chaveiro do Mac e o app-server pede ao proprio macOS quando realmente precisar dela. */
+const ASTRA_API_MODEL = 'gpt-6-astra';
+const ASTRA_PROVIDER = 'cockpit_api';
+const ASTRA_KEYCHAIN_SERVICE = 'com.adsure.cockpit.openai-api';
+const ASTRA_KEYCHAIN_ACCOUNT = os.userInfo().username;
+function codexProviderAstra() {
+  const q = (v) => JSON.stringify(String(v));
+  return 'model_providers.' + ASTRA_PROVIDER + '={'
+    + 'name="OpenAI API por creditos",'
+    + 'base_url="https://api.openai.com/v1",'
+    + 'wire_api="responses",'
+    + 'auth={command="/usr/bin/security",args=['
+    + ['find-generic-password', '-a', ASTRA_KEYCHAIN_ACCOUNT, '-s', ASTRA_KEYCHAIN_SERVICE, '-w'].map(q).join(',')
+    + '],refresh_interval_ms=0,timeout_ms=5000}}';
+}
 
 const destinoDoCwd = (cwd) => (ehRemoto(cwd) ? String(cwd).split(':')[0] : 'local');
 const destinoDoPane = (paneId) => codexPaneDest.get(paneId) || 'local';
@@ -199,7 +217,7 @@ function codexStart(destino = 'local') {
     let p;
     try {
       if (destino === 'local') {
-        p = spawnBin('codex', ['app-server'], { cwd: HOME, env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+        p = spawnBin('codex', ['-c', codexProviderAstra(), 'app-server'], { cwd: HOME, env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
       } else {
         const r = partesRemoto(destino + ':/');
         if (!r) return reject(new Error('servidor desconhecido: ' + destino));
@@ -236,6 +254,7 @@ function codexStart(destino = 'local') {
         if (tid) codex.threadToPane.delete(tid);
         codex.paneToThread.delete(paneId);
         codexPaneDest.delete(paneId);
+        codexPaneBilling.delete(paneId);
       }
     });
     p.on('error', (e) => { c.ready = null; reject(e); });
@@ -423,6 +442,11 @@ function codexNotification(method, params) {
       // "last" e o tamanho da conversa agora; "total" seria o gasto acumulado
       const atual = (tu.last && tu.last.totalTokens) || (tu.total && tu.total.totalTokens) || 0;
       emit(pane, 'tokens', { total: atual, janela: tu.modelContextWindow || undefined });
+      if (codexPaneBilling.get(pane) === 'api' && tu.total) {
+        const tid = params.threadId || codex.paneToThread.get(pane);
+        const uso = registrarUsoAstra(tid, tu.total);
+        emit(pane, 'api-usage', uso);
+      }
       break;
     }
 
@@ -1466,6 +1490,120 @@ function rodar(bin, args, timeout) {
     p.on('close', (code) => fim(code === 0 ? null : new Error('saiu com código ' + code)));
   });
 }
+
+/* ---------- GPT-6 Astra pela API, com trava de gasto ---------- */
+const USO_ASTRA_PATH = () => path.join(app.getPath('userData'), 'openai-api-uso.json');
+let usoAstraCache = null;
+let chaveAstraCache = null;
+let testeAstra = { estado: 'nao-testado', mensagem: 'Chave ainda não testada.', quando: 0 };
+
+function mesAstra() { return new Date().toISOString().slice(0, 7); }
+function lerUsoAstra() {
+  if (usoAstraCache) return usoAstraCache;
+  try { usoAstraCache = JSON.parse(fs.readFileSync(USO_ASTRA_PATH(), 'utf8')); } catch { usoAstraCache = {}; }
+  usoAstraCache.version = 1;
+  usoAstraCache.months = usoAstraCache.months || {};
+  usoAstraCache.threads = usoAstraCache.threads || {};
+  return usoAstraCache;
+}
+function gastoAstraMicros() {
+  const d = lerUsoAstra();
+  return Number((d.months[mesAstra()] || {}).usdMicros || 0);
+}
+function configAstra() {
+  const c = loadConfig();
+  const cap = Number(c.codexApiCapUsd);
+  return {
+    enabled: !!c.codexApiEnabled,
+    capUsd: Number.isFinite(cap) && cap > 0 ? Math.min(10000, cap) : 10,
+  };
+}
+async function lerChaveAstra() {
+  if (process.platform !== 'darwin') return '';
+  const r = await rodar('/usr/bin/security', ['find-generic-password', '-a', ASTRA_KEYCHAIN_ACCOUNT,
+    '-s', ASTRA_KEYCHAIN_SERVICE, '-w'], 8000);
+  return r.err ? '' : String(r.out || '').trim();
+}
+async function temChaveAstra(denovo) {
+  if (denovo || chaveAstraCache === null) chaveAstraCache = !!(await lerChaveAstra());
+  return chaveAstraCache;
+}
+async function guardarChaveAstra(chave) {
+  if (process.platform !== 'darwin') return { error: 'A chave segura está disponível somente no Mac.' };
+  const limpa = String(chave || '').trim();
+  if (!/^sk-[A-Za-z0-9_-]{20,}$/.test(limpa)) return { error: 'Essa chave não parece uma chave da OpenAI.' };
+  const r = await rodar('/usr/bin/security', ['add-generic-password', '-U', '-a', ASTRA_KEYCHAIN_ACCOUNT,
+    '-s', ASTRA_KEYCHAIN_SERVICE, '-w', limpa], 10000);
+  if (r.err) return { error: 'Não consegui guardar a chave no Chaveiro do Mac.' };
+  chaveAstraCache = true;
+  testeAstra = { estado: 'nao-testado', mensagem: 'Chave guardada. Falta testar o acesso ao Astra.', quando: 0 };
+  return { ok: true };
+}
+async function testarAstra() {
+  const chave = await lerChaveAstra();
+  if (!chave) {
+    chaveAstraCache = false;
+    testeAstra = { estado: 'sem-chave', mensagem: 'Nenhuma chave da OpenAI foi guardada.', quando: Date.now() };
+    return testeAstra;
+  }
+  chaveAstraCache = true;
+  try {
+    // Consultar os dados do modelo não gera texto e não consome tokens pagos.
+    const r = await fetch('https://api.openai.com/v1/models/' + ASTRA_API_MODEL, {
+      headers: { Authorization: 'Bearer ' + chave },
+    });
+    if (r.ok) testeAstra = { estado: 'pronto', mensagem: 'A API desta chave já tem acesso ao Astra.', quando: Date.now() };
+    else if (r.status === 401) testeAstra = { estado: 'erro', mensagem: 'A chave é inválida ou foi cancelada.', quando: Date.now() };
+    else if (r.status === 403 || r.status === 404) testeAstra = { estado: 'aguardando', mensagem: 'A chave funciona, mas este projeto ainda não recebeu o Astra.', quando: Date.now() };
+    else testeAstra = { estado: 'erro', mensagem: 'A OpenAI respondeu com erro ' + r.status + '.', quando: Date.now() };
+  } catch {
+    testeAstra = { estado: 'erro', mensagem: 'Não consegui falar com a OpenAI. Confira a internet.', quando: Date.now() };
+  }
+  return testeAstra;
+}
+async function estadoAstra() {
+  const c = configAstra();
+  const gasto = gastoAstraMicros() / 1000000;
+  return {
+    configured: await temChaveAstra(false), enabled: c.enabled, capUsd: c.capUsd,
+    spentUsd: gasto, remainingUsd: Math.max(0, c.capUsd - gasto),
+    testStatus: testeAstra.estado, testMessage: testeAstra.mensagem, testedAt: testeAstra.quando,
+  };
+}
+async function validarUsoAstra() {
+  if (process.platform !== 'darwin') throw new Error('O Astra por créditos está preparado somente no Mac.');
+  const c = configAstra();
+  if (!c.enabled) throw new Error('O uso por créditos está desligado nos Ajustes.');
+  if (!(await temChaveAstra(false))) throw new Error('Guarde uma chave da OpenAI nos Ajustes antes de usar créditos.');
+  if (gastoAstraMicros() >= Math.round(c.capUsd * 1000000)) {
+    throw new Error('O limite mensal do Astra por créditos foi atingido. Aumente o teto nos Ajustes para continuar.');
+  }
+}
+function custoAstraMicros(tokens) {
+  const entrada = Math.max(0, Number(tokens.inputTokens || 0));
+  const cache = Math.max(0, Number(tokens.cachedInputTokens || 0));
+  const cacheGravado = Math.max(0, Number(tokens.cacheWriteInputTokens || 0));
+  const normal = Math.max(0, entrada - cache - cacheGravado);
+  const saida = Math.max(0, Number(tokens.outputTokens || 0));
+  // Preços oficiais em dólares por milhão. O resultado abaixo já fica em milionésimos de dólar.
+  return Math.max(0, Math.round(normal * 10 + cache * 1 + cacheGravado * 12.5 + saida * 50));
+}
+function registrarUsoAstra(threadId, tokens) {
+  const d = lerUsoAstra();
+  const id = String(threadId || 'sem-id');
+  const total = custoAstraMicros(tokens);
+  const anterior = Number((d.threads[id] || {}).usdMicros || 0);
+  const delta = Math.max(0, total - anterior);
+  d.threads[id] = { usdMicros: Math.max(anterior, total), updatedAt: Date.now() };
+  const mes = mesAstra();
+  const m = d.months[mes] || { usdMicros: 0 };
+  m.usdMicros = Number(m.usdMicros || 0) + delta;
+  d.months[mes] = m;
+  if (delta) gravarSeguro(USO_ASTRA_PATH(), JSON.stringify(d, null, 2));
+  const c = configAstra();
+  const gasto = m.usdMicros / 1000000;
+  return { spentUsd: gasto, capUsd: c.capUsd, remainingUsd: Math.max(0, c.capUsd - gasto) };
+}
 /* ---------- terminal embutido: roda no app, sem abrir o Terminal do sistema ----------
    Dá um terminal de verdade (pty) ao comando, assim as telinhas interativas
    (login, colar codigo) funcionam dentro do Cockpit. No Mac quem faz isso é o
@@ -1762,6 +1900,32 @@ handle('auth:acao', async (_e, { engine, acao, cwd }) => {
    do telefone ja marca a chamada com { remoto: true }; faltava alguem olhar. */
 const souRemoto = (e) => !!(e && e.remoto);
 
+handle('codex:api-status', async () => estadoAstra());
+handle('codex:api-key:set', async (_e, chave) => {
+  if (souRemoto(_e)) return { error: 'A chave só pode ser guardada no Mac.' };
+  const r = await guardarChaveAstra(chave);
+  return r.error ? r : { ...(await estadoAstra()), ok: true };
+});
+handle('codex:api-test', async (_e) => {
+  if (souRemoto(_e)) return { error: 'O teste da chave só pode ser feito no Mac.' };
+  await testarAstra();
+  return estadoAstra();
+});
+handle('codex:api-config:set', async (_e, dados) => {
+  if (souRemoto(_e)) return { error: 'O uso por créditos só pode ser alterado no Mac.' };
+  const c = loadConfig();
+  const cap = Number(dados && dados.capUsd);
+  c.codexApiCapUsd = Number.isFinite(cap) && cap > 0 ? Math.min(10000, cap) : 10;
+  if (dados && Object.prototype.hasOwnProperty.call(dados, 'enabled')) {
+    if (dados.enabled && !(await temChaveAstra(false))) return { error: 'Guarde a chave da OpenAI antes de ligar os créditos.' };
+    c.codexApiEnabled = !!dados.enabled;
+  }
+  anotarChaveDoMain('codexApiCapUsd', c.codexApiCapUsd);
+  anotarChaveDoMain('codexApiEnabled', !!c.codexApiEnabled);
+  saveConfig(c);
+  return estadoAstra();
+});
+
 handle('user:pickPhoto', async (_e) => {
   if (souRemoto(_e)) return { error: 'Trocar a foto só funciona no Mac.' };
   const r = await dialog.showOpenDialog(win, { properties: ['openFile'], defaultPath: HOME,
@@ -1943,7 +2107,7 @@ handle('config:get', () => loadConfig());
    — e o savePanes() grava a cada chat aberto, fechado ou redimensionado — mandava de volta o
    valor VELHO e apagava a senha e o "ligado". Era por isso que o acesso pelo iPhone se
    desligava sozinho e a senha mudava. Agora estas tres vem sempre do disco. */
-const CHAVES_DO_MAIN = ['senhaWeb', 'webLigado', 'webSeguroConfirmado'];
+const CHAVES_DO_MAIN = ['senhaWeb', 'webLigado', 'webSeguroConfirmado', 'codexApiEnabled', 'codexApiCapUsd'];
 /* Estas tres ficam na memoria do main. Antes eu relia o arquivo de 2,2 MB a cada gravacao so
    para busca-las — e o savePanes grava a cada chat aberto ou fechado. Quem escreve nelas e
    sempre o main (senhaDoTelefone e web:ligar), entao a copia na memoria esta sempre certa. */
@@ -2204,10 +2368,16 @@ handle('shell:openUrl', (_e, u) => {
   shell.openExternal(u); return { ok: true };
 });
 
-handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId, effort }) => {
+handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId, effort, billing }) => {
   if (engine === 'claude') return claudeStart(paneId, { cwd, model, approval, resumeId, effort });
   const dest = destinoDoCwd(cwd);
+  const porCreditos = billing === 'api';
+  if (porCreditos) {
+    if (dest !== 'local') throw new Error('O Astra por créditos funciona no Mac, não na VPS.');
+    await validarUsoAstra();
+  }
   codexPaneDest.set(paneId, dest);
+  codexPaneBilling.set(paneId, porCreditos ? 'api' : 'plan');
   await codexStart(dest);
   if (resumeId) {
     const r = await codexReq(dest, 'thread/resume', { threadId: resumeId });
@@ -2224,6 +2394,7 @@ handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId
     approvalPolicy: pol.policy,
     developerInstructions: instrucoesCasa(),
     ...(model ? { model } : {}),
+    ...(porCreditos ? { modelProvider: ASTRA_PROVIDER, serviceTier: 'default' } : {}),
   });
   const tid = res && (res.threadId || (res.thread && res.thread.id));
   if (!tid) throw new Error('Codex não devolveu a conversa');
@@ -2239,6 +2410,7 @@ handle('pane:send', async (_e, { paneId, engine, text, effort }) => {
   }
   const tid = codex.paneToThread.get(paneId);
   if (!tid) return false;
+  if (codexPaneBilling.get(paneId) === 'api') await validarUsoAstra();
   await codexReq(destinoDoPane(paneId), 'turn/start', { threadId: tid, input: [{ type: 'text', text }], ...(effort ? { effort } : {}) });
   return true;
 });
@@ -2306,6 +2478,7 @@ handle('pane:stop', async (_e, { paneId, engine }) => {
       if (codex.paneToThread.get(paneId) === tid) codex.paneToThread.delete(paneId);
     }
     codexPaneDest.delete(paneId);
+    codexPaneBilling.delete(paneId);
   }
   return true;
 });

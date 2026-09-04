@@ -67,6 +67,19 @@
     <div class="side-view hidden" data-view="settings">
       <div class="side-head"><span>Ajustes</span></div>
       <div class="settings">
+        <label>GPT-6 Astra</label>
+        <div class="astra-card">
+          <div class="astra-top"><b>Astra</b><span id="astraPlano">Vendo seu plano…</span></div>
+          <p class="astra-status" id="astraStatus">Vendo a opção por créditos…</p>
+          <label class="chave astra-toggle"><input type="checkbox" id="chkAstraApi" disabled><span>Permitir uso por créditos</span></label>
+          <div class="astra-limite"><span>Limite mensal</span><span>US$ <input id="astraCap" type="number" value="10" disabled></span></div>
+          <div class="astra-uso" id="astraUso">US$ 0,00 usados</div>
+          <p class="hint astra-nota">Por segurança, chave e créditos só podem ser alterados no Mac.</p>
+          <input class="astra-key hidden" id="astraKey" type="password" disabled>
+          <div class="astra-acoes hidden"><button id="btnAstraSalvar">Guardar chave</button><button id="btnAstraTestar">Testar</button></div>
+          <div class="astra-links hidden"><button id="btnAstraChave">Criar chave</button><button id="btnAstraCredito">Adicionar créditos</button></div>
+        </div>
+
         <label>Tema</label>
         <div class="temas">
           <button class="tema-bt" data-tema="escuro"><span class="tema-am esc"></span>Escuro</button>
