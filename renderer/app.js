@@ -315,6 +315,10 @@ async function trocarPastaDaAba(A) {
 // tira o chat de onde esta e coloca em outra posicao (ou em outra aba)
 function moverPane(P, A, indice) {
   const antiga = abaDe(P);
+  // este chat vai sair de onde esta: os que ficam alargam na hora e o texto reflui.
+  // as DUAS abas mudam de largura, e o proprio chat que se muda tambem precisa ser anotado.
+  guardarAntesDeMexer([antiga, A], null);
+  try {
   if (antiga) {
     const i = antiga.ordem.indexOf(P.id);
     if (i >= 0) antiga.ordem.splice(i, 1);
@@ -340,6 +344,7 @@ function moverPane(P, A, indice) {
   setFocus(P);
   lateralSegueAPasta();
   savePanes();
+  } finally { guardaTravada = false; }
 }
 
 // tira da tela a aba que ficou sem chat (sem mexer em qual aba esta aberta)
@@ -429,20 +434,48 @@ async function levarChatPara(P, escolhida) {
    Guardo a MENSAGEM que estava no alto da area visivel, e nao o numero de pixels:
    fechar um chat alarga os que sobram, o texto reflui e o mesmo numero de pixels
    passa a ser outro trecho da conversa (medido: -28% de altura ao fechar 1 de 3). */
+let guardaTravada = false;
+/* Anotar DEPOIS de ja ter mexido no DOM e anotar o estrago: tirar um painel alarga na hora
+   os que sobram, o texto reflui e a conversa ja pulou. Entao quem vai mexer no DOM chama
+   isto ANTES, e a trava impede que remontarEspaco/igualarChats refotografem por cima. */
+function guardarAntesDeMexer(listaAbas, exceto) {
+  for (const A of listaAbas) {
+    if (!A) continue;
+    for (const pid of A.ordem) if (pid !== exceto) guardarRolagem(panes.get(pid));
+  }
+  guardaTravada = true;
+}
+
 function guardarRolagem(P) {
+  if (guardaTravada) return;           // ja foi anotado antes de o DOM mudar: aquela foto vale mais
   const c = P && P.chat;
   if (!c || !c.clientHeight) return;   // aba escondida nao tem altura: leitura daria 0 e envenenaria o guardado
   // quem estava colado no fim tem que CONTINUAR colado no fim, inclusive se chegar
   // mensagem nova no meio do caminho (mesma regua de 100px do atBottom)
   if (c.scrollHeight - c.scrollTop - c.clientHeight < 100) { P.rolagem = { noFim: true }; return; }
-  const rc = c.getBoundingClientRect();
-  for (const f of c.children) {
-    const r = f.getBoundingClientRect();
-    // primeira mensagem que aparece na area visivel; 'corte' e o quanto dela ficou pra cima
-    // ('alt' e a altura dela agora: numa mensagem longa que reflui, o corte tem que encolher junto)
-    if (r.bottom > rc.top + 1) { P.rolagem = { anc: f, corte: rc.top - r.top, alt: r.height, top: c.scrollTop }; return; }
+  const ks = c.children;
+  if (!ks.length) { P.rolagem = { top: c.scrollTop }; return; }
+  // procurar a mensagem do topo uma por uma custava caro em conversa longa (57ms por troca de
+  // aba com 6000 mensagens). offsetTop so cresce, entao da pra achar por busca binaria: ~13
+  // medicoes em vez de 34 mil. 'base' desconta o caso de offsetTop contar de um ancestral.
+  const base = ks[0].offsetTop, alvo = c.scrollTop + base;
+  let lo = 0, hi = ks.length - 1, achou = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (ks[m].offsetTop + ks[m].offsetHeight > alvo) { achou = m; hi = m - 1; } else lo = m + 1;
   }
-  P.rolagem = { top: c.scrollTop };
+  if (achou < 0) { P.rolagem = { top: c.scrollTop }; return; }
+  const rc = c.getBoundingClientRect();
+  let f = ks[achou], r = f.getBoundingClientRect();
+  // conferencia barata (normalmente zero passos): se algo sair do fluxo normal, anda ate acertar
+  while (r.bottom <= rc.top + 1 && f.nextElementSibling) { f = f.nextElementSibling; r = f.getBoundingClientRect(); }
+  while (f.previousElementSibling) {
+    const pr = f.previousElementSibling.getBoundingClientRect();
+    if (pr.bottom > rc.top + 1) { f = f.previousElementSibling; r = pr; } else break;
+  }
+  // 'corte' e o quanto da mensagem ficou pra cima; 'alt' e a altura dela agora e 'larg' a
+  // largura do chat agora (so se a largura mudar e que o corte precisa encolher junto)
+  P.rolagem = { anc: f, corte: rc.top - r.top, alt: r.height, larg: c.clientWidth, top: c.scrollTop };
 }
 
 // devolve a conversa ao mesmo ponto de leitura. false = a aba ainda esta escondida,
@@ -454,8 +487,11 @@ function devolverRolagem(P) {
   if (g.anc && g.anc.parentNode === c) {
     const rc = c.getBoundingClientRect(), r = g.anc.getBoundingClientRect();
     // a mensagem mudou de tamanho junto com a largura: manter o corte em pixels crus
-    // jogaria o olho pra outro pedaco DENTRO dela (grave num bloco de codigo comprido)
-    const corte = g.alt > 0 && r.height > 0 ? g.corte * (r.height / g.alt) : g.corte;
+    // jogaria o olho pra outro pedaco DENTRO dela (grave num bloco de codigo comprido).
+    // Mas se a largura NAO mudou, ela cresceu porque o motor esta escrevendo dentro dela:
+    // ai encolher o corte empurraria a leitura pra frente sozinha. Por isso a condicao.
+    const mudouLarg = g.larg && c.clientWidth !== g.larg;
+    const corte = (mudouLarg && g.alt > 0 && r.height > 0) ? g.corte * (r.height / g.alt) : g.corte;
     const alvo = c.scrollTop + (r.top - rc.top) + corte;
     c.scrollTop = Math.max(0, Math.min(alvo, c.scrollHeight - c.clientHeight));
     return true;
@@ -983,26 +1019,31 @@ async function closePane(id, semPerguntar) {
     if (!confirm('O ' + (P.engine === 'codex' ? 'Codex' : 'Claude') + ' está trabalhando em “' + nome + '”.\n\nFechar agora joga fora o que ele está fazendo. Fechar mesmo assim?')) return;
   }
   const A = abaDe(P);
-  guardarFechado(P);   // fechou sem querer? dá para trazer de volta
-  // terminal embutido aberto neste chat morre junto, senao sobra processo vivo escondido
-  if (P.fecharTerminal) { const f = P.fecharTerminal; P.fecharTerminal = null; try { f(); } catch {} }
-  // Parar o Codex pode levar ate 1,5s (ele espera o turn/interrupt) e na VPS vai por ssh.
-  // O chat tem de sumir no clique: o processo principal termina de matar o turno sozinho.
-  window.api.paneStop({ paneId: id, engine: P.engine }).catch(() => {});
-  P.el.remove(); panes.delete(id);
-  marcarAbertas();          // fechou o chat: a borda da conversa na lista apaga junto
-  if (focusPane === P) focusPane = null;
-  if (!A) return;
-  const i = A.ordem.indexOf(id);
-  if (i >= 0) A.ordem.splice(i, 1);
-  if (A.ativo === id) A.ativo = A.ordem[Math.max(0, i - 1)] || A.ordem[0] || null;
-  if (!A.ordem.length) { fecharAba(A); return; }   // aba sem chat nenhum some junto
-  remontarEspaco(A);
-  igualarChats();
-  pintarAba(A);
-  const viz = panes.get(A.ordem[Math.max(0, i - 1)]) || panes.get(A.ordem[0]);
-  if (viz) setFocus(viz);
-  savePanes();
+  // ANTES de tirar o painel do DOM: no instante em que ele sai, os que sobram ja alargam
+  // e o texto reflui. Anotar depois disso seria anotar o estrago e devolve-lo fielmente.
+  guardarAntesDeMexer([A], id);
+  try {
+    guardarFechado(P);   // fechou sem querer? dá para trazer de volta
+    // terminal embutido aberto neste chat morre junto, senao sobra processo vivo escondido
+    if (P.fecharTerminal) { const f = P.fecharTerminal; P.fecharTerminal = null; try { f(); } catch {} }
+    // Parar o Codex pode levar ate 1,5s (ele espera o turn/interrupt) e na VPS vai por ssh.
+    // O chat tem de sumir no clique: o processo principal termina de matar o turno sozinho.
+    window.api.paneStop({ paneId: id, engine: P.engine }).catch(() => {});
+    P.el.remove(); panes.delete(id);
+    marcarAbertas();          // fechou o chat: a borda da conversa na lista apaga junto
+    if (focusPane === P) focusPane = null;
+    if (!A) return;
+    const i = A.ordem.indexOf(id);
+    if (i >= 0) A.ordem.splice(i, 1);
+    if (A.ativo === id) A.ativo = A.ordem[Math.max(0, i - 1)] || A.ordem[0] || null;
+    if (!A.ordem.length) { fecharAba(A); return; }   // aba sem chat nenhum some junto
+    remontarEspaco(A);
+    igualarChats();
+    pintarAba(A);
+    const viz = panes.get(A.ordem[Math.max(0, i - 1)]) || panes.get(A.ordem[0]);
+    if (viz) setFocus(viz);
+    savePanes();
+  } finally { guardaTravada = false; }   // saidas no meio (sem aba / aba vazia) tambem soltam
 }
 function pintarTokens(P) {
   pintarAnel(P);
@@ -2843,9 +2884,16 @@ async function janelaConfiguracao(P) {
    esconde tudo isso de uma vez, na tela inteira, e fica lembrado. */
 function alternarFoco() {
   const ligado = !document.body.classList.contains('foco');
+  // esconder/mostrar os passos muda a altura de TODA conversa, de TODAS as abas. Antes isto
+  // jogava todo mundo pro fim de proposito (medido: pulos de ate 14 telas). Agora cada chat
+  // volta pra onde estava — e quem ja estava colado no fim continua colado, pelo 'noFim'.
+  const vivos = [...panes.values()];
+  vivos.forEach(guardarRolagem);
   document.body.classList.toggle('foco', ligado);
   cfg.foco = ligado; window.api.setConfig(cfg);
-  for (const P of panes.values()) scroll(P, true);
+  requestAnimationFrame(() => {
+    for (const P of vivos) { if (panes.has(P.id)) P.rolagemPendente = !devolverRolagem(P); }
+  });
   return ligado;
 }
 
@@ -2915,7 +2963,7 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Conta', ic: 'user', nome: 'conta', desc: 'quem está entrado, limite de uso, trocar ou sair' + (NA_VPS(P.cwd) ? ' · na VPS' : ''), act: () => janelaConta(P) },
     { sec: 'Contexto', ic: 'upload', nome: 'Anexar arquivo…', act: () => menuAnexo(P) },
     { sec: 'Contexto', ic: 'folder', nome: 'Mencionar a pasta deste painel', act: () => inserirNoInput(P, P.cwd) },
-    { sec: 'Contexto', ic: 'eraser', nome: 'Limpar a tela', desc: 'a conversa continua', act: () => { P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); } },
+    { sec: 'Contexto', ic: 'eraser', nome: 'Limpar a tela', desc: 'a conversa continua', act: () => { P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); P.rolagem = null; } },
     { sec: 'Contexto', ic: 'sparkles', nome: 'Começar conversa nova', act: () => novaConversa(P.engine) },
     { sec: 'Contexto', ic: 'file-text', nome: 'Resumir a conversa', desc: 'libera espaço sem perder o fio', act: () => compactarConversa(P) },
     { sec: 'Contexto', ic: 'search', nome: 'Buscar nesta conversa', desc: '⌘F', act: () => abrirBuscaConversa(P) },
@@ -4345,7 +4393,7 @@ async function openSession(s, el) {
   P.engine = s.engine; P.cwd = s.cwd; P.resumeId = s.id; P.sessaoId = null; P.started = false; P.busy = false; P.model = '';
   P.sessaoFile = s.file || '';   // guardado para a conversa voltar cheia quando reabrir o app
   P.titulo = s.title || ''; P.hist = [];
-  P.blocks.clear(); P.tools.clear(); P.chat.innerHTML = '';
+  P.blocks.clear(); P.tools.clear(); P.chat.innerHTML = ''; P.rolagem = null;   // solta a mensagem-ancora da memoria
   fillModels(P); paintEngine(P); setDot(P, 'off');
   $('.p-cwd', P.el).textContent = nomePasta(P.cwd);
   pintarModo(P); pintarNome(P);
@@ -5002,7 +5050,7 @@ window.api.onMenu((a) => {
   else if (a === 'pickFolder' && focusPane) $('.p-cwd', focusPane.el).click();
   else if (a === 'toggleSidebar') toggleSidebar();
   else if (a === 'clearPane' && focusPane) {
-    focusPane.chat.innerHTML = ''; focusPane.blocks.clear(); focusPane.tools.clear();
+    focusPane.chat.innerHTML = ''; focusPane.blocks.clear(); focusPane.tools.clear(); focusPane.rolagem = null;
     note(focusPane, 'Tela limpa. A conversa continua de onde estava.');
   }
 });
