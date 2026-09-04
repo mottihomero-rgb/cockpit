@@ -364,8 +364,22 @@
   /* ---------------- setas: ancoragem e geometria ---------------- */
   /* Guardar o ID e nao a coordenada e o ponto todo: mover a forma leva a seta junto
      sem uma linha de codigo de sincronizacao. */
+  /* Para GRUDAR a seta a mira e mais generosa que para clicar: no losango, os cantos de
+     "se sim / se nao" ficam fora do losango de verdade, e e exatamente de la que sai a seta.
+     Errar isso custa caro: seta solta some da leitura em texto que o Claude recebe. */
+  function acharFormaPerto(mx, my, tolTela) {
+    const tol = tolTela / Q.cam.z;
+    for (let i = Q.cena.formas.length - 1; i >= 0; i--) {
+      const b = bboxForma(Q.cena.formas[i]);
+      if (mx >= b.x - tol && mx <= b.x + b.w + tol && my >= b.y - tol && my <= b.y + b.h + tol) {
+        return Q.cena.formas[i];
+      }
+    }
+    return null;
+  }
+
   function ancorar(mx, my, alt) {
-    const alvo = acharForma(mx, my);
+    const alvo = acharForma(mx, my) || acharFormaPerto(mx, my, 14);
     return alvo ? { forma: alvo.id, x: mx, y: my }
       : { forma: null, x: enc(mx, alt), y: enc(my, alt) };
   }
