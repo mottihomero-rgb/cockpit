@@ -1322,8 +1322,24 @@
     Q.ultimoToque = { t: agora, x: t.x, y: t.y };
   }
 
+  /* Rotular a seta ("sim" / "nao") e o gesto mais comum de um fluxograma de decisao, e a
+     mira de clique normal (8px) e apertada demais para isso: errar por 3px cria uma caixa de
+     texto solta, que na leitura enviada ao Claude vira "observacao solta" em vez de virar a
+     condicao do ramo. Por isso o duplo clique procura seta com folga bem maior que o clique. */
+  function acharSetaPerto(mx, my, tolTela) {
+    const tol = tolTela / Q.cam.z;
+    for (let i = Q.cena.setas.length - 1; i >= 0; i--) {
+      const s = Q.cena.setas[i], g = geoSeta(s);
+      if (distanciaPontoSegmento(mx, my, g.ax, g.ay, g.bx, g.by) <= tol) return s;
+    }
+    return null;
+  }
+
   function abrirEditorNoPonto(m) {
-    const alvo = achar(m.x, m.y);
+    const alvo = achar(m.x, m.y) || (() => {
+      const s = acharSetaPerto(m.x, m.y, 22);
+      return s ? { tipo: 'seta', obj: s } : null;
+    })();
     if (alvo) {
       Q.selecao.clear(); Q.selecao.add(alvo.obj.id);
       abrirEditor(alvo.obj);

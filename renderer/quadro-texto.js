@@ -359,6 +359,46 @@
     }
   }
 
+  /* Rótulo de seta escrito ao LADO da linha, não em cima dela.
+     No quadro, o "sim" / "não" de uma decisão é o texto mais comum, e a mão erra a linha por
+     alguns pixels: o texto nasce solto e a leitura enviada ao Claude dizia "observação solta"
+     em vez de dizer qual ramo é qual — que é justamente o que ele precisa saber.
+     Aqui um texto curto e órfão, perto do meio de uma seta ainda SEM rótulo, vira o rótulo dela. */
+  var TOL_ROTULO_SETA = 60;   // unidades de mundo (a caixa de texto padrão tem ~34 de altura)
+  var MAX_ROTULO_SETA = 30;   // "sim", "não", "se pagar até sexta" — rótulo é curto por natureza
+
+  function distPontoSegmento(px, py, ax, ay, bx, by) {
+    var vx = bx - ax, vy = by - ay;
+    var t = (vx * vx + vy * vy) < 0.000001 ? 0
+      : Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)));
+    var dx = px - (ax + t * vx), dy = py - (ay + t * vy);
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function absorverRotulosDeSeta(formas, setas) {
+    var i, j;
+    var livres = [];
+    for (i = 0; i < setas.length; i++) if (!String(setas[i].texto || '').trim()) livres.push(setas[i]);
+    if (!livres.length) return;
+
+    for (i = 0; i < formas.length; i++) {
+      var T = formas[i];
+      if (T.tipo !== 'texto' || T.absorvida) continue;
+      var txt = colapsar(String(T.texto || ''));
+      if (!txt || txt.length > MAX_ROTULO_SETA) continue;
+
+      var c = centro(T);
+      var melhor = null, dMelhor = TOL_ROTULO_SETA;
+      for (j = 0; j < livres.length; j++) {
+        var s2 = livres[j];
+        if (s2._rotuloDe) continue;                    // uma seta recebe um rótulo só
+        var d = distPontoSegmento(c.x, c.y, s2.de.x, s2.de.y, s2.para.x, s2.para.y);
+        if (d < dMelhor) { dMelhor = d; melhor = s2; }
+      }
+      if (melhor) { melhor.texto = txt; melhor._rotuloDe = T.id; T.absorvida = melhor.id; }
+    }
+  }
+
   /* ══════════════════════════════════════════════════════════════
      5. NOMES (garante que dois nós nunca se confundem)
      ══════════════════════════════════════════════════════════════ */
@@ -1232,6 +1272,7 @@
       var formas = s.formas, setas = s.setas;
 
       absorverTextos(formas, setas);
+      absorverRotulosDeSeta(formas, setas);   // o que sobrou perto de uma seta vira rótulo dela
       formas = formas.filter(function (f) { return !f.absorvida; });
 
       nomear(formas);
