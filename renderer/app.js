@@ -1876,6 +1876,22 @@ function note(P, text, isErr) {
 }
 
 /* ============ envio ============ */
+/* Nome da aba: o quadro cola no campo um cabecalho FIXO antes de ele escrever o pedido.
+   Se o nome saisse dai, todo chat que comeca por desenho se chamaria "Desenhei um fluxograma
+   no quadro…" e ele nao distinguiria um do outro na lista. Entao tiro o pedaco colado, fico
+   com o que ELE digitou e, so se ele nao digitou nada, uso o resumo do desenho
+   ("Fluxo de 3 caixas e 1 decisao, de Inicio ate Descarta"). */
+function nomeDaConversa(P, text) {
+  const curto = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, 70);
+  const q = P.quadroColado;
+  const colado = q && q.texto ? q.texto.trim() : '';
+  if (colado && text.includes(colado)) {
+    const dele = curto(text.split(colado).join(' '));
+    if (dele.length >= 4) return dele;
+    if (q.resumo) return curto(q.resumo);
+  }
+  return curto(text);
+}
 async function send(P) {
   const inp = $('.p-input', P.el);
   const text = inp.value.trim();
@@ -1883,6 +1899,7 @@ async function send(P) {
 
   if (P.busy) {
     const anx = P.anexos.slice(); P.anexos = []; pintarAnexos(P);
+    P.quadroColado = null;
     inp.value = ''; inp.style.height = 'auto';
     userMsg(P, text, anx);
     let envio = text;
@@ -1904,7 +1921,8 @@ async function send(P) {
   P.anexos = []; pintarAnexos(P);
   inp.value = ''; inp.style.height = 'auto';
   userMsg(P, text, anexos);
-  if (!P.titulo) { P.titulo = text.replace(/\s+/g, ' ').slice(0, 70); pintarNome(P); }
+  if (!P.titulo) { P.titulo = nomeDaConversa(P, text); pintarNome(P); }
+  P.quadroColado = null;
 
   if (!P.started) {
     setDot(P, 'busy');
@@ -1947,7 +1965,10 @@ async function send(P) {
     envio += '\n\nArquivos que anexei (abra cada um antes de responder):\n'
       + anexos.map(a => '- ' + a.path).join('\n');
   }
-  if (P.passarContexto) { envio = P.passarContexto + text; P.passarContexto = null; }
+  /* O contexto entra na FRENTE do 'envio' (que ja carrega a lista de anexos), nunca do 'text' cru:
+     colando no 'text' a lista "Arquivos que anexei" era jogada fora, e o caminho do print ou do
+     desenho do quadro nunca chegava ao motor — a fichinha aparecia na tela e nada era lido. */
+  if (P.passarContexto) { envio = P.passarContexto + envio; P.passarContexto = null; }
   // Máximo no Claude = ultracode: uma vez por processo, a liberação vai grudada na mensagem
   if (P.engine === 'claude' && esforcoDe(P) === 'max' && !P.ultraAvisado) {
     envio = ULTRACODE_MSG + envio; P.ultraAvisado = true;
@@ -3849,7 +3870,13 @@ function inserirNoInput(P, txt) {
    quadro.js e arquivo separado e nao enxerga anexar() nem inserirNoInput(), que sao internas
    daqui. Ele entrega o que produziu; quem mexe no chat continua sendo o app.js. */
 window.abrirQuadroAnexar = (P, caminho) => anexar(P, [caminho]);   // devolve Promise: o quadro.js da await
-window.abrirQuadroTexto = (P, txt) => inserirNoInput(P, txt);
+window.abrirQuadroTexto = (P, txt, resumo) => {
+  inserirNoInput(P, txt);
+  /* O texto do quadro comeca sempre pelo mesmo cabecalho ("Desenhei um fluxograma no quadro…").
+     Guardo o que foi colado e o resumo curto do desenho para o nome da aba nao nascer igual
+     em todo chat que comeca por um desenho. Quem decide o nome e nomeDaConversa(). */
+  P.quadroColado = { texto: txt, resumo: resumo || '' };
+};
 
 /* ============ visualizador de arquivo ============ */
 function fecharVisor() { $$('.p-visor').forEach(v => { v.classList.add('hidden'); $('.visor-corpo', v).innerHTML = ''; }); }
