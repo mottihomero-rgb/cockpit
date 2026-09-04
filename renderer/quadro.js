@@ -1829,9 +1829,10 @@
     const sep2 = document.createElement('span'); sep2.className = 'qd-sep qd-fer-sep'; barra.appendChild(sep2);
 
     // um botao so: pintar por dentro com a cor de agora, ou deixar vazado
-    // classe 'qd-fundo' sozinha (o quadro.css tem regra propria pra ela): com 'qd-fer'
-    // junto o balde herdava o tamanho dos 11 botoes de ferramenta e nao o proprio
-    Q.el.fundo = bt('qd-fundo', 'Pintar por dentro', qico('preencher'));
+    /* 'qd-fer qd-fundo' e NUNCA 'qd-bt': o quadro.css so escreve o realce em .qd-fundo.ativa
+       e conta com o .qd-fer para a moldura, o tamanho e o hover. Ja o botao de espessura
+       vem sozinho como .qd-esp-bt, porque la a folha repete o tamanho na mao. */
+    Q.el.fundo = bt('qd-fer qd-fundo', 'Pintar por dentro', qico('preencher'));
     Q.el.fundo.onclick = () => {
       const novo = Q.estilo.fundo === 'transparente' ? (Q.estilo.cor === 'tinta' ? PALETA[1] : Q.estilo.cor) : 'transparente';
       aplicarEstilo({ fundo: novo });

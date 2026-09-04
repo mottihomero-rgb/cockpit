@@ -19,8 +19,11 @@
      bolinhas de cor ... .qd-cor                                            -> .ativa
      botoes do topo .... .qd-mini  (o X leva tambem .qd-x)
      grupo de selecao .. .qd-grupo-sel
-     aviso de vazio .... .qd-vazio (SEM .qd-dica)
-   Nomes que MORRERAM e nao podem voltar: "qd-bt2", "qd-dica", "on", "armado".
+     legenda do topo ... .qd-dica  (aceita tambem .qd-sub — a mesma regra serve os dois)
+     aviso de vazio .... .qd-vazio  NUNCA com .qd-dica junto: a regra de celular
+                         esconde a legenda do topo, e levava a dica junto.
+   Nome que MORREU e nao pode voltar: "qd-bt2" (a pilula agora e .qd-rodape .qd-bt).
+   Estados: so "ativa", "confirmando" e "ocupado". "on" e "armado" nao existem mais.
    ========================================================================== */
 
 
@@ -83,8 +86,9 @@
 .qd-top{flex:none;display:flex;align-items:center;gap:10px;
   padding:12px 14px;border-bottom:1px solid var(--line);background:var(--bg2)}
 .qd-tit{font-size:13.5px;font-weight:650;color:var(--fg-strong);letter-spacing:.2px;white-space:nowrap}
-/* legenda do topo: "pasta · Claude". Uma linha so, com reticencias se faltar espaco. */
-.qd-sub{font-size:11px;color:var(--fg-fraco);white-space:nowrap;
+/* legenda do topo: "pasta · Claude". Uma linha so, com reticencias se faltar
+   espaco. Os dois nomes valem para nunca sair sem estilo se o motor trocar. */
+.qd-dica,.qd-sub{font-size:11px;color:var(--fg-fraco);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;min-width:0}
 .qd-gap{flex:1}
 
@@ -330,7 +334,9 @@
   .qd-cx{width:100vw;width:100%;height:100%;border:0;border-radius:0;box-shadow:none}
 
   .qd-top{padding:calc(9px + env(safe-area-inset-top,0px)) 12px 9px}
-  .qd-sub{display:none}                  /* "pasta · Claude" nao cabe no celular */
+  /* some so a LEGENDA DO TOPO. A dica do meio do palco (.qd-vazio) continua:
+     era ela que sumia junto quando as duas dividiam a classe. */
+  .qd-dica,.qd-sub{display:none}
   .qd-mini{width:34px;height:32px}
 
   /* column-reverse: o palco fica em cima, a barra de ferramentas embaixo dele */
