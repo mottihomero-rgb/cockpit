@@ -5060,10 +5060,13 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#novaAba').classList.contains('hidden')) { e.stopPropagation(); fecharNovaAba(); }
   // Enter confirma direto: sem pasta escolhida, abre no Mac inteiro
   if (e.key === 'Enter' && !$('#novaAba').classList.contains('hidden')) {
-    // se o Enter nasceu dentro de um campo da tela, o campo trata sozinho: este tratador roda
-    // na captura, ANTES do campo, e os dois chamavam naConfirmar — UM Enter abria DUAS abas
-    if (e.target && e.target.closest && e.target.closest('input, textarea')) return;
-    e.preventDefault(); naConfirmar(false);
+    // se o Enter nasceu dentro de um campo DESTA tela, o campo trata sozinho: este tratador
+    // roda na captura, ANTES do campo, e os dois chamavam naConfirmar — UM Enter abria DUAS
+    // abas. Campo de fora nao conta: o cursor costuma ficar no chat de tras, e ai o Enter
+    // tem de confirmar a tela que esta na frente.
+    if (e.target && e.target.closest && e.target.closest('#novaAba input, #novaAba textarea')) return;
+    // e o Enter para aqui: sem isto ele descia ate o campo de escrever escondido atras da tela
+    e.preventDefault(); e.stopPropagation(); naConfirmar(false);
   }
 }, true);
 
@@ -5263,7 +5266,9 @@ function aplicarEdicao(acao) {
   try { document.execCommand(cmd); } catch (_) {}
 }
 
-window.api.onMenu((a) => {
+window.api.onMenu(acaoDeMenu);
+
+function acaoDeMenu(a) {
   /* Porteiro: o que esta na frente manda. Nenhuma acao de painel pode agir por tras do
      quadro branco — ele tapa a tela inteira e ele nao ve o estrago. Antes, com o quadro
      aberto, ⌘W fechava em silencio o chat de tras e deixava o desenho preso a um chat que
@@ -5310,7 +5315,23 @@ window.api.onMenu((a) => {
     focusPane.chat.innerHTML = ''; focusPane.blocks.clear(); focusPane.tools.clear(); focusPane.rolagem = null;
     note(focusPane, 'Tela limpa. A conversa continua de onde estava.');
   }
-});
+}
+
+/* No TELEFONE nao existe menu de aplicativo (web.js deixa o onMenu vazio), entao nenhum destes
+   atalhos existia la. Este bloco so vale quando NAO ha menu — no Mac ele fica desligado, senao
+   cada tecla dispararia duas vezes (o menu e a pagina). ⌘W fica de fora de proposito: no
+   navegador ele e da aba do browser e nao da para segurar. */
+document.addEventListener('keydown', (e) => {
+  if (!window.SEM_ELECTRON) return;
+  if (!(e.metaKey || e.ctrlKey)) return;
+  const k = (e.key || '').toLowerCase();
+  const mapa = e.shiftKey
+    ? { t: 'newTab', w: 'reabrirFechado', d: 'ditar', f: 'foco' }
+    : { t: 'newPane', o: 'pickFolder', k: 'clearPane', f: 'buscarNaConversa', d: 'perguntarAosDois', s: 'salvarVault', b: 'toggleSidebar' };
+  if (!mapa[k]) return;
+  e.preventDefault();
+  acaoDeMenu(mapa[k]);
+}, true);
 
 /* ============ boot ============ */
 (async function boot() {
