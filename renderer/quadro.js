@@ -56,6 +56,8 @@
     frente: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16V4a1 1 0 0 1 1-1h11"/>',
     tras: '<rect x="3" y="3" width="13" height="13" rx="2"/><path d="M20 8v12a1 1 0 0 1-1 1H8"/>',
     apagar: '<path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+    imagem: '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.5-3.5a2 2 0 0 0-2.8 0L6 20"/>',
+    copiar: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>',
     ajustar: '<path d="M3 9V5a2 2 0 0 1 2-2h4"/><path d="M15 3h4a2 2 0 0 1 2 2v4"/><path d="M21 15v4a2 2 0 0 1-2 2h-4"/><path d="M9 21H5a2 2 0 0 1-2-2v-4"/>',
   };
   const qico = (n) => '<svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" '
@@ -428,7 +430,17 @@
     return ctxMedida;
   }
   function fonteDe(f) { return f.tipo === 'texto' ? 18 : f.tipo === 'nota' ? 15 : 16; }
-  function larguraTexto(f) { return Math.max(20, (f.tipo === 'nota' ? f.w - 24 : f.w - 16)); }
+  /* A largura util NAO e a caixa inteira: o ctx.clip() recorta no contorno de verdade.
+     No losango a faixa do meio tem metade da largura; na elipse, uns 70%. Medindo pela
+     caixa cheia, as linhas de cima e de baixo saiam com as pontas decepadas na tela e
+     dentro do PNG que vai para o Claude. */
+  function larguraTexto(f) {
+    const base = f.tipo === 'nota' ? f.w - 24
+      : f.tipo === 'losango' ? f.w / 2 - 12
+      : f.tipo === 'elipse' ? f.w * 0.7 - 12
+      : f.w - 16;
+    return Math.max(20, base);
+  }
   const alturaLinha = (tam) => Math.round(tam * 1.28);
 
   function quebrarTexto(ctx, txt, larguraMax, tam) {
@@ -466,6 +478,26 @@
   function alturaTexto(f) {
     const tam = fonteDe(f);
     return linhasDe(ctxParaMedir(), f).length * alturaLinha(tam) + 12;
+  }
+  /* altura que a FORMA precisa ter para o texto caber dentro do contorno:
+     no losango o texto so ocupa a faixa central (metade da altura), na elipse ~70%. */
+  function alturaNecessaria(f) {
+    const fator = f.tipo === 'losango' ? 2 : f.tipo === 'elipse' ? 1.42 : 1;
+    return Math.ceil(alturaTexto(f) * fator);
+  }
+  /* Texto que nao cabe SOME sem aviso (o clip corta) e, pior, sobra o MEIO da frase.
+     A imagem passa a mentir para o Claude, que recebe a frase inteira no texto.
+     Entao a forma cresce ate caber — todas, nao so o tipo 'texto'. */
+  function ajustarAltura(f) {
+    if (!f || f.tipo === 'caneta' || f.tipo === 'seta' || f.tipo === 'linha') return false;
+    if (f.tipo === 'texto') {
+      const h = alturaTexto(f);
+      if (Math.abs(f.h - h) > 0.5) { f.h = h; return true; }
+      return false;
+    }
+    const nec = alturaNecessaria(f);
+    if (f.h < nec) { f.h = nec; return true; }
+    return false;
   }
 
   /* ---------------- editor flutuante ---------------- */
@@ -515,10 +547,11 @@
     if (confirmar) {
       e.obj.texto = ta.value;
       e.obj._chaveLinhas = null;
-      if (e.obj.tipo === 'texto') {
-        if (!ta.value.trim()) remover(e.obj.id);
-        else e.obj.h = alturaTexto(e.obj);
-      }
+      if (e.obj.tipo === 'texto' && !ta.value.trim()) {
+        // sem soltar as setas antes, elas ficam guardando o id de uma forma que sumiu
+        soltarSetasDe(e.obj.id);
+        remover(e.obj.id);
+      } else ajustarAltura(e.obj);
       registrar(); marcarSujo();
     }
     ta.classList.add('hidden');
@@ -816,7 +849,8 @@
         : (nf + (nf === 1 ? ' peça' : ' peças') + ' · ' + ns + (ns === 1 ? ' ligação' : ' ligações'));
     }
     if (Q.el.mandar) Q.el.mandar.disabled = vazio || !Q.P;
-    if (Q.el.grupoSel) Q.el.grupoSel.style.display = Q.selecao.size ? '' : 'none';
+    // 'flex', nao '': com display:'' o grupo voltava a block e o gap/centralizacao morriam
+    if (Q.el.grupoSel) Q.el.grupoSel.style.display = Q.selecao.size ? 'flex' : 'none';
     if (Q.el.desfazer) Q.el.desfazer.disabled = Q.pilha.indice <= 0;
     if (Q.el.refazer) Q.el.refazer.disabled = Q.pilha.indice >= Q.pilha.passos.length - 1;
     pintarProps();
@@ -826,9 +860,7 @@
   function setFerramenta(f) {
     Q.ferramenta = f;
     for (const bt of Q.el.botoesFer || []) {
-      const on = bt.dataset.f === f;
-      bt.classList.toggle('on', on);
-      bt.classList.toggle('ativo', on);
+      bt.classList.toggle('ativo', bt.dataset.f === f);
     }
     atualizarCursor();
     agendar();
@@ -861,8 +893,36 @@
     const g = Q.gesto;
     if (!g) return;
     if (g.tipo === 'criando' || g.tipo === 'caneta') remover(g.f.id);
-    if (g.tipo === 'criandoSeta') remover(g.s.id);
+    else if (g.tipo === 'criandoSeta') remover(g.s.id);
+    else if (g.tipo === 'movendo') {
+      /* Esc no meio do arrasto TEM de devolver a peca pro lugar. Antes o gesto era so
+         jogado fora: a peca ficava onde o mouse parou e a pilha de desfazer apontava
+         para outro estado — o ⌘Z seguinte pulava um passo e apagava trabalho. */
+      for (const [id, o0] of g.orig) {
+        const o = itemPorId(id);
+        if (!o) continue;
+        if (o.tipo === 'seta' || o.tipo === 'linha') {
+          o.de = JSON.parse(JSON.stringify(o0.de));
+          o.para = JSON.parse(JSON.stringify(o0.para));
+        } else {
+          o.x = o0.x; o.y = o0.y;
+          if (o0.pontos) o.pontos = o0.pontos.map(p => [p[0], p[1]]);
+          o._chaveLinhas = null;
+        }
+      }
+    } else if (g.tipo === 'redim') {
+      const f = formaPorId(g.id);
+      if (f) {
+        f.x = g.orig.x; f.y = g.orig.y; f.w = g.orig.w; f.h = g.orig.h;
+        if (g.origPontos) f.pontos = g.origPontos.map(p => [p[0], p[1]]);
+        f._chaveLinhas = null;
+      }
+    } else if (g.tipo === 'pontaSeta') {
+      if (g.s && g.origPonta) g.s[g.ponta] = JSON.parse(JSON.stringify(g.origPonta));
+    }
     Q.gesto = null; Q.alvoSeta = null;
+    // cinto de seguranca: a pilha de desfazer nunca pode divergir da cena
+    registrar();
     agendar();
   }
 
@@ -938,7 +998,10 @@
       }
       const ponta = pontaSetaEm(t.x, t.y);
       if (ponta) {
-        Q.gesto = { tipo: 'pontaSeta', s: setaUnicaSelecionada(), ponta, mudou: false };
+        const sel = setaUnicaSelecionada();
+        // copia da ponta: sem ela o Esc no meio do arrasto nao tem para onde voltar
+        Q.gesto = { tipo: 'pontaSeta', s: sel, ponta, mudou: false,
+          origPonta: sel ? JSON.parse(JSON.stringify(sel[ponta])) : null };
         return;
       }
       const alvo = achar(m.x, m.y);
@@ -957,7 +1020,15 @@
             ? { de: o.de, para: o.para }
             : { x: o.x, y: o.y, pontos: o.pontos || null })));
         }
-        Q.gesto = { tipo: 'movendo', m0: m, orig, mudou: false };
+        /* peca de referencia do encaixe: o delta e calculado UMA vez e somado em todo
+           mundo. Encaixando peca por peca, quem ja estava na grade nao anda e quem estava
+           fora anda ate 8px — a cada arrasto o desenho se deformava sozinho. */
+        let ref = null;
+        for (const [, o0] of orig) {
+          if (o0.x != null) { ref = { x: o0.x, y: o0.y }; break; }
+          if (o0.de && !o0.de.forma) { ref = { x: o0.de.x, y: o0.de.y }; break; }
+        }
+        Q.gesto = { tipo: 'movendo', m0: m, orig, ref, mudou: false };
         agendar(); return;
       }
       if (!e.shiftKey) Q.selecao.clear();
@@ -1050,18 +1121,19 @@
       /* aplicar o delta sobre a COPIA original: encaixe sobre o valor corrente
          faz a forma ir andando sozinha e desalinhando */
       const dx = m.x - g.m0.x, dy = m.y - g.m0.y;
+      let ex = dx, ey = dy;
+      if (g.ref) { ex = enc(g.ref.x + dx, alt) - g.ref.x; ey = enc(g.ref.y + dy, alt) - g.ref.y; }
       for (const [id, o0] of g.orig) {
         const o = itemPorId(id);
         if (!o) continue;
         if (o.tipo === 'seta' || o.tipo === 'linha') {
-          if (!o0.de.forma) { o.de.x = enc(o0.de.x + dx, alt); o.de.y = enc(o0.de.y + dy, alt); }
-          if (!o0.para.forma) { o.para.x = enc(o0.para.x + dx, alt); o.para.y = enc(o0.para.y + dy, alt); }
+          if (!o0.de.forma) { o.de.x = o0.de.x + ex; o.de.y = o0.de.y + ey; }
+          if (!o0.para.forma) { o.para.x = o0.para.x + ex; o.para.y = o0.para.y + ey; }
         } else if (o.tipo === 'caneta' && o0.pontos) {
-          const ex = enc(o0.x + dx, alt) - o0.x, ey = enc(o0.y + dy, alt) - o0.y;
           o.pontos = o0.pontos.map(p => [p[0] + ex, p[1] + ey]);
           o.x = o0.x + ex; o.y = o0.y + ey;
         } else {
-          o.x = enc(o0.x + dx, alt); o.y = enc(o0.y + dy, alt);
+          o.x = o0.x + ex; o.y = o0.y + ey;
         }
       }
       g.mudou = true; agendar(); return;
@@ -1138,14 +1210,18 @@
 
     if (g.tipo === 'criando') {
       const f = g.f;
-      if (f.w < 4 && f.h < 4) {
+      // OU, nao E: um arrasto quase reto criava uma forma com um lado zerado — um risco
+      // invisivel que ainda contava como peca e ia junto no PNG e na leitura pro Claude
+      if (f.w < 4 || f.h < 4) {
         const p = PADRAO[f.tipo] || PADRAO.retangulo;
         f.x = enc(g.x0 - p.w / 2, false); f.y = enc(g.y0 - p.h / 2, false);
         f.w = p.w; f.h = p.h;
         g.mudou = true;
       }
       Q.selecao.clear(); Q.selecao.add(f.id);
-      if (f.tipo !== 'nota') setFerramenta('selecionar');
+      // o post-it tambem volta pra seta: armado, o clique seguinte (que era so pra
+      // selecionar) carimbava mais um post-it
+      setFerramenta('selecionar');
       if (f.tipo === 'texto') { registrar(); marcarSujo(); abrirEditor(f); return; }
     } else if (g.tipo === 'caneta') {
       if (!g.f.pontos || g.f.pontos.length < 2) { remover(g.f.id); g.mudou = false; }
@@ -1323,7 +1399,7 @@
     marcarSujo();
     // uma rajada de setinhas vira UM passo de desfazer, nao um por tecla
     clearTimeout(Q.setasTimer);
-    Q.setasTimer = setTimeout(registrar, 400);
+    Q.setasTimer = setTimeout(() => { Q.setasTimer = null; registrar(); }, 400);
     agendar();
   }
 
@@ -1377,10 +1453,13 @@
       if (Q.ferramenta !== 'selecionar') { setFerramenta('selecionar'); return; }
       fechar(); return;
     }
+    /* Duplicar e Alt+D, NUNCA ⌘D: no macOS o menu do app recebe a tecla antes da pagina,
+       entao ⌘D disparava "Perguntar aos dois motores" (mandando a mensagem para os dois
+       motores por tras do quadro) e ⌘⇧D ligava o microfone. No Mac o Alt+D chega como '∂'. */
+    if (e.altKey && !cmd && (e.key === 'd' || e.key === 'D' || e.key === '∂')) { parar(); duplicarSelecao(); return; }
     if (cmd && (e.key === 'z' || e.key === 'Z')) { parar(); e.shiftKey ? refazer() : desfazer(); return; }
     if (cmd && (e.key === 'y' || e.key === 'Y')) { parar(); refazer(); return; }
     if (cmd && (e.key === 'a' || e.key === 'A')) { parar(); selecionarTudo(); return; }
-    if (cmd && (e.key === 'd' || e.key === 'D')) { parar(); duplicarSelecao(); return; }
     if (cmd && e.key === '0') { parar(); ajustarNaTela(); return; }
     if (cmd && (e.key === '=' || e.key === '+')) { parar(); zoomPara(Q.cam.z * 1.2, Q.larg / 2, Q.alt / 2); return; }
     if (cmd && e.key === '-') { parar(); zoomPara(Q.cam.z / 1.2, Q.larg / 2, Q.alt / 2); return; }
@@ -1445,6 +1524,9 @@
     let r = null;
     try { r = await window.api.quadroRascunhoLer(); } catch (_) { return; }
     if (!r || !r.cena) return;
+    /* desenho que ja foi mandado pro chat nao ressuscita: dias depois ele voltaria na tela
+       e seria mandado de novo, colado no fluxo novo (o Claude receberia A+B como um so) */
+    if (r.enviadoEm) return;
     const c = normalizarCena(r.cena);
     if (!c.formas.length && !c.setas.length) return;
     Q.cena = c;
@@ -1475,10 +1557,18 @@
     const M = 24;
     let escala = 2;
     const maior = Math.max((b.w + M * 2) * escala, (b.h + M * 2) * escala);
-    if (maior > LIM_PNG) escala = Math.max(0.4, escala * LIM_PNG / maior);
+    // o piso de 0.4 furava o proprio LIM_PNG: cena muito larga saia com 8000px de lado
+    if (maior > LIM_PNG) escala = Math.max(0.15, escala * LIM_PNG / maior);
     let url = pintarEmEscala(b, M, escala);
-    // o WebSocket do telefone corta em 8MB e cai calado: melhor 1x do que sem desenho
-    if (url.length > 5.5e6 && escala > 1) url = pintarEmEscala(b, M, 1);
+    /* O WebSocket do telefone corta em 8MB, fecha a conexao calado e a promessa so morre no
+       tempo limite de 2 minutos. A rede antiga so disparava com escala > 1 — mas desenho
+       grande JA entra com escala < 1, entao ela nunca rodava justamente no caso dela.
+       Agora encolhe ate caber. */
+    let voltas = 0;
+    while (url.length > 5e6 && escala > 0.15 && voltas++ < 8) {
+      escala = Math.max(0.15, escala * 0.7);
+      url = pintarEmEscala(b, M, escala);
+    }
     return url;
   }
 
@@ -1520,20 +1610,26 @@
   }
 
   /* ---------------- acoes do rodape ---------------- */
+  /* trocar so o rotulo: o botao tem icone do lado, e textContent apagaria o icone junto */
+  function rotuloLimpar(txt) {
+    const b = Q.el.limpar; if (!b) return;
+    const r = b.querySelector('.qd-rot');
+    if (r) r.textContent = txt; else b.textContent = txt;
+  }
   function limpar(semConfirmar) {
     if (!semConfirmar && !cenaVazia()) {
       // confirmacao no proprio botao: confirm() nativo quebra o fluxo e ignora o tema
       const bt = Q.el.limpar;
       if (Date.now() - Q.limparArmado > 3000) {
         Q.limparArmado = Date.now();
-        bt.textContent = 'Confirmar?';
-        bt.classList.add('armado');
-        setTimeout(() => { bt.textContent = 'Limpar'; bt.classList.remove('armado'); }, 3000);
+        rotuloLimpar('Confirmar?');
+        bt.classList.add('confirmando');   // e 'confirmando' que o quadro.css pinta de vermelho
+        setTimeout(() => { rotuloLimpar('Limpar'); bt.classList.remove('confirmando'); }, 3000);
         return;
       }
     }
     Q.limparArmado = 0;
-    if (Q.el.limpar) { Q.el.limpar.textContent = 'Limpar'; Q.el.limpar.classList.remove('armado'); }
+    if (Q.el.limpar) { rotuloLimpar('Limpar'); Q.el.limpar.classList.remove('confirmando'); }
     Q.cena = { v: 1, formas: [], setas: [] };
     Q.selecao.clear();
     registrar(); marcarSujo(); agendar();
@@ -1588,9 +1684,10 @@
       } else {
         txt = 'Desenhei um fluxograma. Abra a imagem antes de responder: ' + r.png + '\n\n' + txt;
       }
-      if (typeof window.abrirQuadroTexto === 'function') window.abrirQuadroTexto(P, txt);
+      // o resumo vai junto para a aba nao nascer chamada "Desenhei um fluxograma no quadro…"
+      if (typeof window.abrirQuadroTexto === 'function') window.abrirQuadroTexto(P, txt, d.resumo);
       Q.enviado = true;
-      try { await window.api.quadroRascunhoGravar({ cena }); } catch (_) {}
+      try { await window.api.quadroRascunhoGravar({ cena, enviadoEm: Date.now() }); } catch (_) {}
       fechar();
       const inp = P.el.querySelector('.p-input');
       if (inp) { inp.focus(); try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (_) {} }
@@ -1656,6 +1753,12 @@
       + '" rx="' + (h / 2) + '" fill="currentColor" stroke="none"/></svg>';
   }
 
+  /* a letra do atalho que vai no cantinho do botao (o CSS ja previa .qd-fer-tecla) */
+  function teclaDe(ferr) {
+    for (const k in TECLAS_FER) if (TECLAS_FER[k] === ferr) return k.toUpperCase();
+    return '';
+  }
+
   function montarFerramentas(barra) {
     Q.el.botoesFer = [];
     for (const f of FERRAMENTAS) {
@@ -1665,8 +1768,13 @@
         barra.appendChild(s);
         continue;
       }
-      const b = bt('qd-bt qd-fer', f.t, qico(f.ic));
+      /* SEM 'qd-bt' aqui: aquela e a pilula do rodape e, por vir depois no CSS, vencia o
+         .qd-fer em display, padding e borda — os 11 botoes ganhavam moldura e o icone saia
+         empurrado pra direita. */
+      const b = bt('qd-fer', f.t, qico(f.ic));
       b.dataset.f = f.f;
+      const tecla = teclaDe(f.f);
+      if (tecla) b.insertAdjacentHTML('beforeend', '<span class="qd-fer-tecla">' + tecla + '</span>');
       b.onclick = () => setFerramenta(f.f);
       barra.appendChild(b);
       Q.el.botoesFer.push(b);
@@ -1693,7 +1801,7 @@
     const sep2 = document.createElement('span'); sep2.className = 'qd-sep'; barra.appendChild(sep2);
 
     // um botao so: pintar por dentro com a cor de agora, ou deixar vazado
-    Q.el.fundo = bt('qd-bt qd-fundo', 'Pintar por dentro', qico('preencher'));
+    Q.el.fundo = bt('qd-fer qd-fundo', 'Pintar por dentro', qico('preencher'));
     Q.el.fundo.onclick = () => {
       const novo = Q.estilo.fundo === 'transparente' ? (Q.estilo.cor === 'tinta' ? PALETA[1] : Q.estilo.cor) : 'transparente';
       aplicarEstilo({ fundo: novo });
@@ -1701,7 +1809,7 @@
     barra.appendChild(Q.el.fundo);
 
     // espessura cicla 2 -> 4 -> 7: tres botoes so para isso deixariam a barra comprida demais
-    Q.el.esp = bt('qd-bt qd-esp-bt', 'Espessura do traço', iconeEspessura(2));
+    Q.el.esp = bt('qd-fer qd-espessura', 'Espessura do traço', iconeEspessura(2));
     Q.el.esp.onclick = () => {
       const prox = Q.estilo.esp === 2 ? 4 : Q.estilo.esp === 4 ? 7 : 2;
       aplicarEstilo({ esp: prox });
@@ -1713,11 +1821,11 @@
     grupo.className = 'qd-grupo-sel';
     grupo.style.cssText = 'display:none;flex-direction:column;align-items:center;gap:6px;width:100%';
     const sep3 = document.createElement('span'); sep3.className = 'qd-sep'; grupo.appendChild(sep3);
-    const bFrente = bt('qd-bt qd-prop-frente', 'Trazer pra frente (])', qico('frente'));
+    const bFrente = bt('qd-fer qd-prop-frente', 'Trazer pra frente (])', qico('frente'));
     bFrente.onclick = paraFrente;
-    const bTras = bt('qd-bt qd-prop-tras', 'Mandar pra trás ([)', qico('tras'));
+    const bTras = bt('qd-fer qd-prop-tras', 'Mandar pra trás ([)', qico('tras'));
     bTras.onclick = paraTras;
-    const bApagar = bt('qd-bt perigo qd-prop-apagar', 'Apagar (Delete)', qico('apagar'));
+    const bApagar = bt('qd-fer perigo qd-prop-apagar', 'Apagar (Delete)', qico('apagar'));
     bApagar.onclick = apagarSelecao;
     grupo.appendChild(bFrente); grupo.appendChild(bTras); grupo.appendChild(bApagar);
     barra.appendChild(grupo);
@@ -1726,10 +1834,11 @@
 
   function pintarProps() {
     if (Q.el.botoesCor) {
-      for (const b of Q.el.botoesCor) b.classList.toggle('on', b.dataset.cor === Q.estilo.cor);
+      // 'ativa' e o nome que o quadro.css conhece; com 'on' nenhuma bolinha ganhava o anel
+      for (const b of Q.el.botoesCor) b.classList.toggle('ativa', b.dataset.cor === Q.estilo.cor);
     }
     if (Q.el.esp) Q.el.esp.innerHTML = iconeEspessura(Q.estilo.esp);
-    if (Q.el.fundo) Q.el.fundo.classList.toggle('on', Q.estilo.fundo !== 'transparente');
+    if (Q.el.fundo) Q.el.fundo.classList.toggle('ativa', Q.estilo.fundo !== 'transparente');
   }
 
   function caixa() {
@@ -1779,7 +1888,9 @@
       + '-webkit-user-select:none;user-select:none;-webkit-touch-callout:none';
 
     const dica = document.createElement('div');
-    dica.className = 'qd-dica qd-vazio';
+    // so 'qd-vazio': com 'qd-dica' junto, o bloco de tela estreita escondia a dica
+    // justamente no iPad, onde ele desenha com o dedo e nao existe atalho de teclado
+    dica.className = 'qd-vazio';
     dica.innerHTML = 'Desenhe o fluxo que você quer explicar.<br>'
       + '<b>Caixa (R)</b> · <b>Decisão (D)</b> · <b>Seta (A)</b> · <b>Texto (T)</b><br>'
       + 'Dois cliques dentro de uma forma para escrever nela.';
@@ -1814,13 +1925,13 @@
     rod.className = 'qd-rodape';
     const conta = document.createElement('span'); conta.className = 'qd-conta';
     const rgap = document.createElement('span'); rgap.className = 'qd-gap qd-rod-gap'; rgap.style.flex = '1';
-    const bLimpar = bt('qd-bt2 perigo qd-limpar', 'Apagar tudo', '');
-    bLimpar.textContent = 'Limpar';
+    /* 'qd-bt' (a classe que existe no quadro.css), nao 'qd-bt2': assim eles voltam a ser
+       botao de verdade — com moldura, area de clique e o vermelho do Limpar. O rotulo vai
+       num <span class="qd-rot"> porque no iPhone em pe so o icone fica. */
+    const bLimpar = bt('qd-bt perigo qd-limpar', 'Apagar tudo', qico('apagar') + '<span class="qd-rot">Limpar</span>');
     bLimpar.onclick = () => limpar(false);
-    const bPng = bt('qd-bt2 qd-png', 'Salvar o desenho como imagem', '');
-    bPng.textContent = 'Salvar PNG';
-    const bCopiar = bt('qd-bt2 qd-copiar', 'Copiar a leitura do fluxo em texto', '');
-    bCopiar.textContent = 'Copiar texto';
+    const bPng = bt('qd-bt qd-png', 'Salvar o desenho como imagem', qico('imagem') + '<span class="qd-rot">Salvar PNG</span>');
+    const bCopiar = bt('qd-bt qd-copiar', 'Copiar a leitura do fluxo em texto', qico('copiar') + '<span class="qd-rot">Copiar texto</span>');
     bPng.onclick = salvarPNG;
     bCopiar.onclick = copiarTexto;
     const bMandar = bt('qd-mandar principal', 'Mandar o desenho para o chat (⌘Enter)', qico('mandar') + '<span>Mandar pro chat</span>');
@@ -1861,7 +1972,7 @@
       const e = Q.editando; if (!e) return;
       e.obj.texto = editor.value;
       e.obj._chaveLinhas = null;
-      if (e.obj.tipo === 'texto') { e.obj.h = alturaTexto(e.obj); posicionarEditor(); }
+      if (ajustarAltura(e.obj)) posicionarEditor();
       agendar();
     });
     editor.addEventListener('blur', () => { if (Q.editando) fecharEditor(true); });
@@ -1922,7 +2033,9 @@
     document.removeEventListener('keydown', aoTeclar, true);
     document.removeEventListener('keyup', aoSoltarTecla, true);
     clearTimeout(Q.rascunho.timer);
-    clearTimeout(Q.setasTimer);
+    /* empurrar a peca com as setinhas e fechar deixava a cena mexida e a pilha desatualizada:
+       o proximo ⌘Z pulava um passo. Descarrega antes de matar o relogio. */
+    if (Q.setasTimer) { clearTimeout(Q.setasTimer); Q.setasTimer = null; registrar(); }
     clearTimeout(toastTimer);
     esconderToast(true);
     gravarRascunho();
