@@ -4556,7 +4556,7 @@ function pintarAstra() {
   const s = ASTRA_API_STATUS;
   const plano = $('#astraPlano');
   if (plano) {
-    if (!MODELOS_CODEX) { plano.textContent = 'Vendo seu plano…'; plano.classList.remove('ok'); }
+    if (!MODELOS_CODEX) { plano.textContent = window.SEM_ELECTRON ? 'Plano: veja no Mac' : 'Vendo seu plano…'; plano.classList.remove('ok'); }
     else if (planoTemAstra()) { plano.textContent = 'Liberado no plano'; plano.classList.add('ok'); }
     else { plano.textContent = 'Plano ainda aguardando'; plano.classList.remove('ok'); }
   }

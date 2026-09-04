@@ -178,6 +178,7 @@ function avisarWeb(canal, dados) {
 const codexConns = new Map();     // destino ('local' | 'vps') -> conexao
 const codexPaneDest = new Map();  // paneId -> destino
 const codexPaneBilling = new Map(); // paneId -> 'plan' | 'api'
+const codexApiCortado = new Set();  // evita mandar varios pedidos de parada pelo mesmo teto
 const codex = {
   threadToPane: new Map(),   // threadId -> paneId
   paneToThread: new Map(),   // paneId -> threadId
@@ -363,6 +364,7 @@ function codexNotification(method, params) {
 
   switch (method) {
     case 'turn/started':
+      codexApiCortado.delete(pane);
       codex.paneTurn.set(pane, params.turnId || (params.turn && params.turn.id));
       emit(pane, 'busy', {});
       break;
@@ -446,6 +448,12 @@ function codexNotification(method, params) {
         const tid = params.threadId || codex.paneToThread.get(pane);
         const uso = registrarUsoAstra(tid, tu.total);
         emit(pane, 'api-usage', uso);
+        const turno = codex.paneTurn.get(pane);
+        if (uso.remainingUsd <= 0 && tid && turno && !codexApiCortado.has(pane)) {
+          codexApiCortado.add(pane);
+          emit(pane, 'note', { text: 'O limite mensal dos créditos foi atingido. Parei este trabalho.', error: true });
+          codexReq(destinoDoPane(pane), 'turn/interrupt', { threadId: tid, turnId: turno }).catch(() => {});
+        }
       }
       break;
     }
@@ -1923,6 +1931,14 @@ handle('codex:api-config:set', async (_e, dados) => {
   anotarChaveDoMain('codexApiCapUsd', c.codexApiCapUsd);
   anotarChaveDoMain('codexApiEnabled', !!c.codexApiEnabled);
   saveConfig(c);
+  // Desligar significa parar também um trabalho pago que já esteja rodando, não só o próximo.
+  if (!c.codexApiEnabled) {
+    for (const [paneId, origem] of codexPaneBilling) {
+      if (origem !== 'api') continue;
+      const threadId = codex.paneToThread.get(paneId), turnId = codex.paneTurn.get(paneId);
+      if (threadId && turnId) codexReq(destinoDoPane(paneId), 'turn/interrupt', { threadId, turnId }).catch(() => {});
+    }
+  }
   return estadoAstra();
 });
 
@@ -2470,6 +2486,7 @@ handle('pane:stop', async (_e, { paneId, engine }) => {
       } catch {}
     }
     codex.paneTurn.delete(paneId);
+    codexApiCortado.delete(paneId);
     if (tid) {
       codex.threadToPane.delete(tid);
       // So apaga o apontamento se ele ainda for para ESTA conversa. Durante a espera de 1,5s
