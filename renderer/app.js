@@ -455,24 +455,29 @@ function guardarRolagem(P) {
   if (c.scrollHeight - c.scrollTop - c.clientHeight < 100) { P.rolagem = { noFim: true }; return; }
   const ks = c.children;
   if (!ks.length) { P.rolagem = { top: c.scrollTop }; return; }
-  // procurar a mensagem do topo uma por uma custava caro em conversa longa (57ms por troca de
-  // aba com 6000 mensagens). offsetTop so cresce, entao da pra achar por busca binaria: ~13
-  // medicoes em vez de 34 mil. 'base' desconta o caso de offsetTop contar de um ancestral.
-  const base = ks[0].offsetTop, alvo = c.scrollTop + base;
+  const rc = c.getBoundingClientRect();
+  // passo escondido (modo foco) tem offsetTop e altura ZERO e bagunçaria a conta: pular pro
+  // proximo que aparece na tela mantem a sequencia crescente de que a busca precisa
+  const visivel = m => { let j = m; while (j < ks.length && !ks[j].offsetHeight) j++; return j; };
+  const p0 = visivel(0);
+  if (p0 >= ks.length) { P.rolagem = { top: c.scrollTop }; return; }
+  // Medir mensagem por mensagem custava caro em conversa longa (8ms por chat com 6000
+  // mensagens, e trocar de aba faz isso o tempo todo). offsetTop so cresce de uma mensagem
+  // pra outra, entao da pra achar por busca binaria: ~13 medidas em vez de 6 mil.
+  // 'desloc' traduz offsetTop (que conta a partir de um ancestral) para a mesma regua do
+  // getBoundingClientRect, pra a busca dar exatamente a mesma mensagem que a varredura antiga.
+  const desloc = ks[p0].offsetTop - (ks[p0].getBoundingClientRect().top - rc.top) - c.scrollTop;
+  const alvo = c.scrollTop + desloc + 1;
   let lo = 0, hi = ks.length - 1, achou = -1;
   while (lo <= hi) {
-    const m = (lo + hi) >> 1;
-    if (ks[m].offsetTop + ks[m].offsetHeight > alvo) { achou = m; hi = m - 1; } else lo = m + 1;
+    const meio = (lo + hi) >> 1, m = visivel(meio);
+    if (m > hi) { hi = meio - 1; continue; }
+    if (ks[m].offsetTop + ks[m].offsetHeight > alvo) { achou = m; hi = meio - 1; } else lo = m + 1;
   }
   if (achou < 0) { P.rolagem = { top: c.scrollTop }; return; }
-  const rc = c.getBoundingClientRect();
   let f = ks[achou], r = f.getBoundingClientRect();
-  // conferencia barata (normalmente zero passos): se algo sair do fluxo normal, anda ate acertar
+  // rede de seguranca (normalmente zero passos), caso alguma mensagem saia do fluxo normal
   while (r.bottom <= rc.top + 1 && f.nextElementSibling) { f = f.nextElementSibling; r = f.getBoundingClientRect(); }
-  while (f.previousElementSibling) {
-    const pr = f.previousElementSibling.getBoundingClientRect();
-    if (pr.bottom > rc.top + 1) { f = f.previousElementSibling; r = pr; } else break;
-  }
   // 'corte' e o quanto da mensagem ficou pra cima; 'alt' e a altura dela agora e 'larg' a
   // largura do chat agora (so se a largura mudar e que o corte precisa encolher junto)
   P.rolagem = { anc: f, corte: rc.top - r.top, alt: r.height, larg: c.clientWidth, top: c.scrollTop };
