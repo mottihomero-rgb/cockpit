@@ -271,9 +271,6 @@ body.foco .exec,body.foco .think{display:none !important}
 mark.acha{background:color-mix(in srgb,var(--yellow) 45%,transparent);color:inherit;border-radius:2px}
 mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 
-/* a selecao precisa SALTAR aos olhos: em cinza fraco ele da ⌘A, nao ve nada acender e conclui
-   que o atalho nao funcionou. Vale nos tres temas (escuro, claro e jornal). */
-::selection{background:color-mix(in srgb,var(--accent) 42%,transparent);color:var(--fg-strong)}
 .msg{padding:0 18px 14px;user-select:text;position:relative}
 /* Copiar com um clique. Na mensagem o botao vive na barrinha do pe (.msg-acoes), sem moldura
    nenhuma. Dentro do bloco de codigo ele continua flutuando no canto, que ali faz sentido. */
@@ -295,22 +292,6 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 .msg-body{font-size:13px;line-height:1.62}
 .msg.user .msg-body{background:var(--bg2);border:1px solid var(--line);border-radius:8px;
   padding:8px 11px;white-space:pre-wrap}
-
-/* Mensagem que AINDA NAO SAIU. Ela ja aparece na tela para ele nao perder o que escreveu,
-   mas nao pode parecer igual a uma enviada: contorno tracejado, cor mais apagada e um selo.
-   O selo em vermelho ("nao enviada") e o caso em que ela voltou e o campo estava ocupado —
-   dali o lapis da propria bolha manda de novo com um clique. */
-.msg.esperando .msg-body{border-style:dashed;border-color:var(--yellow);opacity:.72;
-  background:color-mix(in srgb,var(--yellow) 8%,var(--bg2))}
-.msg.esperando .msg-role::after{content:'na fila'}
-.msg.naoenviada .msg-body{border-style:dashed;border-color:var(--red);opacity:.72;
-  background:color-mix(in srgb,var(--red) 8%,var(--bg2))}
-.msg.naoenviada .msg-role::after{content:'não enviada'}
-.msg.esperando .msg-role::after,.msg.naoenviada .msg-role::after{
-  font-size:9px;letter-spacing:.6px;padding:1px 5px;border-radius:5px;
-  color:var(--yellow);border:1px solid color-mix(in srgb,var(--yellow) 45%,transparent)}
-.msg.naoenviada .msg-role::after{
-  color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,transparent)}
 .msg-body h1,.msg-body h2,.msg-body h3{color:var(--fg-strong);margin:14px 0 6px;line-height:1.3}
 .msg-body h1{font-size:17px}.msg-body h2{font-size:15px}.msg-body h3{font-size:13.5px}
 .msg-body p{margin:0 0 9px}
@@ -883,7 +864,7 @@ html[data-tema="jornal"] .pane.eng-codex{--accent:#268bd2}
 .exec-t{display:inline-flex;align-items:center;gap:4px;align-self:flex-start;max-width:100%;
   font-size:13px;line-height:20px;color:var(--fg-dim);cursor:pointer;user-select:none}
 .exec-t:hover{color:var(--fg-strong)}
-.exec-nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:text}
+.exec-nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .exec-it.aberto .exec-cv{transform:rotate(90deg)}
 .exec-it.erro .exec-nm{color:var(--red)}
 
@@ -893,12 +874,9 @@ html[data-tema="jornal"] .pane.eng-codex{--accent:#268bd2}
   box-shadow:0 0 0 1px var(--line);font:12px/1.6 var(--mono);color:var(--fg);
   overflow-x:auto;white-space:pre}
 .exec-cifr{flex:none;color:var(--fg-fraco);user-select:none}
-.exec-arg{min-width:0;user-select:text}
-/* ⌘A + ⌘C na conversa: o Chromium respeita o user-select ao COPIAR. Sem 'text' aqui, o nome
-   da ferramenta, o comando e a saida sumiam do que ele colava — a conversa vinha pela metade.
-   O cifrao (.exec-cifr) e a barra clicavel (.exec-t) ficam em 'none' de proposito. */
+.exec-arg{min-width:0}
 .exec-out{max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;
-  font:12px/1.6 var(--mono);color:var(--fg-fraco);user-select:text}
+  font:12px/1.6 var(--mono);color:var(--fg-fraco)}
 .exec-out:empty{display:none}
 
 /* um comando so: sem cartao, igual a web */
@@ -1350,21 +1328,3 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .p-agentes.vivo{color:var(--claude);border-color:color-mix(in srgb,var(--claude) 45%,var(--line))}
 .p-agentes.vivo .ic{animation:ag-pisca 1.6s ease-in-out infinite}
 @keyframes ag-pisca{0%,100%{opacity:1}50%{opacity:.45}}
-
-/* ============ lista de atalhos do teclado (⌘/) ============ */
-/* mesmo visual da tela de nova aba: veu escuro + cartao no meio. So que aqui o cartao e mais
-   largo e rola por dentro — a lista tem 40 e poucas linhas e nao pode empurrar a pagina. */
-#telaAtalhos{position:fixed;inset:38px 0 0 0;z-index:560;display:grid;place-items:center;
-  background:var(--veu);backdrop-filter:blur(7px);padding:24px}
-#telaAtalhos.hidden{display:none !important}
-.at-cx{width:min(640px,100%);max-height:100%;overflow-y:auto;background:var(--bg-flutua);
-  border:1px solid var(--line2);border-radius:14px;padding:24px 22px 18px;
-  box-shadow:0 18px 50px var(--sombra2)}
-.at-tit{font-size:18px;font-weight:600;color:var(--fg-strong);margin-bottom:18px;text-align:center}
-.at-gr{margin-bottom:16px}
-.at-gr-n{font-size:10.5px;color:var(--fg-dim);text-transform:uppercase;letter-spacing:.7px;
-  margin-bottom:7px;padding-bottom:5px;border-bottom:1px solid var(--line)}
-.at-l{display:flex;align-items:baseline;gap:12px;padding:3px 0}
-.at-k{flex:none;min-width:126px;font:12px/1.5 var(--mono);color:var(--fg-strong)}
-.at-d{flex:1;min-width:0;font-size:12.5px;color:var(--fg-dim)}
-.at-pe{font-size:11px;color:var(--fg-fraco);text-align:center;margin-top:6px}

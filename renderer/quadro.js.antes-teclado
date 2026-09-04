@@ -1505,9 +1505,6 @@
   /* ---------------- teclado ---------------- */
   function aoTeclar(e) {
     if (!Q.aberto) return;
-    // a lista de atalhos (⌘/) abre POR CIMA do quadro: enquanto ela estiver la, o teclado e dela
-    const at = document.getElementById('telaAtalhos');
-    if (at && !at.classList.contains('hidden')) return;
     const dentroEditor = Q.editando || (e.target && e.target.classList && e.target.classList.contains('qd-editor'));
     if (dentroEditor) {
       // digitar "rota" nao pode trocar de ferramenta 4 vezes
@@ -1533,10 +1530,6 @@
     }
     const cmd = e.metaKey || e.ctrlKey;
     const parar = () => { e.preventDefault(); e.stopPropagation(); };
-
-    // Tab morre aqui: os botoes do quadro tem tabIndex -1, entao o foco fugia para a interface
-    // de tras (uma vez foi parar no X que FECHA a aba de projeto, invisivel atras do desenho)
-    if (e.key === 'Tab') { parar(); return; }
 
     if (e.key === 'Escape') {
       parar();

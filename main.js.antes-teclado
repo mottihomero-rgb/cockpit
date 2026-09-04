@@ -2647,17 +2647,9 @@ function menu() {
       { label: 'Mostrar/ocultar arquivos', accelerator: 'CmdOrCtrl+B', click: () => win && win.webContents.send('menu', 'toggleSidebar') },
       { label: 'Modo foco (só pergunta e resposta)', accelerator: 'CmdOrCtrl+Shift+F', click: () => win && win.webContents.send('menu', 'foco') },
       { type: 'separator' },
-      // ele nao lembra atalho de cor: sem esta lista, metade do "o app travou" e atalho que
-      // existe e ele nao sabe. Fica no menu tambem, para achar sem saber a tecla.
-      { label: 'Atalhos do teclado', accelerator: 'CmdOrCtrl+/', click: () => win && win.webContents.send('menu', 'atalhos') },
-      { type: 'separator' },
       { role: 'resetZoom', label: 'Zoom normal' }, { role: 'zoomIn', label: 'Aumentar' }, { role: 'zoomOut', label: 'Diminuir' },
       { type: 'separator' },
-      { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' },
-      /* Recarregar saiu do ⌘R: apertar sem querer apagava o rascunho que ainda nao foi enviado
-         (as abas e os chats voltam do config; o texto do campo, nao). Ferramenta de programador
-         fica em ⌘⌥R, que ninguem aperta por engano. */
-      { role: 'reload', label: 'Recarregar', accelerator: 'CmdOrCtrl+Alt+R' },
+      { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' }, { role: 'reload', label: 'Recarregar' },
     ]},
     { role: 'windowMenu', label: 'Janela' },
   ]));

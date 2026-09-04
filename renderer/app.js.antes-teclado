@@ -284,7 +284,7 @@ function conversaDaPastaNova(P, pasta) {
   // O processo antigo foi morto aqui. Sem zerar o "ocupado", o evento de fim de turno nunca
   // chega (nao ha mais processo pra manda-lo) e TODA mensagem seguinte fica presa em "na fila",
   // para sempre. E o que estava na fila morreu junto com o processo.
-  P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
+  P.busy = false; P.queued = null; escondePerm(P);
   pararTrabalho(P); limparPassos(P);
   P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null;
   P.titulo = ''; P.nomeManual = false; P.hist = [];
@@ -556,7 +556,7 @@ function newPane(opts = {}) {
     engine: opts.engine || cfg.lastEngine || 'codex',
     cwd: opts.cwd || A.cwd,                // a pasta e a da aba
     model: opts.model || '',
-    started: false, busy: false, queued: null, filaMsgs: [], hist: [], passarContexto: null,
+    started: false, busy: false, queued: null, hist: [], passarContexto: null,
     titulo: opts.titulo || '', sessaoId: null, sessaoFile: '', anexos: [],
     envio: cfg.envioPadrao || 'fila',
     // conversa nova sempre nasce no Extra alto; painel restaurado mantém o que estava salvo
@@ -597,31 +597,11 @@ function newPane(opts = {}) {
 
   // input
   const inp = $('.p-input', el);
-  /* a div da conversa nao recebia foco de teclado, entao seta, Home, End e PageUp nao rolavam
-     nada depois de clicar nela. O -1 deixa focar por clique sem entrar na fila do Tab. */
-  const chatEl = $('.pane-chat', el);
-  if (chatEl) { chatEl.setAttribute('tabindex', '-1'); chatEl.style.outline = 'none'; }
   const grow = () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 190) + 'px'; };
   inp.addEventListener('input', grow);
   inp.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(P); }
-    /* O Esc NAO e tratado aqui. Ele e do tratador do documento, que sobe a escada na ordem
-       certa: quadro > painel de agentes > visor > popup > parar a IA. Quando este bloco
-       existia, um unico Esc mandava DOIS pedidos de parar (3ms de diferenca) e, com um menu
-       aberto, fechava o menu E parava a IA no mesmo aperto. */
-    if (e.key === 'Tab' && !e.shiftKey) {
-      // Tab no campo mandava o foco para o botao "+" de anexo, e a proxima letra sumia:
-      // para ele isso e "o app travou". Aqui Tab vira recuo e o cursor nao sai do lugar.
-      e.preventDefault();
-      const a = inp.selectionStart, b = inp.selectionEnd;
-      inp.setRangeText('  ', a, b, 'end');
-      inp.dispatchEvent(new Event('input'));
-    }
-    if (e.key === 'PageUp' || e.key === 'PageDown') {
-      // com o cursor no campo (o estado padrao), nada rolava a conversa: ele precisava do mouse
-      const c = $('.pane-chat', el);
-      if (c) { e.preventDefault(); c.scrollTop += (e.key === 'PageDown' ? 1 : -1) * c.clientHeight * 0.9; }
-    }
+    if (e.key === 'Escape') { fecharMenus(); fecharModal(P); if (P.busy) window.api.paneInterrupt({ paneId: id, engine: P.engine }); }
   });
   // barra no comeco da linha abre o menu de acoes, e vai filtrando conforme digita
   inp.addEventListener('input', () => {
@@ -924,11 +904,8 @@ async function trocarMotor(P, novo) {
   // o estado e o desenho mudam JA, antes da ida ao processo principal: enquanto se esperava
   // o paneStop responder, o icone continuava marcando o motor antigo
   P.engine = novo; P.started = false; P.model = ''; P.resumeId = null;
-  // o processo velho vai morrer: o chat deixa de estar ocupado e a fila morre com ele.
-  // O texto que estava na fila volta para o campo, e a bolha dele sai da tela junto — senao
-  // ele manda de novo e a mesma mensagem fica duas vezes na conversa.
-  P.busy = false; escondePerm(P);
-  if (P.queued) { const q = P.queued; P.queued = null; devolverFilaAoCampo(P, q); }
+  // o processo velho vai morrer: o chat deixa de estar ocupado e a fila morre com ele
+  P.busy = false; P.queued = null; escondePerm(P);
   // try/finally: se qualquer coisa tropecar aqui no meio, a trava TEM de sair, senao o botao
   // de trocar de motor fica morto para sempre naquele chat
   try {
@@ -1034,7 +1011,7 @@ async function desligarMotor(P) {
   try { await window.api.paneStop({ paneId: P.id, engine: P.engine }); } catch {}
   P.started = false;
   P.busy = false;
-  if (P.queued) { const q = P.queued; P.queued = null; devolverFilaAoCampo(P, q); }
+  if (P.queued) { const cx = $('.p-input', P.el); if (cx && !cx.value) cx.value = P.queued; P.queued = null; }
   pararTrabalho(P); limparPassos(P);
   escondePerm(P);
   setDot(P, 'off');
@@ -1042,8 +1019,6 @@ async function desligarMotor(P) {
 
 async function closePane(id, semPerguntar) {
   const P = panes.get(id); if (!P) return;
-  // o quadro branco e dono de um chat: fechar o chat por tras deixaria o desenho orfao
-  if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto()) { try { window.Quadro.fechar(); } catch (_) {} }
   if (P.busy && !semPerguntar) {
     const nome = (P.titulo || '').trim().slice(0, 40) || 'este chat';
     if (!confirm('O ' + (P.engine === 'codex' ? 'Codex' : 'Claude') + ' está trabalhando em “' + nome + '”.\n\nFechar agora joga fora o que ele está fazendo. Fechar mesmo assim?')) return;
@@ -1283,55 +1258,6 @@ function userMsg(P, text, anexos) {
   botoesDaMinhaMensagem(P, d, text);
   P.chat.appendChild(d); scroll(P, true);
   P.hist.push({ quem: 'Você', texto: text });
-  return d;   // quem pinta a bolha da FILA precisa dela na mao para poder desfazer (ver marcarNaFila)
-}
-
-/* ---- a mensagem que ESPERA na fila ----
-   Quando o motor esta ocupado, a bolha e pintada ANTES de a mensagem ter saido: e o que
-   permite a ele ver o que escreveu. So que tres caminhos devolviam esse texto para o campo
-   sem apagar a bolha nem tirar o item do historico — ele apertava Enter de novo e a MESMA
-   mensagem aparecia duas vezes, com o historico duplicado junto. Agora a mensagem existe uma
-   vez so: ou na tela (entregue), ou no campo (esperando). */
-function marcarNaFila(P, d, texto) {
-  if (!d) return;
-  d.classList.add('esperando');
-  (P.filaMsgs = P.filaMsgs || []).push({ el: d, texto, iHist: P.hist.length - 1 });
-}
-function desmarcarFila(P) {
-  for (const f of (P.filaMsgs || [])) if (f.el) f.el.classList.remove('esperando');
-  P.filaMsgs = [];
-}
-function tirarBolhasDaFila(P) {
-  const fila = P.filaMsgs || [];
-  P.filaMsgs = [];
-  const idx = [];
-  for (const f of fila) {
-    if (f.el && f.el.parentNode) f.el.remove();
-    if (typeof f.iHist === 'number' && P.hist[f.iHist] && P.hist[f.iHist].texto === f.texto) idx.push(f.iHist);
-  }
-  // de tras para a frente, senao a primeira remocao ja bagunca o indice da segunda
-  idx.sort((a, b) => b - a);
-  for (const i of idx) {
-    P.hist.splice(i, 1);
-    // o data-hist e o que o "voltar no tempo" usa para achar o pedaco certo da conversa
-    P.chat.querySelectorAll('.msg[data-hist]').forEach(el => {
-      const n = Number(el.dataset.hist);
-      if (n > i) el.dataset.hist = String(n - 1);
-    });
-  }
-}
-function devolverFilaAoCampo(P, texto) {
-  const cx = $('.p-input', P.el);
-  if (cx && !cx.value) {
-    tirarBolhasDaFila(P);
-    cx.value = texto;
-    cx.dispatchEvent(new Event('input'));
-    return;
-  }
-  /* Campo ocupado: nao da para jogar por cima do que ele esta escrevendo agora. A bolha fica
-     na tela, mas para de mentir que esta a caminho — o lapis dela manda de novo num clique. */
-  for (const f of (P.filaMsgs || [])) if (f.el) { f.el.classList.remove('esperando'); f.el.classList.add('naoenviada'); }
-  P.filaMsgs = [];
 }
 
 /* ---- na minha própria mensagem: corrigir e mandar de novo, ou voltar no tempo ---- */
@@ -2101,22 +2027,18 @@ async function send(P) {
     const anx = P.anexos.slice(); P.anexos = []; pintarAnexos(P);
     P.quadroColado = null;
     inp.value = ''; inp.style.height = 'auto';
-    const bolha = userMsg(P, text, anx);
+    userMsg(P, text, anx);
     let envio = text;
     if (anx.length) envio += '\n\nArquivos que anexei (abra cada um antes de responder):\n' + anx.map(a => '- ' + a.path).join('\n');
-    // ja havia uma esperando? Junta em vez de trocar: o `P.queued = envio` de antes apagava a
-    // primeira em silencio — a bolha dela ficava na tela e a mensagem nunca era enviada.
-    const juntar = (nova) => { P.queued = P.queued ? (P.queued + '\n\n' + nova) : nova; };
     if (P.envio === 'entra') {
       const nota = avisoEnvio(P, 'Mandando para dentro do trabalho…');
       const r = await window.api.paneSteer({ paneId: P.id, engine: P.engine, text: ENTRA_MSG + envio });
       if (nota) nota.textContent = r && r.ok
         ? 'Entregue no meio do trabalho. Ele escolhe se atende agora ou ao terminar.'
         : 'Não deu para entrar agora, então ficou na fila.';
-      if (!(r && r.ok)) { juntar(envio); marcarNaFila(P, bolha, text); }
+      if (!(r && r.ok)) P.queued = envio;
     } else {
-      juntar(envio);
-      marcarNaFila(P, bolha, text);
+      P.queued = envio;
       avisoEnvio(P, 'Na fila. Começa assim que ele terminar.');
     }
     return;
@@ -2297,14 +2219,13 @@ window.api.onPaneEvent((ev) => {
             // se a mensagem da fila nao foi entregue, o chat NAO pode ficar preso em
             // "trabalhando" para sempre: destrava e avisa, com o texto de volta na caixa
             if (ok === false) throw new Error('nao foi entregue');
-            desmarcarFila(P);   // saiu de verdade: a bolha deixa de ser "na fila"
           } catch (e) {
             // sem zerar o "started" o proximo envio pula o religar e cai na MESMA tarja para
             // sempre: no Claude quem zerava era o engine-down; no Codex nao vem engine-down.
             P.busy = false; P.started = false;
             setDot(P, 'off'); pararTrabalho(P); limparPassos(P);
             note(P, 'A mensagem que estava na fila não foi enviada. Ela voltou para a caixa: é só mandar de novo.', true);
-            devolverFilaAoCampo(P, q);
+            const cx = $('.p-input', P.el); if (cx && !cx.value) { cx.value = q; }
           }
         }, 150); }
       break;
@@ -2321,7 +2242,7 @@ window.api.onPaneEvent((ev) => {
       // O motor morreu: o que estava na fila morreu junto. Guardado, ele disparava sozinho no
       // proximo fim de turno — uma pergunta velha respondida do nada, minutos depois. Volta
       // para a caixa em vez de sumir.
-      if (P.queued) { const q = P.queued; P.queued = null; devolverFilaAoCampo(P, q); }
+      if (P.queued) { const cx = $('.p-input', P.el); if (cx && !cx.value) cx.value = P.queued; P.queued = null; }
       escondePerm(P);
       setDot(P, 'off'); pararTrabalho(P); limparPassos(P);
       // se o aviso de "esta conversa nao existe mais" acabou de sair, nao repetir outro recado
@@ -2772,10 +2693,7 @@ document.addEventListener('keydown', (e) => {
   // dentro do terminal embutido, Esc é do terminal, não fecha a janelinha
   const dentroTerm = document.activeElement && document.activeElement.closest && document.activeElement.closest('.term-wrap');
   if (dentroTerm) return;
-  // a lista de atalhos fica por cima ATE do quadro branco, entao e a primeira a sair
-  const telaAt = $('#telaAtalhos');
-  if (telaAt && !telaAt.classList.contains('hidden')) { telaAt.classList.add('hidden'); return; }
-  // o quadro branco fica por cima do resto: e o proximo a sair no Esc
+  // o quadro branco fica por cima de tudo: e o primeiro a sair no Esc
   if (qdPainelAberto()) { if (window.Quadro) window.Quadro.fechar(); return; }
   // o painel dos agentes vem logo depois
   if (agPainelAberto()) { fecharPainelAgentes(); return; }
@@ -2784,9 +2702,7 @@ document.addEventListener('keydown', (e) => {
   const popupAberto = [...panes.values()].some(P => !$('.p-modal', P.el).classList.contains('hidden'));
   if (popupAberto) { fecharMenus(); for (const P of panes.values()) fecharModal(P); return; }
   // sem popup: para o que a IA estiver fazendo
-  // Esc nunca para chat que ele nao esta olhando: antes um Esc matava o trabalho de TODOS os
-  // chats, inclusive os de outra aba, que ele nem via. Perda de trabalho em silencio.
-  const alvo = (focusPane && focusPane.busy) ? [focusPane] : [];
+  const alvo = (focusPane && focusPane.busy) ? [focusPane] : [...panes.values()].filter(P => P.busy);
   for (const P of alvo) window.api.paneInterrupt({ paneId: P.id, engine: P.engine });
 });
 
@@ -5047,8 +4963,6 @@ document.addEventListener('keydown', (e) => {
       if (A) { e.preventDefault(); ativarAbaProjeto(A); }
     }
   }
-  // ⌘/ tambem aqui, e nao so no menu: no telefone nao existe menu do Mac
-  if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); alternarTelaAtalhos(); return; }
   // ⌘⇧E abre o quadro branco. No telefone nao ha menu do Mac: aqui e o unico caminho de teclado.
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
     if (!focusPane || !window.Quadro) return;
@@ -5059,122 +4973,10 @@ document.addEventListener('keydown', (e) => {
   // Esc fecha a tela de conversa nova (a nao ser que nao haja nenhuma aba aberta)
   if (e.key === 'Escape' && !$('#novaAba').classList.contains('hidden')) { e.stopPropagation(); fecharNovaAba(); }
   // Enter confirma direto: sem pasta escolhida, abre no Mac inteiro
-  if (e.key === 'Enter' && !$('#novaAba').classList.contains('hidden')) {
-    // se o Enter nasceu dentro de um campo da tela, o campo trata sozinho: este tratador roda
-    // na captura, ANTES do campo, e os dois chamavam naConfirmar — UM Enter abria DUAS abas
-    if (e.target && e.target.closest && e.target.closest('input, textarea')) return;
-    e.preventDefault(); naConfirmar(false);
-  }
+  if (e.key === 'Enter' && !$('#novaAba').classList.contains('hidden')) { e.preventDefault(); naConfirmar(false); }
 }, true);
 
-/* Digitou fora do campo? O texto vai para o campo do chat em foco.
-   Sem isto, quem clica na conversa para rolar e volta a digitar escreve no vazio — e para ele
-   isso e "o app travou". Toda camada que usa letra solta esta barrada na lista abaixo; camada
-   nova tem que entrar aqui tambem. */
-document.addEventListener('keydown', (e) => {
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (!e.key || e.key.length !== 1) return;
-  const alvo = e.target;
-  if (alvo && alvo.closest && alvo.closest('input, textarea, [contenteditable="true"], .term-wrap')) return;
-  if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto()) return;
-  if (!$('#novaAba').classList.contains('hidden')) return;
-  if (!$('#telaAtalhos').classList.contains('hidden')) return;
-  if (agPainelAberto()) return;
-  if ([...panes.values()].some(P => !$('.p-modal', P.el).classList.contains('hidden'))) return;
-  if (!focusPane) return;
-  const inpFoco = $('.p-input', focusPane.el);
-  if (inpFoco && document.activeElement !== inpFoco) inpFoco.focus();
-});
-
 window.addEventListener('resize', () => { for (const P of panes.values()) paintEngine(P); encostarAbas(); });
-
-/* ---- Lista de atalhos (⌘/) ----
-   REGRA: so pode entrar aqui o que FAZ o que a linha diz. Uma tela de ajuda mentindo e pior
-   do que nao ter tela nenhuma. Quem mexer em atalho tem de mexer nesta lista junto. */
-const ATALHOS = [
-  ['Chats e abas', [
-    ['⌘T', 'Novo chat na aba de agora'],
-    ['⌘⇧T', 'Nova aba de projeto'],
-    ['⌘W', 'Fechar o chat (com janelinha aberta, fecha a janelinha primeiro)'],
-    ['⌘⇧W', 'Reabrir o último chat fechado'],
-    ['⌘1 … ⌘9', 'Pular de aba de projeto'],
-    ['⌘⇧1 … ⌘⇧9', 'Pular de chat dentro da aba'],
-    ['⌘O', 'Trocar a pasta deste chat'],
-    ['⌘B', 'Mostrar/esconder a coluna dos arquivos'],
-    ['⌘⇧F', 'Modo foco: só pergunta e resposta'],
-  ]],
-  ['Escrever', [
-    ['Enter', 'Enviar'],
-    ['⇧Enter', 'Pular linha'],
-    ['Tab', 'Recuo de 2 espaços (o cursor não sai do campo)'],
-    ['⌘A', 'Selecionar tudo do campo'],
-    ['⌘Z / ⌘⇧Z', 'Desfazer / refazer (⌘Y também refaz)'],
-    ['⌘⇧D', 'Ditar: falar em vez de digitar'],
-    ['Esc', 'Fecha o que estiver aberto; sem nada aberto, para a IA deste chat'],
-    ['letra solta', 'Digitar fora do campo joga o texto no campo deste chat'],
-  ]],
-  ['Ler e copiar', [
-    ['PageUp / PageDown', 'Rolar a conversa sem tirar o cursor do campo'],
-    ['⌘F', 'Buscar na conversa (Enter vai pro próximo, ⇧Enter volta)'],
-    ['⌘A depois ⌘C', 'Copiar a conversa inteira, com os comandos'],
-    ['⌘K', 'Limpar a tela (a conversa continua de onde estava)'],
-    ['⌘S', 'Salvar a conversa no Obsidian'],
-    ['⌘D', 'Perguntar aos dois motores'],
-  ]],
-  ['Quadro branco (⌘⇧E abre)', [
-    ['V H R O D N T A L P E', 'Trocar de ferramenta'],
-    ['0 · + · −', 'Enquadrar e dar zoom — SEM Command (com ⌘ quem muda de tamanho é o app)'],
-    ['Alt+D', 'Duplicar o que está selecionado'],
-    ['Delete', 'Apagar'],
-    ['setas (⇧ anda mais)', 'Mover a peça'],
-    ['[ e ]', 'Mandar pra trás / pra frente'],
-    ['Espaço', 'Arrastar a tela'],
-    ['Enter', 'Editar o texto da peça'],
-    ['⌘Enter', 'Mandar o desenho pro chat'],
-    ['Esc', 'Fecha uma camada por vez'],
-  ]],
-  ['Terminal embutido', [
-    ['Ctrl+C', 'Cancelar o que está rodando'],
-    ['⌘K', 'Limpar o terminal (não a conversa)'],
-    ['⌘A depois ⌘C', 'Selecionar e copiar o terminal'],
-    ['⌘W', 'Fechar a janelinha do terminal'],
-  ]],
-];
-
-function alternarTelaAtalhos() {
-  const tela = $('#telaAtalhos');
-  if (!tela.classList.contains('hidden')) { tela.classList.add('hidden'); return; }
-  const lista = $('#atLista');
-  lista.innerHTML = '';
-  for (const [grupo, linhas] of ATALHOS) {
-    const g = document.createElement('div');
-    g.className = 'at-gr';
-    const n = document.createElement('div');
-    n.className = 'at-gr-n'; n.textContent = grupo;
-    g.appendChild(n);
-    for (const [tecla, oque] of linhas) {
-      const l = document.createElement('div');
-      l.className = 'at-l';
-      const k = document.createElement('span'); k.className = 'at-k'; k.textContent = tecla;
-      const d = document.createElement('span'); d.className = 'at-d'; d.textContent = oque;
-      l.appendChild(k); l.appendChild(d);
-      g.appendChild(l);
-    }
-    lista.appendChild(g);
-  }
-  tela.classList.remove('hidden');
-}
-
-/* QUEM GANHA A TECLA, do mais perto do dedo para o mais longe. (1) Campo de texto em foco —
-   textarea, input ou a caixa do quadro — fica com tudo que e edicao: letras, setas, Tab, Enter,
-   ⌘A/⌘Z/⌘C/⌘V; o que nao for edicao ele deixa subir. (2) Terminal embutido em foco fica com Esc,
-   Ctrl+letra, ⌘K, ⌘F e ⌘A, que ali sao do shell, e o primeiro ⌘W fecha a janelinha, nao o chat.
-   (3) Quadro branco aberto fica com o teclado inteiro enquanto estiver na frente: nenhuma acao de
-   painel (abrir/fechar chat, limpar, buscar, lateral, foco) pode rodar por tras dele. (4) O app
-   fica com o que sobrou: ⌘1-9, os itens do menu e as teclas de janela. Duas leis fecham a regra:
-   quem tratou a tecla PARA a tecla (preventDefault + stopPropagation), para nunca haver dois donos
-   no mesmo aperto; e no macOS o item de menu com acelerador SEMPRE come a tecla antes da pagina,
-   entao atalho que precisa chegar na pagina nao pode existir tambem no menu. */
 
 /* ---- Desfazer / Refazer / Selecionar tudo que vem do menu do Mac ----
    No macOS o menu do aplicativo fica com ⌘Z, ⌘⇧Z e ⌘A, e o papel pronto do Electron so sabe
@@ -5184,24 +4986,11 @@ function alternarTelaAtalhos() {
 const ultimaTeclaEdicao = { desfazer: 0, refazer: 0, selecionarTudo: 0 };
 let teclaSintetica = false;    // a tecla que EU devolvo pro quadro nao conta como tecla dele
 window.addEventListener('keydown', (e) => {
-  /* So conta a tecla do MENU. No Mac o acelerador e o Command; o Control ali e outra coisa
-     completamente: Ctrl+A e "ir para o comeco da linha", Ctrl+Y e "colar do kill ring".
-     Contando o Control como se fosse o menu, um Ctrl+A sem querer aposentava o ⌘A — que no
-     Mac so existe pelo menu — e ele ficava sem selecionar tudo. */
-  const EH_MAC = navigator.platform.indexOf('Mac') === 0;
-  const teclaDoMenu = EH_MAC ? e.metaKey : e.ctrlKey;
-  if (teclaSintetica || !teclaDoMenu || (EH_MAC && e.ctrlKey)) return;
+  if (teclaSintetica || !(e.metaKey || e.ctrlKey)) return;
   const k = (e.key || '').toLowerCase();
   let acao = '';
   if (k === 'z') acao = e.shiftKey ? 'refazer' : 'desfazer';
-  /* ⌘Y (o habito de Windows dele) nao existe no menu, entao a tecla chega aqui de verdade.
-     Antes so anotava a hora e nao refazia nada — e ainda envenenava o carimbo, matando o ⌘⇧Z
-     do menu logo depois. Com o quadro aberto quem refaz e o proprio quadro (quadro.js trata
-     ⌘Y): fazer aqui tambem andaria DOIS passos num aperto so. */
-  else if (k === 'y') {
-    if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto()) return;
-    e.preventDefault(); acao = 'refazer'; aplicarEdicao('refazer');
-  }
+  else if (k === 'y') acao = 'refazer';
   else if (k === 'a') acao = 'selecionarTudo';
   if (!acao) return;
   ultimaTeclaEdicao[acao] = Date.now();
@@ -5216,35 +5005,13 @@ window.addEventListener('keydown', (e) => {
    emendava em vez de substituir. No Mac o acelerador do menu come a tecla, entao ela nunca
    chega na pagina primeiro; e se um dia chegar, chega ANTES do recado (mesmo processo,
    contra dois saltos de IPC) e o guarda abaixo continua evitando o desfazer duplo. */
-/* 150ms cobre a corrida do MESMO aperto (a tecla e o recado do menu chegando juntos).
-   Os 5 segundos de antes aposentavam o atalho: uma tecla perdida deixava o ⌘A morto por
-   5 segundos inteiros — que e exatamente a reclamacao de "nao consigo dar ⌘A". */
-const DONO_DA_PAGINA = 150;
+const DONO_DA_PAGINA = 5000;
 function edicaoDoMenu(acao) {
   if (Date.now() - (ultimaTeclaEdicao[acao] || 0) < DONO_DA_PAGINA) return;
   aplicarEdicao(acao);
 }
 
-/* Quem esta em foco AGORA e o terminal embutido? Devolve o registro dele (ou null).
-   No macOS o item de menu come a tecla antes do xterm, entao ⌘A/⌘K/⌘C caiam na pagina de tras:
-   o ⌘A nao selecionava nada (o execCommand ia parar no textarea escondido do xterm, vazio) e o
-   ⌘K limpava a CONVERSA em vez do terminal. Nao da para devolver a tecla ao xterm — o conserto
-   e o recado do menu perguntar quem esta na frente. */
-function termEmFoco() {
-  const cx = document.activeElement && document.activeElement.closest && document.activeElement.closest('.term-wrap');
-  if (!cx) return null;
-  for (const r of termsVivos.values()) {
-    if (r.term && r.term.element && cx.contains(r.term.element)) return r;
-  }
-  return null;
-}
-
 function aplicarEdicao(acao) {
-  const rTerm = termEmFoco();
-  if (rTerm) {
-    if (acao === 'selecionarTudo') { try { rTerm.term.selectAll(); } catch (_) {} return; }
-    return;   // desfazer/refazer nao existem no terminal: nao mexer na pagina por tras
-  }
   if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto()) {
     // o quadro tem a propria pilha de desfazer: devolvo a tecla para ele mesmo tratar
     const t = { desfazer: { key: 'z' }, refazer: { key: 'z', shift: true }, selecionarTudo: { key: 'a' } }[acao];
@@ -5264,15 +5031,6 @@ function aplicarEdicao(acao) {
 }
 
 window.api.onMenu((a) => {
-  /* Porteiro: o que esta na frente manda. Nenhuma acao de painel pode agir por tras do
-     quadro branco — ele tapa a tela inteira e ele nao ve o estrago. Antes, com o quadro
-     aberto, ⌘W fechava em silencio o chat de tras e deixava o desenho preso a um chat que
-     nao existia mais. Desfazer/refazer/selecionar tudo e a tela de atalhos NAO entram aqui:
-     esses tem que continuar chegando. */
-  const ACOES_DO_PAINEL = ['newPane', 'newTab', 'closePane', 'reabrirFechado', 'pickFolder', 'clearPane',
-    'buscarNaConversa', 'perguntarAosDois', 'ditar', 'salvarVault', 'toggleSidebar', 'foco'];
-  if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto() && ACOES_DO_PAINEL.includes(a)) return;
-  if (a === 'atalhos') return alternarTelaAtalhos();
   if (a === 'desfazer' || a === 'refazer' || a === 'selecionarTudo') return edicaoDoMenu(a);
   // clicou no recado do sistema: traz a aba e o chat que ficaram prontos para a frente
   if (a.startsWith('ir:')) {
@@ -5293,20 +5051,10 @@ window.api.onMenu((a) => {
   if (a === 'salvarVault') return focusPane && salvarConversaNoVault(focusPane);
   if (a === 'newPane') novoChatNaAba();
   else if (a === 'newTab') telaNovaAba();
-  else if (a === 'closePane' && focusPane) {
-    // com o terminal embutido aberto, o primeiro ⌘W fecha a JANELINHA. Antes ele fechava o
-    // chat inteiro e matava o terminal junto, no meio de um login de CLI.
-    const m = $('.p-modal', focusPane.el);
-    if (m && !m.classList.contains('hidden')) { fecharModal(focusPane); return; }
-    closePane(focusPane.id);
-  }
+  else if (a === 'closePane' && focusPane) closePane(focusPane.id);
   else if (a === 'pickFolder' && focusPane) $('.p-cwd', focusPane.el).click();
   else if (a === 'toggleSidebar') toggleSidebar();
-  else if (a === 'clearPane') {
-    // no terminal em foco, ⌘K e do terminal (como em qualquer terminal do Mac)
-    const rT = termEmFoco();
-    if (rT) { try { rT.term.clear(); } catch (_) {} return; }
-    if (!focusPane) return;
+  else if (a === 'clearPane' && focusPane) {
     focusPane.chat.innerHTML = ''; focusPane.blocks.clear(); focusPane.tools.clear(); focusPane.rolagem = null;
     note(focusPane, 'Tela limpa. A conversa continua de onde estava.');
   }
