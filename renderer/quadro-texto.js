@@ -384,10 +384,12 @@
       f.sufixo = '';
     }
 
-    // 5.3 desambiguação (com o nome INTEIRO, nunca com o nome já cortado)
+    // 5.3 desambiguação sobre o nome JÁ CORTADO em MAX_ROTULO.
+    // Comparar o nome inteiro deixava passar duas caixas que só divergem depois do
+    // caractere 80: na tela e no mermaid elas saíam byte a byte iguais, sem (1)/(2).
     var grupos = new Map();
     for (i = 0; i < ordem.length; i++) {
-      var ch = colapsar(semAcento(ordem[i].nomeBase).toLowerCase());
+      var ch = colapsar(semAcento(cortar(ordem[i].nomeBase, MAX_ROTULO)).toLowerCase());
       if (!grupos.has(ch)) grupos.set(ch, []);
       grupos.get(ch).push(ordem[i]);
     }
@@ -402,7 +404,7 @@
       // se ainda colidir dentro do grupo (mesmo tipo), numerar
       var sub = new Map();
       for (n = 0; n < g.length; n++) {
-        var k = colapsar(semAcento(g[n].nomeBase + g[n].sufixo).toLowerCase());
+        var k = colapsar(semAcento(cortar(g[n].nomeBase, MAX_ROTULO) + g[n].sufixo).toLowerCase());
         if (!sub.has(k)) sub.set(k, []);
         sub.get(k).push(g[n]);
       }
@@ -803,6 +805,18 @@
   function linhaDeSaida(G, n, it) {
     var pre;
     var rot = it.seta.texto;
+
+    // LINHA (sem ponta) com a outra extremidade no vazio: o desenho não diz sentido
+    // nenhum. Narrar como "depois → seta solta apontando ..." inventava uma direção
+    // que o Homero não desenhou.
+    if (it.tipo === 'fora' && it.seta.tipo === 'linha') {
+      var sl = it.seta;
+      var linha = '   - sai uma linha para ' + direcao(sl.para.x - sl.de.x, sl.para.y - sl.de.y) +
+                  ' (não chega em nada, e não diz para que lado vai)';
+      if (rot) linha += ' com "' + cortar(rot, MAX_ROTULO) + '"';
+      return linha;
+    }
+
     if (n.tipo === 'losango') {
       pre = rot ? ('   - se ' + cortar(rot, MAX_ROTULO) + ' → ') : '   - saída sem resposta escrita → ';
     } else {
@@ -840,11 +854,28 @@
     for (i = 0; i < G.meias.length; i++) {
       var m = G.meias[i];
       if (m._para === n && !m._de) {
-        out.push('   - chega uma seta vinda ' + ladoDeOrigem(m.para.x - m.de.x, m.para.y - m.de.y) +
-                 ' de fora (a ponta não está grudada em nada)');
+        if (m.tipo === 'linha') {
+          // sem ponta: só encosta, não afirma direção
+          out.push('   - encosta uma linha que vem ' + ladoDeOrigem(m.para.x - m.de.x, m.para.y - m.de.y) +
+                   ' de fora (a outra extremidade está solta, e não diz para que lado vai)');
+        } else {
+          out.push('   - chega uma seta vinda ' + ladoDeOrigem(m.para.x - m.de.x, m.para.y - m.de.y) +
+                   ' de fora (a ponta não está grudada em nada)');
+        }
       }
     }
     return out;
+  }
+
+  // A linha do nó `prox` vai mesmo começar com "Isso vai para"? Espelha, na mesma ordem,
+  // os desvios de corpoLinha que NÃO nomeiam a origem.
+  function diraIssoVaiPara(G, prox, n, primeirosDoBloco) {
+    if (primeirosDoBloco.has(prox)) return false;   // "Começa em: ..."
+    if (prox.tipo === 'losango') return false;      // 'Decisão "..."'
+    if (prox.tipo === 'nota') return false;         // "Observação no meio do fluxo"
+    if (prox.tipo === 'elipse') return false;       // "Fim: ..." / "Marco: ..."
+    var ent = G.efetivas.get(prox) || [];
+    return ent.length === 1 && ent[0]._de === n && !ent[0].texto;
   }
 
   function escreverTexto(G) {
@@ -932,19 +963,26 @@
         corpoLinha = 'Passo: ' + nome;
       }
 
-      // sufixo de fim de linha. Nó totalmente solto (sem nenhuma seta/linha) NÃO ganha
-      // " (aqui acaba)": ele não termina caminho nenhum, só está boiando no quadro.
-      var grauTotal = (G.saidas.get(n) || []).length + (G.entradas.get(n) || []).length;
-      if (dirigidas === 0 && grauTotal > 0 && n.tipo !== 'elipse' && G.nos.length >= 2) corpoLinha += ' (aqui acaba)';
+      // sufixo de fim de linha. Conta só grau DIRIGIDO (seta): um nó ligado apenas por
+      // linha sem ponta não termina caminho nenhum — antes o bloco inteiro ganhava
+      // "(aqui acaba)" em todos os nós de uma vez.
+      var grauDirigido = 0;
+      var lsai = G.saidas.get(n) || [], lent = G.entradas.get(n) || [];
+      for (var g1 = 0; g1 < lsai.length; g1++) if (lsai[g1].tipo === 'seta') grauDirigido++;
+      for (var g2 = 0; g2 < lent.length; g2++) if (lent[g2].tipo === 'seta') grauDirigido++;
+      if (dirigidas === 0 && grauDirigido > 0 && n.tipo !== 'elipse' && G.nos.length >= 2) corpoLinha += ' (aqui acaba)';
 
       linhas.push((i + 1) + '. ' + corpoLinha);
 
-      // omitir o bloco de saídas quando a linha seguinte já diz "Isso vai para"
+      // omitir o bloco de saídas SÓ quando a linha seguinte realmente repete a ligação
+      // ("Isso vai para: X"). Losango, nota e elipse têm corpo próprio que NÃO diz de
+      // onde vieram — omitir ali apagava a seta da leitura.
       var mostrar = true;
       if (n.tipo !== 'losango' && saidas.length === 1) {
         var s0 = saidas[0];
         var prox = (i + 1 < quantos) ? G.nos[i + 1] : null;
-        if (s0.tipo === 'aresta' && !s0.volta && !s0.laco && !s0.seta.texto && prox && s0.destino === prox) {
+        if (s0.tipo === 'aresta' && !s0.volta && !s0.laco && !s0.seta.texto && prox && s0.destino === prox &&
+            diraIssoVaiPara(G, prox, n, primeirosDoBloco)) {
           mostrar = false;
         }
       }
@@ -982,15 +1020,18 @@
     return s || 'A';
   }
 
-  // A ORDEM das substituições importa: '#' primeiro, senão as entidades que
-  // acabamos de criar (#quot; #124;) são reescritas.
-  function rotMermaid(s, tipo) {
-    s = String(s == null ? '' : s).replace(/\r\n|\r|\n/g, '<br/>');
+  // O CORTE vem ANTES das substituições: cortar depois partia a entidade no meio
+  // ('#quo…' aparecia literal no rótulo). Depois disso, a ORDEM das substituições
+  // importa: '#' primeiro, senão as entidades recém-criadas (#quot; #124;) são reescritas.
+  // max === null: string já veio cortada por nomeDe (o sufixo (1)/(2) fica fora do corte).
+  function rotMermaid(s, tipo, max) {
+    s = String(s == null ? '' : s);
     s = s.replace(/[`\\]/g, '');
+    if (max !== null) s = cortar(s, max === undefined ? MAX_ROTULO : max);
+    s = s.replace(/\r\n|\r|\n/g, '<br/>');
     s = s.replace(/#/g, '#35;');
     s = s.replace(/"/g, '#quot;');
     s = s.replace(/\|/g, '#124;');
-    s = cortar(s, MAX_ROTULO);
     if (!s.trim()) s = genericoTipo(tipo || 'retangulo');
     return s;
   }
@@ -1029,7 +1070,7 @@
       var n = G.nos[i];
       var mid = idMermaid(i + 1);
       idm.set(n, mid);
-      var rot = rotMermaid(nomeDe(n), n.tipo);
+      var rot = rotMermaid(nomeDe(n, MAX_ROTULO), n.tipo, null);
       var decl;
       if (n.tipo === 'losango') decl = mid + '{"' + rot + '"}';
       else if (n.tipo === 'elipse') decl = mid + '(["' + rot + '"])';
