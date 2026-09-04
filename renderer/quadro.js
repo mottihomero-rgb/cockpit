@@ -500,6 +500,27 @@
     return false;
   }
 
+  /* ULTIMA rede de seguranca do texto. A forma cresce sozinha ao ser escrita, mas ele
+     ainda pode ENCOLHER a forma na mao depois (as alcas nao mexem no texto). Ai o clip
+     volta a cortar. Em vez de sumir calado, o desenho passa a mostrar '…': ele ve na hora
+     que ficou texto escondido, e o PNG que vai pro Claude para de mentir. */
+  function alturaUtilTexto(f) {
+    const fator = f.tipo === 'losango' ? 2 : f.tipo === 'elipse' ? 1.42 : 1;
+    return f.h / fator - 12;
+  }
+  function linhasVisiveis(ctx, f, linhas, lh, tam) {
+    if (f.tipo === 'texto') return linhas;                 // texto solto nao tem contorno
+    const cabem = Math.floor(alturaUtilTexto(f) / lh);
+    if (cabem >= linhas.length) return linhas;
+    const cortadas = linhas.slice(0, Math.max(1, cabem));
+    const larg = larguraTexto(f);
+    ctx.font = tam + 'px ' + QD_FONTE;
+    let ultima = String(cortadas[cortadas.length - 1] || '');
+    while (ultima && ctx.measureText(ultima + '…').width > larg) ultima = ultima.slice(0, -1);
+    cortadas[cortadas.length - 1] = ultima + '…';
+    return cortadas;
+  }
+
   /* ---------------- editor flutuante ---------------- */
   function abrirEditor(obj) {
     if (!obj) return;
@@ -650,7 +671,7 @@
 
     if (f.texto && !(Q.editando && Q.editando.id === f.id && !o.exportando)) {
       const tam = fonteDe(f), lh = alturaLinha(tam);
-      const linhas = linhasDe(ctx, f);
+      const linhas = linhasVisiveis(ctx, f, linhasDe(ctx, f), lh, tam);
       ctx.save();
       if (f.tipo !== 'texto') { caminhoDaForma(ctx, f); ctx.clip(); }
       ctx.font = tam + 'px ' + QD_FONTE;
@@ -860,7 +881,9 @@
   function setFerramenta(f) {
     Q.ferramenta = f;
     for (const bt of Q.el.botoesFer || []) {
-      bt.classList.toggle('ativo', bt.dataset.f === f);
+      // 'ativa' (com A) e o nome unico de estado ligado do quadro: qd-fer, qd-cor,
+      // qd-fundo e qd-esp-bt usam todos o mesmo. 'ativo' nao existe mais.
+      bt.classList.toggle('ativa', bt.dataset.f === f);
     }
     atualizarCursor();
     agendar();
@@ -1466,6 +1489,15 @@
     if (cmd && (e.key === 'Enter')) { parar(); mandarProChat(); return; }
     if (cmd) return;   // qualquer outro atalho do sistema segue o seu caminho
 
+    /* Zoom SEM ⌘, de proposito. O menu "Ver" do main.js ja reserva ⌘0, ⌘+ e ⌘- (roles
+       resetZoom / zoomIn / zoomOut) e no macOS o menu recebe a tecla antes da pagina:
+       com ⌘ quem mudava de tamanho era o APP INTEIRO, e o desenho nem se mexia.
+       As versoes com ⌘ acima continuam la so para o Cockpit no navegador do telefone,
+       onde nao existe menu de aplicativo e quem roubaria a tecla seria o browser. */
+    if (e.key === '0') { parar(); ajustarNaTela(); return; }
+    if (e.key === '=' || e.key === '+') { parar(); zoomPara(Q.cam.z * 1.2, Q.larg / 2, Q.alt / 2); return; }
+    if (e.key === '-' || e.key === '_') { parar(); zoomPara(Q.cam.z / 1.2, Q.larg / 2, Q.alt / 2); return; }
+
     if (e.key === 'Delete' || e.key === 'Backspace') { parar(); apagarSelecao(); return; }
     if (e.key === ']') { parar(); paraFrente(); return; }
     if (e.key === '[') { parar(); paraTras(); return; }
@@ -1529,6 +1561,9 @@
     if (r.enviadoEm) return;
     const c = normalizarCena(r.cena);
     if (!c.formas.length && !c.setas.length) return;
+    // desenho gravado pela versao antiga podia ter texto escondido dentro da forma;
+    // ao voltar, a forma cresce ate caber (o que ele escreveu nao pode sumir)
+    for (const f of c.formas) ajustarAltura(f);
     Q.cena = c;
     Q.rascunho.ultimo = JSON.stringify(limparCena(Q.cena));
     iniciarPilha();
@@ -1712,8 +1747,7 @@
       const a = document.createElement('button');
       a.className = 'qd-toast-acao';
       a.textContent = rotuloAcao;
-      a.style.cssText = 'margin-left:10px;border:0;background:transparent;color:inherit;'
-        + 'font:inherit;text-decoration:underline;cursor:pointer;padding:0';
+      // sem cssText: '.qd-toast-acao' ja pinta com a cor do motor (o inline deixava cinza)
       a.onclick = () => { t.classList.add('some'); if (aoClicar) aoClicar(); };
       t.appendChild(a);
     }
@@ -1747,12 +1781,6 @@
     return b;
   }
 
-  function iconeEspessura(esp) {
-    const h = esp === 2 ? 1.6 : esp === 4 ? 3.2 : 5.4;
-    return '<svg viewBox="0 0 24 24" class="ic"><rect x="3" y="' + (12 - h / 2) + '" width="18" height="' + h
-      + '" rx="' + (h / 2) + '" fill="currentColor" stroke="none"/></svg>';
-  }
-
   /* a letra do atalho que vai no cantinho do botao (o CSS ja previa .qd-fer-tecla) */
   function teclaDe(ferr) {
     for (const k in TECLAS_FER) if (TECLAS_FER[k] === ferr) return k.toUpperCase();
@@ -1780,7 +1808,7 @@
       Q.el.botoesFer.push(b);
     }
 
-    const sep1 = document.createElement('span'); sep1.className = 'qd-sep'; barra.appendChild(sep1);
+    const sep1 = document.createElement('span'); sep1.className = 'qd-sep qd-fer-sep'; barra.appendChild(sep1);
 
     // cores em duas colunas: em coluna unica a barra passaria da altura da janela
     const cores = document.createElement('div');
@@ -1798,18 +1826,23 @@
     }
     barra.appendChild(cores);
 
-    const sep2 = document.createElement('span'); sep2.className = 'qd-sep'; barra.appendChild(sep2);
+    const sep2 = document.createElement('span'); sep2.className = 'qd-sep qd-fer-sep'; barra.appendChild(sep2);
 
     // um botao so: pintar por dentro com a cor de agora, ou deixar vazado
-    Q.el.fundo = bt('qd-fer qd-fundo', 'Pintar por dentro', qico('preencher'));
+    // classe 'qd-fundo' sozinha (o quadro.css tem regra propria pra ela): com 'qd-fer'
+    // junto o balde herdava o tamanho dos 11 botoes de ferramenta e nao o proprio
+    Q.el.fundo = bt('qd-fundo', 'Pintar por dentro', qico('preencher'));
     Q.el.fundo.onclick = () => {
       const novo = Q.estilo.fundo === 'transparente' ? (Q.estilo.cor === 'tinta' ? PALETA[1] : Q.estilo.cor) : 'transparente';
       aplicarEstilo({ fundo: novo });
     };
     barra.appendChild(Q.el.fundo);
 
-    // espessura cicla 2 -> 4 -> 7: tres botoes so para isso deixariam a barra comprida demais
-    Q.el.esp = bt('qd-fer qd-espessura', 'Espessura do traço', iconeEspessura(2));
+    /* espessura cicla 2 -> 4 -> 7: tres botoes so para isso deixariam a barra comprida demais.
+       Classe 'qd-esp-bt' e um data-esp: quem desenha a barrinha e o ::before do quadro.css
+       (.qd-esp-bt[data-esp="2"|"4"|"7"]), entao o botao nao leva icone proprio. */
+    Q.el.esp = bt('qd-esp-bt', 'Espessura do traço', '');
+    Q.el.esp.dataset.esp = String(Q.estilo.esp);
     Q.el.esp.onclick = () => {
       const prox = Q.estilo.esp === 2 ? 4 : Q.estilo.esp === 4 ? 7 : 2;
       aplicarEstilo({ esp: prox });
@@ -1820,14 +1853,19 @@
     const grupo = document.createElement('div');
     grupo.className = 'qd-grupo-sel';
     grupo.style.cssText = 'display:none;flex-direction:column;align-items:center;gap:6px;width:100%';
-    const sep3 = document.createElement('span'); sep3.className = 'qd-sep'; grupo.appendChild(sep3);
+    const sep3 = document.createElement('span'); sep3.className = 'qd-sep qd-fer-sep'; grupo.appendChild(sep3);
     const bFrente = bt('qd-fer qd-prop-frente', 'Trazer pra frente (])', qico('frente'));
     bFrente.onclick = paraFrente;
     const bTras = bt('qd-fer qd-prop-tras', 'Mandar pra trás ([)', qico('tras'));
     bTras.onclick = paraTras;
+    /* Duplicar tem botao porque a tecla NAO pode ser ⌘D (o menu do app fica com ela e
+       mandaria a pergunta para os dois motores por tras do quadro). Aqui e Alt+D. */
+    const bDuplicar = bt('qd-fer qd-prop-duplicar', 'Duplicar (Alt+D)', qico('copiar'));
+    bDuplicar.onclick = duplicarSelecao;
     const bApagar = bt('qd-fer perigo qd-prop-apagar', 'Apagar (Delete)', qico('apagar'));
     bApagar.onclick = apagarSelecao;
-    grupo.appendChild(bFrente); grupo.appendChild(bTras); grupo.appendChild(bApagar);
+    grupo.appendChild(bFrente); grupo.appendChild(bTras);
+    grupo.appendChild(bDuplicar); grupo.appendChild(bApagar);
     barra.appendChild(grupo);
     Q.el.grupoSel = grupo;
   }
@@ -1837,7 +1875,12 @@
       // 'ativa' e o nome que o quadro.css conhece; com 'on' nenhuma bolinha ganhava o anel
       for (const b of Q.el.botoesCor) b.classList.toggle('ativa', b.dataset.cor === Q.estilo.cor);
     }
-    if (Q.el.esp) Q.el.esp.innerHTML = iconeEspessura(Q.estilo.esp);
+    if (Q.el.esp) {
+      // o data-esp e que engorda a barrinha no CSS; 'ativa' acende quando NAO e o traco padrao
+      Q.el.esp.dataset.esp = String(Q.estilo.esp);
+      Q.el.esp.classList.toggle('ativa', Q.estilo.esp !== 2);
+      Q.el.esp.title = 'Espessura do traço (' + Q.estilo.esp + ')';
+    }
     if (Q.el.fundo) Q.el.fundo.classList.toggle('ativa', Q.estilo.fundo !== 'transparente');
   }
 
@@ -1856,13 +1899,16 @@
     const top = document.createElement('div');
     top.className = 'qd-top';
     const tit = document.createElement('span'); tit.className = 'qd-tit'; tit.textContent = 'Quadro';
-    const sub = document.createElement('span'); sub.className = 'qd-sub';
+    // 'qd-dica' e a classe que o quadro.css estiliza (e esconde em tela estreita);
+    // 'qd-sub' nao existe na folha e o subtitulo saia com a fonte crua do body
+    const sub = document.createElement('span'); sub.className = 'qd-dica';
     const gap = document.createElement('span'); gap.className = 'qd-gap'; gap.style.flex = '1';
     const bDesfazer = bt('qd-mini qd-desfazer', 'Desfazer (⌘Z)', qico('desfazer'));
     bDesfazer.onclick = desfazer;
     const bRefazer = bt('qd-mini qd-refazer', 'Refazer (⌘⇧Z)', qico('refazer'));
     bRefazer.onclick = refazer;
-    const bAjustar = bt('qd-mini qd-ajustar', 'Ajustar à tela (⌘0)', qico('ajustar'));
+    // "0" e nao "⌘0": o menu Ver do app fica com o ⌘0 (ver o comentario em aoTeclar)
+    const bAjustar = bt('qd-mini qd-ajustar', 'Ajustar à tela (0)', qico('ajustar'));
     bAjustar.onclick = ajustarNaTela;
     const bX = bt('qd-mini qd-x', 'Fechar (Esc)', qico('x'));
     bX.onclick = fechar;
@@ -1934,7 +1980,8 @@
     const bCopiar = bt('qd-bt qd-copiar', 'Copiar a leitura do fluxo em texto', qico('copiar') + '<span class="qd-rot">Copiar texto</span>');
     bPng.onclick = salvarPNG;
     bCopiar.onclick = copiarTexto;
-    const bMandar = bt('qd-mandar principal', 'Mandar o desenho para o chat (⌘Enter)', qico('mandar') + '<span>Mandar pro chat</span>');
+    // 'qd-bt qd-mandar': a pilula grande e colorida do rodape (o estado ocupado e '.ocupado')
+    const bMandar = bt('qd-bt qd-mandar', 'Mandar o desenho para o chat (⌘Enter)', qico('mandar') + '<span>Mandar pro chat</span>');
     bMandar.onclick = mandarProChat;
     rod.append(conta, rgap, bLimpar, bPng, bCopiar, bMandar);
 
@@ -1942,10 +1989,12 @@
 
     const tst = document.createElement('div');
     tst.className = 'qd-toast some';
-    tst.style.cssText = 'position:absolute;left:50%;bottom:80px;transform:translateX(-50%);'
-      + 'max-width:80vw;padding:9px 14px;border-radius:10px;font-size:12.5px;z-index:9;'
-      + 'background:var(--bg3,#2a2a2a);color:var(--fg,#eee);border:1px solid var(--line2,#444);'
-      + 'box-shadow:0 8px 26px rgba(0,0,0,.35);transition:opacity .2s;opacity:0;pointer-events:none';
+    /* posicao, cor e moldura ficam com o quadro.css. Antes vinham num cssText inline, e
+       inline vence @media: no iPad o aviso continuava estreito e centrado no meio da tela,
+       por cima do rodape, em vez de deitar embaixo como a folha manda.
+       So o opacity/pointer-events segue inline — e o que o esconderToast liga e desliga. */
+    tst.style.opacity = '0';
+    tst.style.pointerEvents = 'none';
 
     el.append(cx, tst);
     // clique no veu fecha; clique dentro, nao
