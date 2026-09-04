@@ -218,9 +218,6 @@ function pintarTodasAbas() { for (const A of abas.values()) pintarAba(A); }
 
 function ativarAbaProjeto(A) {
   if (!A) return;
-  // ultimo instante em que a aba que sai ainda tem altura: e agora ou nunca pra anotar
-  // onde cada conversa dela estava sendo lida (escondida, a medida vale 0)
-  if (abaAtiva && abaAtiva !== A) for (const pid of abaAtiva.ordem) guardarRolagem(panes.get(pid));
   abaAtiva = A;
   for (const B of abas.values()) {
     const on = B === A;
@@ -233,14 +230,10 @@ function ativarAbaProjeto(A) {
   const P = panes.get(A.ativo) || panes.get(A.ordem[0]);
   if (P) setFocus(P);
   else { $('#tbTitle').textContent = shortPath(A.cwd); loadTree(A.cwd); }
-  // chat que recebeu resposta com a aba escondida precisa voltar rolado pro fim.
-  // e chat que foi remontado ENQUANTO a aba estava escondida (arrastar chat de aba)
-  // so agora tem altura pra receber de volta o ponto de leitura que ficou pendente
+  // chat que recebeu resposta com a aba escondida precisa voltar rolado pro fim
   for (const pid of A.ordem) {
     const q = panes.get(pid);
-    if (!q) continue;
-    if (q.precisaRolar) { q.precisaRolar = false; q.rolagemPendente = false; requestAnimationFrame(() => { q.chat.scrollTop = q.chat.scrollHeight; }); }
-    else if (q.rolagemPendente) requestAnimationFrame(() => { if (devolverRolagem(q)) q.rolagemPendente = false; });
+    if (q && q.precisaRolar) { q.precisaRolar = false; requestAnimationFrame(() => { q.chat.scrollTop = q.chat.scrollHeight; }); }
   }
   pintarMulti();          // a barra de baixo (modelo, modo, envio) segue a aba que abriu:
                           // sem isto, vir de uma aba de 3 chats deixava a de 1 chat comprimida
@@ -422,66 +415,8 @@ async function levarChatPara(P, escolhida) {
   moverPane(P, destino, null);
 }
 
-/* ─── Onde cada conversa estava sendo lida ────────────────────────────────────
-   Painel tirado do DOM perde o layout: quando ele volta, o navegador nao tem mais
-   de onde tirar a rolagem e TODA conversa da aba salta pro comeco. Por isso o ponto
-   de leitura precisa estar guardado aqui em JS ANTES de mexer no DOM.
-   Guardo a MENSAGEM que estava no alto da area visivel, e nao o numero de pixels:
-   fechar um chat alarga os que sobram, o texto reflui e o mesmo numero de pixels
-   passa a ser outro trecho da conversa (medido: -28% de altura ao fechar 1 de 3). */
-function guardarRolagem(P) {
-  const c = P && P.chat;
-  if (!c || !c.clientHeight) return;   // aba escondida nao tem altura: leitura daria 0 e envenenaria o guardado
-  // quem estava colado no fim tem que CONTINUAR colado no fim, inclusive se chegar
-  // mensagem nova no meio do caminho (mesma regua de 100px do atBottom)
-  if (c.scrollHeight - c.scrollTop - c.clientHeight < 100) { P.rolagem = { noFim: true }; return; }
-  const rc = c.getBoundingClientRect();
-  for (const f of c.children) {
-    const r = f.getBoundingClientRect();
-    // primeira mensagem que aparece na area visivel; 'corte' e o quanto dela ficou pra cima
-    if (r.bottom > rc.top + 1) { P.rolagem = { anc: f, corte: rc.top - r.top, top: c.scrollTop }; return; }
-  }
-  P.rolagem = { top: c.scrollTop };
-}
-
-// devolve a conversa ao mesmo ponto de leitura. false = a aba ainda esta escondida,
-// nao da pra medir agora e o conserto fica pendente pra quando ela aparecer
-function devolverRolagem(P) {
-  const g = P && P.rolagem, c = P && P.chat;
-  if (!g || !c || !c.isConnected || !c.clientHeight) return false;
-  if (g.noFim) { c.scrollTop = c.scrollHeight; return true; }
-  if (g.anc && g.anc.parentNode === c) {
-    const rc = c.getBoundingClientRect(), r = g.anc.getBoundingClientRect();
-    const alvo = c.scrollTop + (r.top - rc.top) + g.corte;
-    c.scrollTop = Math.max(0, Math.min(alvo, c.scrollHeight - c.clientHeight));
-    return true;
-  }
-  c.scrollTop = g.top || 0;   // a mensagem-ancora sumiu (conversa limpa): resta o numero cru
-  return true;
-}
-
-/* Embrulho unico: guarda o ponto de leitura de todos os chats da aba, faz o trabalho
-   e devolve. Devolve DUAS vezes de proposito: a primeira ainda no mesmo quadro, antes
-   de o navegador pintar, pra ninguem ver a tela piscar no comeco da conversa; a segunda
-   no quadro seguinte, porque quem mexe na LARGURA (igualarChats, pintarMulti) so age
-   depois — e no layout novo o mesmo ponto ja seria outra linha. */
-function semPerderRolagem(A, tarefa) {
-  const vivos = A ? (A.ordem || []).map(pid => panes.get(pid)).filter(Boolean) : [];
-  vivos.forEach(guardarRolagem);
-  tarefa();
-  const repor = () => {
-    for (const P of vivos) {
-      if (!panes.has(P.id)) continue;
-      P.rolagemPendente = !devolverRolagem(P);
-    }
-  };
-  repor();
-  requestAnimationFrame(repor);
-}
-
 // redesenha os chats de uma aba na ordem certa, com os divisores entre eles
 function remontarEspaco(A) {
-  semPerderRolagem(A, () => {
   const guardado = new Map();
   for (const pid of A.ordem) {
     const P = panes.get(pid);
@@ -497,7 +432,6 @@ function remontarEspaco(A) {
     P.el.style.minWidth = g.min || '';
   });
   pintarMulti();
-  });
 }
 
 function newPane(opts = {}) {
@@ -665,7 +599,7 @@ function makeSplitter() {
   // dois cliques: todos voltam ao tamanho padrao, dividindo a tela por igual
   s.addEventListener('dblclick', (e) => {
     e.preventDefault(); e.stopPropagation();
-    igualarChats(true);
+    igualarChats();
   });
 
   // clicar e segurar: muda o tamanho SO do chat da esquerda; os outros se acomodam
@@ -694,18 +628,13 @@ function makeSplitter() {
 }
 
 // devolve todos os chats da aba aberta ao tamanho padrao
-// (mudar a largura reflui o texto: o ponto de leitura tem que ser guardado e devolvido junto)
-function igualarChats(voltarProPrimeiro) {
+function igualarChats() {
   const A = abaAtiva; if (!A) return;
-  semPerderRolagem(A, () => {
-    for (const pid of A.ordem) {
-      const q = panes.get(pid);
-      if (q) { q.el.style.flex = ''; q.el.style.minWidth = ''; }
-    }
-    // so o duplo clique no divisor ("deixa todos iguais") volta a fila de chats pro primeiro;
-    // fechar ou abrir um chat nao pode arrastar a tela de lado sem ele ter pedido
-    if (voltarProPrimeiro) A.corpoEl.scrollLeft = 0;
-  });
+  for (const pid of A.ordem) {
+    const q = panes.get(pid);
+    if (q) { q.el.style.flex = ''; q.el.style.minWidth = ''; }
+  }
+  A.corpoEl.scrollLeft = 0;
   savePanes();
 }
 
