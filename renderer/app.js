@@ -808,7 +808,7 @@ async function trocarMotor(P, novo) {
   pintarUso(P); lerUso(P.engine); savePanes();   // nao zera o "ja fechei": ele nao pediu o aviso de volta
 }
 
-function montarContexto(P, retomada) {
+function montarContexto(P, retomada, motivo) {
   const LIM = 14000;
   const linhas = [];
   for (let i = P.hist.length - 1; i >= 0; i--) {
@@ -820,7 +820,12 @@ function montarContexto(P, retomada) {
   // retomada = a conexao caiu e o numero da conversa se perdeu. Aqui o risco nao e recomecar do
   // zero: e pegar carona no resumo de OUTROS chats da mesma pasta, que o arranque injeta sozinho.
   if (retomada) {
-    return 'ATENÇÃO: esta conversa caiu (limite de uso ou internet) e voltou como sessão nova. '
+    // o motivo muda so a PRIMEIRA frase: trocar de plano para créditos nao e queda nenhuma,
+    // e dizer que caiu fazia o motor pedir desculpas por um problema que nao existiu
+    const abertura = motivo === 'troca-de-cobranca'
+      ? 'ATENÇÃO: esta conversa está continuando numa sessão nova (a forma de cobrança/modelo mudou). '
+      : 'ATENÇÃO: esta conversa caiu (limite de uso ou internet) e voltou como sessão nova. ';
+    return abertura
       + 'IGNORE qualquer resumo de trabalhos anteriores, memória do projeto ou contexto de outras '
       + 'conversas que tenha vindo no início desta sessão: NADA daquilo é o que estávamos fazendo. '
       + 'O trabalho desta conversa é EXCLUSIVAMENTE o que está abaixo. Se o que está abaixo não '
@@ -2672,7 +2677,7 @@ async function menuModelos(P) {
         lembrarEscolhaDaPasta(P);        // esta pasta passa a nascer com este cérebro
         await desligarMotor(P);
         if (mudouOrigem) {
-          if (P.hist.length) P.passarContexto = montarContexto(P, true);
+          if (P.hist.length) P.passarContexto = montarContexto(P, true, 'troca-de-cobranca');
           P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
           note(P, vaiPorCreditos
             ? 'A próxima mensagem usa créditos da API dentro do limite escolhido.'
@@ -4867,11 +4872,15 @@ window.addEventListener('keydown', (e) => {
    andaria DOIS passos por aperto). A espera curta cobre o contrario: o recado do menu chegar um
    fio antes da tecla. E a janela EXPIRA de proposito — uma tecla perdida nao pode aposentar o
    caminho do menu, que no Mac de hoje e o unico que existe. */
-const DONO_DA_PAGINA = 5000, ESPERA_MENU = 120;
+/* SEM espera: o ⌘A tem que valer no mesmo instante. Com 120ms de atraso, ⌘A+Colar e
+   ⌘A+Backspace (o gesto mais comum do campo) rodavam ANTES do selecionar tudo — o colado
+   emendava em vez de substituir. No Mac o acelerador do menu come a tecla, entao ela nunca
+   chega na pagina primeiro; e se um dia chegar, chega ANTES do recado (mesmo processo,
+   contra dois saltos de IPC) e o guarda abaixo continua evitando o desfazer duplo. */
+const DONO_DA_PAGINA = 5000;
 function edicaoDoMenu(acao) {
-  const daPagina = () => Date.now() - (ultimaTeclaEdicao[acao] || 0) < DONO_DA_PAGINA;
-  if (daPagina()) return;
-  setTimeout(() => { if (!daPagina()) aplicarEdicao(acao); }, ESPERA_MENU);
+  if (Date.now() - (ultimaTeclaEdicao[acao] || 0) < DONO_DA_PAGINA) return;
+  aplicarEdicao(acao);
 }
 
 function aplicarEdicao(acao) {
