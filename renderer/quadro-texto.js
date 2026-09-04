@@ -932,8 +932,10 @@
         corpoLinha = 'Passo: ' + nome;
       }
 
-      // sufixo de fim de linha
-      if (dirigidas === 0 && n.tipo !== 'elipse' && G.nos.length >= 2) corpoLinha += ' (aqui acaba)';
+      // sufixo de fim de linha. Nó totalmente solto (sem nenhuma seta/linha) NÃO ganha
+      // " (aqui acaba)": ele não termina caminho nenhum, só está boiando no quadro.
+      var grauTotal = (G.saidas.get(n) || []).length + (G.entradas.get(n) || []).length;
+      if (dirigidas === 0 && grauTotal > 0 && n.tipo !== 'elipse' && G.nos.length >= 2) corpoLinha += ' (aqui acaba)';
 
       linhas.push((i + 1) + '. ' + corpoLinha);
 
