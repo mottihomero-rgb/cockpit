@@ -439,7 +439,8 @@ function guardarRolagem(P) {
   for (const f of c.children) {
     const r = f.getBoundingClientRect();
     // primeira mensagem que aparece na area visivel; 'corte' e o quanto dela ficou pra cima
-    if (r.bottom > rc.top + 1) { P.rolagem = { anc: f, corte: rc.top - r.top, top: c.scrollTop }; return; }
+    // ('alt' e a altura dela agora: numa mensagem longa que reflui, o corte tem que encolher junto)
+    if (r.bottom > rc.top + 1) { P.rolagem = { anc: f, corte: rc.top - r.top, alt: r.height, top: c.scrollTop }; return; }
   }
   P.rolagem = { top: c.scrollTop };
 }
@@ -452,7 +453,10 @@ function devolverRolagem(P) {
   if (g.noFim) { c.scrollTop = c.scrollHeight; return true; }
   if (g.anc && g.anc.parentNode === c) {
     const rc = c.getBoundingClientRect(), r = g.anc.getBoundingClientRect();
-    const alvo = c.scrollTop + (r.top - rc.top) + g.corte;
+    // a mensagem mudou de tamanho junto com a largura: manter o corte em pixels crus
+    // jogaria o olho pra outro pedaco DENTRO dela (grave num bloco de codigo comprido)
+    const corte = g.alt > 0 && r.height > 0 ? g.corte * (r.height / g.alt) : g.corte;
+    const alvo = c.scrollTop + (r.top - rc.top) + corte;
     c.scrollTop = Math.max(0, Math.min(alvo, c.scrollHeight - c.clientHeight));
     return true;
   }
