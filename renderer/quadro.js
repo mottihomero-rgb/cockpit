@@ -488,6 +488,34 @@
   /* Texto que nao cabe SOME sem aviso (o clip corta) e, pior, sobra o MEIO da frase.
      A imagem passa a mentir para o Claude, que recebe a frase inteira no texto.
      Entao a forma cresce ate caber — todas, nao so o tipo 'texto'. */
+  /* inverso do larguraTexto(): de quanto a forma precisa ser para sobrar 'util' por dentro */
+  function larguraParaCaber(f, util) {
+    if (f.tipo === 'nota') return util + 24;
+    if (f.tipo === 'losango') return (util + 12) * 2;
+    if (f.tipo === 'elipse') return (util + 12) / 0.7;
+    return util + 16;
+  }
+  const LARG_MAX_TEXTO = 520;   // uma URL gigante nao pode esticar a forma pela tela toda
+  /* Mesma rede da altura, agora na largura: se a MAIOR palavra nao cabe no vao util, ela
+     era desenhada encostando (e passando um fio) nas duas bordas. A forma alarga ate caber. */
+  function ajustarLargura(f) {
+    if (!f || f.tipo === 'caneta' || f.tipo === 'seta' || f.tipo === 'linha' || f.tipo === 'texto') return false;
+    const txt = String(f.texto || '');
+    if (!txt.trim()) return false;
+    const ctx = ctxParaMedir();
+    ctx.font = fonteDe(f) + 'px ' + QD_FONTE;
+    let maior = 0;
+    for (const palavra of txt.split(/\s+/)) {
+      if (!palavra) continue;
+      const w = ctx.measureText(palavra).width;
+      if (w > maior) maior = w;
+    }
+    if (!maior || maior <= larguraTexto(f)) return false;
+    const nova = Math.min(LARG_MAX_TEXTO, Math.ceil(larguraParaCaber(f, maior)));
+    if (nova > f.w + 0.5) { f.w = nova; return true; }
+    return false;
+  }
+
   function ajustarAltura(f) {
     if (!f || f.tipo === 'caneta' || f.tipo === 'seta' || f.tipo === 'linha') return false;
     if (f.tipo === 'texto') {
@@ -495,9 +523,11 @@
       if (Math.abs(f.h - h) > 0.5) { f.h = h; return true; }
       return false;
     }
+    // a largura vem PRIMEIRO: alargar muda quantas linhas o texto ocupa
+    const alargou = ajustarLargura(f);
     const nec = alturaNecessaria(f);
     if (f.h < nec) { f.h = nec; return true; }
-    return false;
+    return alargou;
   }
 
   /* ULTIMA rede de seguranca do texto. A forma cresce sozinha ao ser escrita, mas ele
@@ -1235,7 +1265,10 @@
       const f = g.f;
       // OU, nao E: um arrasto quase reto criava uma forma com um lado zerado — um risco
       // invisivel que ainda contava como peca e ia junto no PNG e na leitura pro Claude
-      if (f.w < 4 || f.h < 4) {
+      // o corte e SNAP*2 (16) porque a grade de encaixe e 8: com 4 sobrava a faixa
+      // 4..8 e um arrasto quase reto ainda virava uma tira de 8px, invisivel na tela
+      // mas contada como peca e mandada no PNG e na leitura pro Claude
+      if (f.w < SNAP * 2 || f.h < SNAP * 2) {
         const p = PADRAO[f.tipo] || PADRAO.retangulo;
         f.x = enc(g.x0 - p.w / 2, false); f.y = enc(g.y0 - p.h / 2, false);
         f.w = p.w; f.h = p.h;
@@ -1459,9 +1492,21 @@
     const dentroEditor = Q.editando || (e.target && e.target.classList && e.target.classList.contains('qd-editor'));
     if (dentroEditor) {
       // digitar "rota" nao pode trocar de ferramenta 4 vezes
-      if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
+      const c = e.metaKey || e.ctrlKey;
+      if (e.key === 'Escape' || (e.key === 'Enter' && c)) {
         e.preventDefault(); e.stopPropagation();
         fecharEditor(true);
+      } else if (c && (e.key === 'z' || e.key === 'Z')) {
+        /* ⌘Z/⌘⇧Z/⌘Y/⌘A a mao: o menu Editar do app manda um RECADO (nao a tecla), e recado
+           nao aciona o desfazer nativo do campo. Aqui a textarea desfaz de verdade. */
+        e.preventDefault(); e.stopPropagation();
+        try { document.execCommand(e.shiftKey ? 'redo' : 'undo'); } catch (_) {}
+      } else if (c && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault(); e.stopPropagation();
+        try { document.execCommand('redo'); } catch (_) {}
+      } else if (c && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault(); e.stopPropagation();
+        try { document.execCommand('selectAll'); } catch (_) {}
       } else {
         e.stopPropagation();
       }
@@ -1723,6 +1768,9 @@
       if (typeof window.abrirQuadroTexto === 'function') window.abrirQuadroTexto(P, txt, d.resumo);
       Q.enviado = true;
       try { await window.api.quadroRascunhoGravar({ cena, enviadoEm: Date.now() }); } catch (_) {}
+      /* o fechar() logo abaixo chama gravarRascunho(), que gravaria a mesma cena SEM o
+         carimbo e apagaria a marca de "ja foi enviado". Adiantando o cache, ele nao regrava. */
+      try { Q.rascunho.ultimo = JSON.stringify(cena); Q.rascunho.sujo = false; } catch (_) {}
       fechar();
       const inp = P.el.querySelector('.p-input');
       if (inp) { inp.focus(); try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (_) {} }
@@ -1971,10 +2019,12 @@
     const rod = document.createElement('div');
     rod.className = 'qd-rodape';
     const conta = document.createElement('span'); conta.className = 'qd-conta';
-    const rgap = document.createElement('span'); rgap.className = 'qd-gap qd-rod-gap'; rgap.style.flex = '1';
-    /* 'qd-bt' (a classe que existe no quadro.css), nao 'qd-bt2': assim eles voltam a ser
-       botao de verdade — com moldura, area de clique e o vermelho do Limpar. O rotulo vai
-       num <span class="qd-rot"> porque no iPhone em pe so o icone fica. */
+    // SEM style.flex inline: inline vence @media e o .qd-rod-gap{flex:0 0 0} da tela
+    // estreita nunca pegava — sobrava um vao vazio e o botao principal encolhia
+    const rgap = document.createElement('span'); rgap.className = 'qd-gap qd-rod-gap';
+    /* 'qd-bt' e a UNICA classe dos botoes do rodape (o nome antigo, com 2 no fim, morreu):
+       assim eles voltam a ser botao de verdade — com moldura, area de clique e o vermelho
+       do Limpar. O rotulo vai num <span class="qd-rot"> porque no iPhone em pe so o icone fica. */
     const bLimpar = bt('qd-bt perigo qd-limpar', 'Apagar tudo', qico('apagar') + '<span class="qd-rot">Limpar</span>');
     bLimpar.onclick = () => limpar(false);
     const bPng = bt('qd-bt qd-png', 'Salvar o desenho como imagem', qico('imagem') + '<span class="qd-rot">Salvar PNG</span>');
@@ -1997,7 +2047,10 @@
     tst.style.opacity = '0';
     tst.style.pointerEvents = 'none';
 
-    el.append(cx, tst);
+    // o toast mora DENTRO da caixa: pendurado no veu, em janela alta ele boiava
+    // abaixo da caixa branca, fora do quadro (e com ele o botao "Comecar do zero")
+    cx.appendChild(tst);
+    el.appendChild(cx);
     // clique no veu fecha; clique dentro, nao
     el.addEventListener('click', (e) => { if (e.target === el) fechar(); });
     document.body.appendChild(el);
@@ -2034,7 +2087,18 @@
       } else e.stopPropagation();
     });
 
-    if (window.ResizeObserver) new ResizeObserver(() => { if (Q.aberto) redimensionar(); }).observe(palco);
+    /* encolher a janela (virar telefone) deixava o desenho fora do enquadramento e
+       parecia que tinha sumido. Perdeu muita largura -> reenquadra sozinho. */
+    let largAnterior = 0;
+    if (window.ResizeObserver) new ResizeObserver(() => {
+      if (!Q.aberto) return;
+      const antes = largAnterior;
+      redimensionar();
+      const agora = Q.larg || palco.clientWidth || 0;
+      largAnterior = agora;
+      if (!antes || !agora) return;
+      if (agora < 600 || agora < antes * 0.7) ajustarNaTela();
+    }).observe(palco);
     else window.addEventListener('resize', () => { if (Q.aberto) redimensionar(); });
 
     // trocar o tema com o quadro aberto repinta tudo com as cores novas

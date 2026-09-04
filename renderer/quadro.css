@@ -76,6 +76,7 @@
   background:var(--bg-flutua);border:1px solid var(--line2);border-radius:16px;
   box-shadow:0 24px 70px var(--sombra2);
   overflow:hidden;
+  position:relative;   /* ancora do .qd-toast, que agora mora DENTRO da caixa */
 }
 
 
@@ -190,7 +191,10 @@
 
 /* ---- grupo que so aparece com alguma forma escolhida ---- */
 /* o motor liga e desliga por style.display; aqui fica so a arrumacao */
-.qd-grupo-sel{flex:none;flex-direction:column;align-items:center;gap:5px;width:100%}
+/* sticky: a barra rola quando a janela e baixa e os 4 botoes da selecao (inclusive o
+   Apagar) caiam para fora da area visivel. Grudados no pe, estao sempre a um clique. */
+.qd-grupo-sel{flex:none;flex-direction:column;align-items:center;gap:5px;width:100%;
+  position:sticky;bottom:0;z-index:2;padding-bottom:2px;background:var(--bg2)}
 .qd-prop-frente,.qd-prop-tras,.qd-prop-duplicar{color:var(--fg-fraco)}
 .qd-prop-frente:hover,.qd-prop-tras:hover,.qd-prop-duplicar:hover{color:var(--fg-strong)}
 .qd-prop-apagar{color:var(--fg-fraco)}
@@ -273,8 +277,10 @@
   font:500 12.5px var(--sans);
   color:var(--fg-dim);background:transparent;border:1px solid var(--line2)}
 .qd-rodape .qd-bt .ic,.qd-rodape .qd-mandar .ic{width:15px;height:15px;pointer-events:none}
-.qd-rodape .qd-bt:hover{background:var(--hover2);color:var(--fg-strong)}
-.qd-rodape .qd-bt:disabled{opacity:.45;cursor:default;background:transparent}
+/* :not(.qd-mandar) — sem isto estas duas (3 classes) venciam a pintura do botao
+   principal (2 classes): ele ficava CINZA no hover e INVISIVEL quando desligado */
+.qd-rodape .qd-bt:not(.qd-mandar):hover{background:var(--hover2);color:var(--fg-strong)}
+.qd-rodape .qd-bt:not(.qd-mandar):disabled{opacity:.45;cursor:default;background:transparent}
 .qd-rodape .qd-bt.perigo:hover{background:var(--erro-fundo);color:#fff;border-color:transparent}
 /* o "Limpar" vira "Confirmar?" por 3s — o motor so troca o texto e liga esta classe */
 .qd-rodape .qd-bt.perigo.confirmando{background:var(--erro-fundo);color:#fff;
@@ -284,15 +290,18 @@
    a cor do texto e --sobre-accent (mesma regra do .p-send do app): fica branco no tema
    claro e no jornal, e escuro no tema escuro, onde o azul do Codex e claro demais
    para carregar texto branco. */
-.qd-rodape .qd-mandar,.qd-rodape .qd-bt.principal{
+.qd-rodape .qd-mandar{
   padding:9px 17px;border:0;border-radius:10px;
   background:var(--qd);color:var(--sobre-accent);
   font:650 12.5px var(--sans);
   box-shadow:0 6px 18px color-mix(in srgb,var(--qd) 30%,transparent)}
-.qd-rodape .qd-mandar:hover,.qd-rodape .qd-bt.principal:hover{filter:brightness(1.07)}
-.qd-rodape .qd-mandar:active,.qd-rodape .qd-bt.principal:active{transform:translateY(1px)}
-.qd-rodape .qd-mandar:disabled,.qd-rodape .qd-bt.principal:disabled{
-  opacity:.5;cursor:default;box-shadow:none;filter:none}
+.qd-rodape .qd-mandar:hover{filter:brightness(1.07)}
+.qd-rodape .qd-mandar:active{transform:translateY(1px)}
+/* desligado continua sendo a pilula colorida, so que apagada: sem estas duas linhas
+   ele perdia fundo e cor e sumia dentro do rodape */
+.qd-rodape .qd-mandar:disabled{
+  opacity:.5;cursor:default;box-shadow:none;filter:none;
+  background:var(--qd);color:var(--sobre-accent)}
 
 /* enquanto gera o PNG e anexa no chat */
 .qd-mandar.ocupado{opacity:.7;cursor:progress}
@@ -356,7 +365,8 @@
      tudo. O !important e o unico jeito de vencer style inline. */
   .qd-cores{width:auto !important;flex-wrap:nowrap !important;gap:7px}
   .qd-cor{width:26px;height:26px}
-  .qd-grupo-sel{width:auto !important;flex-direction:row !important;gap:6px}
+  /* deitada, a barra rola na horizontal: sticky no rodape aqui nao faz sentido */
+  .qd-grupo-sel{width:auto !important;flex-direction:row !important;gap:6px;position:static}
 
   .qd-zoom{left:8px;bottom:8px}
   .qd-zoom-bt{width:34px;height:32px}
@@ -366,7 +376,7 @@
   .qd-conta{display:none}                /* a conta some: quem manda e o botao */
   .qd-rod-gap{flex:0 0 0}
   /* no toque o desfecho tem que ser o maior alvo da tela */
-  .qd-rodape .qd-mandar,.qd-rodape .qd-bt.principal{flex:1;padding:13px 14px;font-size:14px}
+  .qd-rodape .qd-mandar{flex:1;padding:13px 14px;font-size:14px}
   .qd-toast{bottom:14px;left:10px;right:10px;transform:none;max-width:none}
   .qd-toast.some{transform:translateY(8px)}
 
