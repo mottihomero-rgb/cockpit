@@ -2548,7 +2548,6 @@ function menu() {
       { label: 'Buscar nesta conversa', accelerator: 'CmdOrCtrl+F', click: () => win && win.webContents.send('menu', 'buscarNaConversa') },
       { label: 'Perguntar aos dois motores', accelerator: 'CmdOrCtrl+D', click: () => win && win.webContents.send('menu', 'perguntarAosDois') },
       { label: 'Ditar (segure para falar)', accelerator: 'CmdOrCtrl+Shift+D', click: () => win && win.webContents.send('menu', 'ditar') },
-      { label: 'Desenhar um fluxo (quadro branco)', accelerator: 'CmdOrCtrl+Shift+E', click: () => win && win.webContents.send('menu', 'quadro') },
       { type: 'separator' },
       { label: 'Salvar conversa no Obsidian', accelerator: 'CmdOrCtrl+S', click: () => win && win.webContents.send('menu', 'salvarVault') },
     ]},

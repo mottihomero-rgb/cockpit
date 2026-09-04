@@ -33,10 +33,6 @@ contextBridge.exposeInMainWorld('api', {
   pickPhoto: () => ipcRenderer.invoke('user:pickPhoto'),
   anexoLer: (f) => ipcRenderer.invoke('anexo:ler', f),
   colados: () => ipcRenderer.invoke('clipboard:anexos'),
-  // quadro branco: grava o PNG + o JSON da cena, e guarda/le o rascunho do desenho
-  quadroSalvar: (o) => ipcRenderer.invoke('quadro:salvar', o),
-  quadroRascunhoGravar: (o) => ipcRenderer.invoke('quadro:rascunhoGravar', o),
-  quadroRascunhoLer: () => ipcRenderer.invoke('quadro:rascunhoLer'),
   verArquivo: (f) => ipcRenderer.invoke('arquivo:ver', f),
   renomear: (o) => ipcRenderer.invoke('sessao:renomear', o),
   buscarConversas: (o) => ipcRenderer.invoke('sessions:buscar', o),

@@ -70,10 +70,6 @@
     onErroApp: () => {},
     anexoLer: (f) => chamar('anexo:ler', f),
     colados: () => Promise.resolve({ arquivos: [] }),
-    // o quadro branco funciona no iPhone/iPad igual ao Mac: quem grava o PNG e o JSON e o Mac
-    quadroSalvar: (o) => chamar('quadro:salvar', o),
-    quadroRascunhoGravar: (o) => chamar('quadro:rascunhoGravar', o),
-    quadroRascunhoLer: () => chamar('quadro:rascunhoLer'),
     verArquivo: (f) => chamar('arquivo:ver', f),
     contaLer: (e) => chamar('conta:ler', e),
     usoLer: (e) => chamar('uso:ler', e),

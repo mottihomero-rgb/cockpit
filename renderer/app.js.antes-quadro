@@ -31,10 +31,6 @@ Object.assign(ICONES, {
   'book': '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />',
   // um no em cima que se abre em tres embaixo: e o desenho do time de agentes
   'agentes': '<circle cx="12" cy="4" r="2" /> <circle cx="5" cy="20" r="2" /> <circle cx="12" cy="20" r="2" /> <circle cx="19" cy="20" r="2" /> <path d="M12 6v4" /> <path d="M5 18v-2a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2" /> <path d="M12 15v3" />',
-  // quadro branco de pe (a lousa + os pes) com uma seta de fluxo dentro: e o unico icone
-  // do app que fala de DESENHAR um caminho. Nao se confunde com 'image' (moldura quadrada
-  // com sol e montanha), com 'agentes' (bolinhas) nem com 'pencil' (lapis).
-  'quadro': '<rect width="20" height="14" x="2" y="3" rx="2" /> <path d="M12 17v4" /> <path d="M8 21h8" /> <path d="M6 13V9h6" /> <path d="m10 7 2 2-2 2" />',
 });
 const ico = (n) => '<svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + (ICONES[n] || '') + '</svg>';
 const svgMotor = (eng) => '<svg viewBox="0 0 24 24" class="logo-motor"><path d="' + LOGO[eng === 'codex' ? 'codex' : 'claude'] + '"/></svg>';
@@ -556,9 +552,6 @@ function newPane(opts = {}) {
   $('.p-plus', el).addEventListener('click', (e) => { e.stopPropagation(); menuAnexo(P); });
   // botao /  (comandos)
   $('.p-slash', el).addEventListener('click', (e) => { e.stopPropagation(); menuSkills(P); });
-
-  // botao do quadro branco (desenhar o fluxo em vez de descrever com palavras)
-  criarBotaoQuadro(P, el);
 
   // botao do time de agentes (fica na direita, ao lado do modelo)
   criarBotaoAgentes(P, el);
@@ -2546,9 +2539,7 @@ document.addEventListener('keydown', (e) => {
   // dentro do terminal embutido, Esc é do terminal, não fecha a janelinha
   const dentroTerm = document.activeElement && document.activeElement.closest && document.activeElement.closest('.term-wrap');
   if (dentroTerm) return;
-  // o quadro branco fica por cima de tudo: e o primeiro a sair no Esc
-  if (qdPainelAberto()) { if (window.Quadro) window.Quadro.fechar(); return; }
-  // o painel dos agentes vem logo depois
+  // o painel dos agentes fica por cima de tudo: e o primeiro a sair no Esc
   if (agPainelAberto()) { fecharPainelAgentes(); return; }
   const visorAberto = [...panes.values()].some(P => !$('.p-visor', P.el).classList.contains('hidden'));
   if (visorAberto) { fecharVisor(); return; }
@@ -3251,24 +3242,6 @@ function criarBotaoAgentes(P, el) {
   pintarBotaoAgentes(P);
 }
 
-/* O botao do quadro fica GRUDADO no cerebro, do lado ESQUERDO dele. Desenhar um fluxo e a
-   quarta forma de dar entrada de informacao (falar, escrever, mandar print, desenhar), entao
-   mora no canto das decisoes do painel — nao no meio dos botoes de escrever. */
-function criarBotaoQuadro(P, el) {
-  const bt = document.createElement('button');
-  bt.className = 'cb p-quadro';
-  bt.title = 'Desenhar um fluxo para explicar o que você quer (⌘⇧E)';
-  bt.innerHTML = ico('quadro');
-  bt.addEventListener('click', (e) => {
-    e.stopPropagation();
-    setFocus(P);
-    if (window.Quadro) window.Quadro.abrir(P);
-  });
-  const modelo = $('.p-model', el);
-  if (modelo) modelo.insertAdjacentElement('beforebegin', bt);
-  else $('.cmp-bar', el).appendChild(bt);
-}
-
 /* ---- a janela ---- */
 let agPaneAberto = null;
 let agDesenhoPedido = false;
@@ -3312,11 +3285,6 @@ function fecharPainelAgentes() {
 }
 function agPainelAberto() {
   const el = document.getElementById('agPainel');
-  return !!(el && !el.classList.contains('hidden'));
-}
-// a gemea do quadro branco: quem manda e a classe hidden do #qdPainel, nao um metodo novo
-function qdPainelAberto() {
-  const el = document.getElementById('qdPainel');
   return !!(el && !el.classList.contains('hidden'));
 }
 
@@ -3844,12 +3812,6 @@ function inserirNoInput(P, txt) {
   inp.focus();
   inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 190) + 'px';
 }
-
-/* ---- as duas unicas portas entre o quadro e o chat ----
-   quadro.js e arquivo separado e nao enxerga anexar() nem inserirNoInput(), que sao internas
-   daqui. Ele entrega o que produziu; quem mexe no chat continua sendo o app.js. */
-window.abrirQuadroAnexar = (P, caminho) => anexar(P, [caminho]);   // devolve Promise: o quadro.js da await
-window.abrirQuadroTexto = (P, txt) => inserirNoInput(P, txt);
 
 /* ============ visualizador de arquivo ============ */
 function fecharVisor() { $$('.p-visor').forEach(v => { v.classList.add('hidden'); $('.visor-corpo', v).innerHTML = ''; }); }
@@ -4803,13 +4765,6 @@ document.addEventListener('keydown', (e) => {
       if (A) { e.preventDefault(); ativarAbaProjeto(A); }
     }
   }
-  // ⌘⇧E abre o quadro branco. No telefone nao ha menu do Mac: aqui e o unico caminho de teclado.
-  if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
-    if (!focusPane || !window.Quadro) return;
-    e.preventDefault();
-    window.Quadro.abrir(focusPane);
-    return;
-  }
   // Esc fecha a tela de conversa nova (a nao ser que nao haja nenhuma aba aberta)
   if (e.key === 'Escape' && !$('#novaAba').classList.contains('hidden')) { e.stopPropagation(); fecharNovaAba(); }
   // Enter confirma direto: sem pasta escolhida, abre no Mac inteiro
@@ -4834,7 +4789,6 @@ window.api.onMenu((a) => {
   if (a === 'buscarNaConversa') return abrirBuscaConversa(focusPane);
   if (a === 'perguntarAosDois') return focusPane && perguntarAosDois(focusPane);
   if (a === 'ditar') return focusPane && alternarDitado(focusPane);
-  if (a === 'quadro') return focusPane && window.Quadro && window.Quadro.abrir(focusPane);
   if (a === 'salvarVault') return focusPane && salvarConversaNoVault(focusPane);
   if (a === 'newPane') novoChatNaAba();
   else if (a === 'newTab') telaNovaAba();
