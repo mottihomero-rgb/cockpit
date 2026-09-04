@@ -4851,10 +4851,6 @@ window.addEventListener('resize', () => { for (const P of panes.values()) paintE
    avisa a tela e o destino e decidido aqui. O guarda de tempo existe porque, se um dia a tecla
    passar a chegar tambem na pagina, o desfazer andaria DOIS passos de uma vez. */
 const ultimaTeclaEdicao = { desfazer: 0, refazer: 0, selecionarTudo: 0 };
-/* Uma vez que a tecla se prove capaz de chegar na pagina, a pagina fica DONA dela para sempre:
-   depender so do relogio nao basta, porque o recado do menu pode chegar antes da tecla e o
-   desfazer andaria dois passos de uma vez. */
-const paginaPegaAtalho = { desfazer: false, refazer: false, selecionarTudo: false };
 let teclaSintetica = false;    // a tecla que EU devolvo pro quadro nao conta como tecla dele
 window.addEventListener('keydown', (e) => {
   if (teclaSintetica || !(e.metaKey || e.ctrlKey)) return;
@@ -4865,14 +4861,17 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'a') acao = 'selecionarTudo';
   if (!acao) return;
   ultimaTeclaEdicao[acao] = Date.now();
-  paginaPegaAtalho[acao] = true;
 }, true);
 
+/* Se a tecla chegou na pagina ha pouco, a pagina e a dona e o menu fica quieto (senao o desfazer
+   andaria DOIS passos por aperto). A espera curta cobre o contrario: o recado do menu chegar um
+   fio antes da tecla. E a janela EXPIRA de proposito — uma tecla perdida nao pode aposentar o
+   caminho do menu, que no Mac de hoje e o unico que existe. */
+const DONO_DA_PAGINA = 5000, ESPERA_MENU = 120;
 function edicaoDoMenu(acao) {
-  if (paginaPegaAtalho[acao]) return;                    // neste Mac a tecla chega na pagina
-  const jaFoi = () => paginaPegaAtalho[acao] || Date.now() - (ultimaTeclaEdicao[acao] || 0) < 500;
-  if (jaFoi()) return;                                   // a pagina pegou a tecla e ja resolveu
-  setTimeout(() => { if (!jaFoi()) aplicarEdicao(acao); }, 70);   // ...ou ela esta a caminho
+  const daPagina = () => Date.now() - (ultimaTeclaEdicao[acao] || 0) < DONO_DA_PAGINA;
+  if (daPagina()) return;
+  setTimeout(() => { if (!daPagina()) aplicarEdicao(acao); }, ESPERA_MENU);
 }
 
 function aplicarEdicao(acao) {
