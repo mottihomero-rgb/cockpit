@@ -811,7 +811,7 @@
     // que o Homero não desenhou.
     if (it.tipo === 'fora' && it.seta.tipo === 'linha') {
       var sl = it.seta;
-      var linha = '   - sai uma linha para ' + direcao(sl.para.x - sl.de.x, sl.para.y - sl.de.y) +
+      var linha = '   - sai uma linha ' + direcao(sl.para.x - sl.de.x, sl.para.y - sl.de.y) +
                   ' (não chega em nada, e não diz para que lado vai)';
       if (rot) linha += ' com "' + cortar(rot, MAX_ROTULO) + '"';
       return linha;
