@@ -4851,17 +4851,26 @@ window.addEventListener('resize', () => { for (const P of panes.values()) paintE
    avisa a tela e o destino e decidido aqui. O guarda de tempo existe porque, se um dia a tecla
    passar a chegar tambem na pagina, o desfazer andaria DOIS passos de uma vez. */
 const ultimaTeclaEdicao = { desfazer: 0, refazer: 0, selecionarTudo: 0 };
+/* Uma vez que a tecla se prove capaz de chegar na pagina, a pagina fica DONA dela para sempre:
+   depender so do relogio nao basta, porque o recado do menu pode chegar antes da tecla e o
+   desfazer andaria dois passos de uma vez. */
+const paginaPegaAtalho = { desfazer: false, refazer: false, selecionarTudo: false };
 let teclaSintetica = false;    // a tecla que EU devolvo pro quadro nao conta como tecla dele
 window.addEventListener('keydown', (e) => {
   if (teclaSintetica || !(e.metaKey || e.ctrlKey)) return;
   const k = (e.key || '').toLowerCase();
-  if (k === 'z') ultimaTeclaEdicao[e.shiftKey ? 'refazer' : 'desfazer'] = Date.now();
-  else if (k === 'y') ultimaTeclaEdicao.refazer = Date.now();
-  else if (k === 'a') ultimaTeclaEdicao.selecionarTudo = Date.now();
+  let acao = '';
+  if (k === 'z') acao = e.shiftKey ? 'refazer' : 'desfazer';
+  else if (k === 'y') acao = 'refazer';
+  else if (k === 'a') acao = 'selecionarTudo';
+  if (!acao) return;
+  ultimaTeclaEdicao[acao] = Date.now();
+  paginaPegaAtalho[acao] = true;
 }, true);
 
 function edicaoDoMenu(acao) {
-  const jaFoi = () => Date.now() - (ultimaTeclaEdicao[acao] || 0) < 500;
+  if (paginaPegaAtalho[acao]) return;                    // neste Mac a tecla chega na pagina
+  const jaFoi = () => paginaPegaAtalho[acao] || Date.now() - (ultimaTeclaEdicao[acao] || 0) < 500;
   if (jaFoi()) return;                                   // a pagina pegou a tecla e ja resolveu
   setTimeout(() => { if (!jaFoi()) aplicarEdicao(acao); }, 70);   // ...ou ela esta a caminho
 }
