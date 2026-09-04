@@ -2630,6 +2630,12 @@ function menu() {
       { role: 'delete', label: 'Apagar' },
       { type: 'separator' },
       { label: 'Selecionar tudo', accelerator: 'CmdOrCtrl+A', click: () => win && win.webContents.send('menu', 'selecionarTudo') },
+      // o papel pronto trazia o "Falar" do macOS junto; sem isto ele sumiria da barra
+      { type: 'separator' },
+      { label: 'Falar', submenu: [
+        { role: 'startSpeaking', label: 'Começar a falar' },
+        { role: 'stopSpeaking', label: 'Parar de falar' },
+      ]},
     ]},
     { label: 'Ver', submenu: [
       { label: 'Mostrar/ocultar arquivos', accelerator: 'CmdOrCtrl+B', click: () => win && win.webContents.send('menu', 'toggleSidebar') },
