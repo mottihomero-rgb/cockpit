@@ -1820,7 +1820,7 @@
     tst.style.cssText = 'position:absolute;left:50%;bottom:80px;transform:translateX(-50%);'
       + 'max-width:80vw;padding:9px 14px;border-radius:10px;font-size:12.5px;z-index:9;'
       + 'background:var(--bg3,#2a2a2a);color:var(--fg,#eee);border:1px solid var(--line2,#444);'
-      + 'box-shadow:0 8px 26px rgba(0,0,0,.35);transition:opacity .2s;opacity:1';
+      + 'box-shadow:0 8px 26px rgba(0,0,0,.35);transition:opacity .2s;opacity:0;pointer-events:none';
 
     el.append(cx, tst);
     // clique no veu fecha; clique dentro, nao
@@ -1909,6 +1909,8 @@
     document.removeEventListener('keyup', aoSoltarTecla, true);
     clearTimeout(Q.rascunho.timer);
     clearTimeout(Q.setasTimer);
+    clearTimeout(toastTimer);
+    esconderToast(true);
     gravarRascunho();
     pintarPontinho();
   }
