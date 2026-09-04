@@ -2019,6 +2019,68 @@ handle('clipboard:anexos', () => {
   return { arquivos: [] };
 });
 
+/* ---------- quadro branco: o desenho vira PNG + JSON aqui no Mac ----------
+   O telefone TAMBEM salva: nao ha janela do sistema envolvida, so escrita numa pasta nossa.
+   Em troca, nada do que chega vira caminho: o nome do arquivo e montado aqui dentro, e o
+   conteudo e conferido byte a byte antes de virar arquivo. */
+const PASTA_QUADROS = () => path.join(app.getPath('userData'), 'quadros');
+const QUADRO_MAX_PNG = 12 * 1024 * 1024;   // ja decodificado
+const QUADRO_MAX_CENA = 2 * 1024 * 1024;   // o JSON da cena, em texto
+const SELO_PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+function carimboQuadro() {
+  const d = new Date(), z = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate())
+    + '_' + z(d.getHours()) + z(d.getMinutes()) + z(d.getSeconds());
+}
+function cenaEmTexto(cena) {
+  const t = JSON.stringify(cena && typeof cena === 'object' && !Array.isArray(cena)
+    ? cena : { v: 1, formas: [], setas: [] });
+  return t.length > QUADRO_MAX_CENA ? null : t;
+}
+
+handle('quadro:salvar', (_e, { png, cena } = {}) => {
+  try {
+    const m = /^data:image\/png;base64,([A-Za-z0-9+/=\s]+)$/.exec(String(png || ''));
+    if (!m) return { error: 'o desenho não veio como PNG' };
+    const cru = Buffer.from(m[1].replace(/\s+/g, ''), 'base64');
+    // a assinatura do PNG. Sem isto, qualquer base64 viraria um arquivo .png mentiroso
+    if (cru.length < 8 || !cru.subarray(0, 8).equals(SELO_PNG)) return { error: 'o desenho não é um PNG' };
+    if (cru.length > QUADRO_MAX_PNG) return { error: 'o desenho ficou grande demais' };
+    const texto = cenaEmTexto(cena);
+    if (texto == null) return { error: 'o desenho tem peças demais' };
+    const dir = PASTA_QUADROS();
+    fs.mkdirSync(dir, { recursive: true });
+    let base = 'quadro-' + carimboQuadro(), n = 2;
+    while (fs.existsSync(path.join(dir, base + '.png'))) base = 'quadro-' + carimboQuadro() + '-' + (n++);
+    const alvoPng = path.join(dir, base + '.png');
+    const alvoJson = path.join(dir, base + '.json');
+    fs.writeFileSync(alvoPng, cru);
+    fs.writeFileSync(alvoJson, texto, 'utf8');
+    anota('quadro salvo', alvoPng);
+    return { png: alvoPng, json: alvoJson };
+  } catch (e) { return { error: e.message }; }
+});
+
+handle('quadro:rascunhoGravar', (_e, { cena } = {}) => {
+  try {
+    const texto = cenaEmTexto(cena);
+    if (texto == null) return { error: 'o desenho tem peças demais' };
+    const dir = PASTA_QUADROS();
+    fs.mkdirSync(dir, { recursive: true });
+    // gravarSeguro grava num .tmp e troca o nome: nunca fica meio arquivo
+    return gravarSeguro(path.join(dir, 'rascunho.json'), texto) ? { ok: true } : { error: 'não consegui gravar o rascunho' };
+  } catch (e) { return { error: e.message }; }
+});
+
+handle('quadro:rascunhoLer', () => {
+  try {
+    const arq = path.join(PASTA_QUADROS(), 'rascunho.json');
+    if (!fs.existsSync(arq)) return { cena: null };
+    const c = JSON.parse(fs.readFileSync(arq, 'utf8'));
+    return { cena: (c && typeof c === 'object' && !Array.isArray(c)) ? c : null };
+  } catch { return { cena: null }; }   // rascunho quebrado nunca derruba a abertura do quadro
+});
+
 handle('anexo:ler', (_e, file) => {
   try {
     const st = fs.statSync(file);
