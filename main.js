@@ -2061,9 +2061,13 @@ handle('quadro:salvar', (_e, { png, cena } = {}) => {
   } catch (e) { return { error: e.message }; }
 });
 
-handle('quadro:rascunhoGravar', (_e, { cena } = {}) => {
+handle('quadro:rascunhoGravar', (_e, { cena, enviadoEm } = {}) => {
   try {
-    const texto = cenaEmTexto(cena);
+    /* o carimbo "este desenho JA foi mandado pro chat" viaja junto com a cena.
+       Sem ele o rascunho de ontem ressuscitava amanha e ia colado no fluxo novo. */
+    const marca = Number(enviadoEm) || 0;
+    const texto = cenaEmTexto(marca && cena && typeof cena === 'object' && !Array.isArray(cena)
+      ? { ...cena, enviadoEm: marca } : cena);
     if (texto == null) return { error: 'o desenho tem peças demais' };
     const dir = PASTA_QUADROS();
     fs.mkdirSync(dir, { recursive: true });
@@ -2077,8 +2081,10 @@ handle('quadro:rascunhoLer', () => {
     const arq = path.join(PASTA_QUADROS(), 'rascunho.json');
     if (!fs.existsSync(arq)) return { cena: null };
     const c = JSON.parse(fs.readFileSync(arq, 'utf8'));
-    return { cena: (c && typeof c === 'object' && !Array.isArray(c)) ? c : null };
-  } catch { return { cena: null }; }   // rascunho quebrado nunca derruba a abertura do quadro
+    const ok = c && typeof c === 'object' && !Array.isArray(c);
+    // enviadoEm sai NO MESMO NIVEL de cena: e assim que o quadro.js le (r.enviadoEm)
+    return { cena: ok ? c : null, enviadoEm: (ok && Number(c.enviadoEm)) || 0 };
+  } catch { return { cena: null, enviadoEm: 0 }; }   // rascunho quebrado nunca derruba a abertura do quadro
 });
 
 handle('anexo:ler', (_e, file) => {
