@@ -2614,7 +2614,23 @@ function menu() {
       { type: 'separator' },
       { label: 'Salvar conversa no Obsidian', accelerator: 'CmdOrCtrl+S', click: () => win && win.webContents.send('menu', 'salvarVault') },
     ]},
-    { role: 'editMenu', label: 'Editar' },
+    /* Menu Editar proprio, em portugues. Nao pode ser { role: 'editMenu' }: no macOS o menu do
+       aplicativo fica com ⌘Z, ⌘⇧Z e ⌘A antes da pagina, e os papeis prontos so sabem desfazer
+       dentro de um campo de texto — o quadro branco ficaria sem desfazer, que e o atalho mais
+       usado de quem desenha. Aqui os tres avisam a tela, e o renderer decide o destino
+       (quadro aberto -> pilha do quadro; senao -> o campo de texto em foco, como antes). */
+    { label: 'Editar', submenu: [
+      { label: 'Desfazer', accelerator: 'CmdOrCtrl+Z', click: () => win && win.webContents.send('menu', 'desfazer') },
+      { label: 'Refazer', accelerator: 'Shift+CmdOrCtrl+Z', click: () => win && win.webContents.send('menu', 'refazer') },
+      { type: 'separator' },
+      { role: 'cut', label: 'Recortar' },
+      { role: 'copy', label: 'Copiar' },
+      { role: 'paste', label: 'Colar' },
+      { role: 'pasteAndMatchStyle', label: 'Colar sem formatacao' },
+      { role: 'delete', label: 'Apagar' },
+      { type: 'separator' },
+      { label: 'Selecionar tudo', accelerator: 'CmdOrCtrl+A', click: () => win && win.webContents.send('menu', 'selecionarTudo') },
+    ]},
     { label: 'Ver', submenu: [
       { label: 'Mostrar/ocultar arquivos', accelerator: 'CmdOrCtrl+B', click: () => win && win.webContents.send('menu', 'toggleSidebar') },
       { label: 'Modo foco (só pergunta e resposta)', accelerator: 'CmdOrCtrl+Shift+F', click: () => win && win.webContents.send('menu', 'foco') },

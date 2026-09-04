@@ -5,13 +5,22 @@
    REGRA UNICA DESTE ARQUIVO: nada de cor cravada.
    Tudo que e "moldura" (janela, barras, botoes, textos, bordas) sai das
    variaveis de tema do style.css, senao quebra no tema claro e no jornal.
+   As cores do TRACO nao moram aqui: quem guarda a paleta e o quadro.js
+   (const PALETA), porque elas vao gravadas dentro do PNG e do JSON.
 
-   A UNICA excecao permitida e a PALETA DE DESENHO (--qd-t*): sao as cores que
-   o Homero escolhe para o traco, elas vao gravadas dentro do PNG e do JSON,
-   entao precisam ser fixas. Foram escolhidas em tom medio para ler nos tres
-   fundos do app: #1e1e1e (escuro), #ffffff (claro) e #fdf6e3 (jornal).
+   Prefixo de todas as classes: "qd".
 
-   Prefixo de todas as classes: qd-
+   CONTRATO DE NOMES (o quadro.js fala exatamente estes; nao inventar outros):
+     rodape ............ .qd-rodape .qd-bt   (o Limpar leva tambem .perigo) -> .confirmando
+     botao principal ... .qd-mandar                                         -> .ocupado
+     ferramentas ....... .qd-fer   (SEM .qd-bt)                             -> .ativa
+     balde de pintar ... .qd-fundo (SEM .qd-bt)                             -> .ativa
+     espessura ......... .qd-esp-bt (SEM .qd-bt)                            -> .ativa
+     bolinhas de cor ... .qd-cor                                            -> .ativa
+     botoes do topo .... .qd-mini  (o X leva tambem .qd-x)
+     grupo de selecao .. .qd-grupo-sel
+     aviso de vazio .... .qd-vazio (SEM .qd-dica)
+   Nomes que MORRERAM e nao podem voltar: "qd-bt2", "qd-dica", "on", "armado".
    ========================================================================== */
 
 
@@ -20,11 +29,14 @@
    ========================================================================== */
 
 .p-quadro{position:relative}
-/* pontinho: existe um desenho comecado que ainda nao foi mandado pro chat */
+/* pontinho: existe um desenho comecado que ainda nao foi mandado pro chat.
+   --accent e resolvida POR PAINEL (laranja no Claude, azul no Codex), entao o
+   pontinho nasce da cor do chat em que ele esta. Nao usar --qd aqui: aquela so
+   existe dentro do #qdPainel, que vive colado no <body>, longe deste botao. */
 .p-quadro.tem-rascunho{color:var(--fg)}
 .p-quadro.tem-rascunho::after{content:'';position:absolute;top:2px;right:2px;
   width:5px;height:5px;border-radius:50%;
-  background:var(--qd,var(--claude));box-shadow:0 0 0 2px var(--bg2)}
+  background:var(--accent);box-shadow:0 0 0 2px var(--bg2)}
 
 /* mais um botao na barra aperta o espaco quando ha varios chats lado a lado.
    isto impede que o "Enviar" seja empurrado para fora. */
@@ -45,20 +57,18 @@
   /* cor viva do chat de destino: laranja no Claude, azul no Codex.
      o quadro.js troca isto em abrir(P) com style.setProperty('--qd', ...) */
   --qd:var(--claude);
-
-  /* ---- PALETA DE DESENHO (a excecao justificada: vai dentro do PNG) ---- */
-  --qd-t1:#d95c4a;   /* vermelho  */
-  --qd-t2:#d98b2b;   /* laranja   */
-  --qd-t3:#4aa564;   /* verde     */
-  --qd-t4:#4a90d9;   /* azul      */
-  --qd-t5:#9a6fd9;   /* roxo      */
-  --qd-t6:#d94a9a;   /* rosa      */
-  --qd-nota:#f2d16b; /* papel do post-it */
+  /* o painel mora no <body>, fora do .pane, entao nao herda o --accent do chat.
+     amarrando --accent em --qd, TODO o quadro (ferramenta ligada, cursor do
+     texto, contorno de foco) usa a cor do chat de destino. */
+  --accent:var(--qd);
 }
 #qdPainel.hidden,.qd-painel.hidden{display:none !important}
 
+/* height em 100%: o painel ja desconta a barra de abas (inset) e o respiro
+   (padding), entao 100% e exatamente o que sobra. Com 90vh a caixa ficava mais
+   ALTA que o espaco na janela minima do app (main.js minHeight 560) e vazava. */
 .qd-cx{
-  width:min(1400px,97vw);height:min(90vh,940px);
+  width:min(1400px,97vw);height:min(100%,940px);
   display:flex;flex-direction:column;
   background:var(--bg-flutua);border:1px solid var(--line2);border-radius:16px;
   box-shadow:0 24px 70px var(--sombra2);
@@ -67,19 +77,31 @@
 
 
 /* ==========================================================================
-   3) TOPO
+   3) TOPO — titulo, legenda (pasta · motor) e os 4 botoes pequenos
    ========================================================================== */
 
 .qd-top{flex:none;display:flex;align-items:center;gap:10px;
   padding:12px 14px;border-bottom:1px solid var(--line);background:var(--bg2)}
 .qd-tit{font-size:13.5px;font-weight:650;color:var(--fg-strong);letter-spacing:.2px;white-space:nowrap}
-.qd-dica{font-size:11px;color:var(--fg-fraco);white-space:nowrap;
+/* legenda do topo: "pasta · Claude". Uma linha so, com reticencias se faltar espaco. */
+.qd-sub{font-size:11px;color:var(--fg-fraco);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;min-width:0}
 .qd-gap{flex:1}
-.qd-x{width:27px;height:26px;flex:none;display:grid;place-items:center;border-radius:7px;
-  color:var(--fg-dim);background:transparent;border:0;cursor:pointer;font-size:13px;line-height:1}
+
+/* os 4 botoes pequenos do topo: .qd-desfazer, .qd-refazer, .qd-ajustar e o X.
+   Esses tres primeiros nomes sao so apelidos para o motor achar o botao — quem
+   da tamanho, area de clique e hover e este .qd-mini. Sem ele o icone de 13px
+   ficava solto no topo, sem alvo nenhum para clicar. */
+.qd-mini{width:28px;height:26px;flex:none;display:grid;place-items:center;border-radius:7px;
+  color:var(--fg-dim);background:transparent;border:0;cursor:pointer;
+  font-size:13px;line-height:1;padding:0;
+  transition:background .12s,color .12s}
+.qd-mini .ic{width:15px;height:15px;pointer-events:none}
+.qd-mini:hover{background:var(--hover2);color:var(--fg-strong)}
+.qd-mini:disabled{opacity:.3;cursor:default}
+.qd-mini:disabled:hover{background:transparent;color:var(--fg-dim)}
+/* o X e um .qd-mini que fica vermelho no hover */
 .qd-x:hover{background:var(--erro-fundo);color:#fff}
-.qd-x .ic{width:15px;height:15px}
 
 
 /* ==========================================================================
@@ -87,36 +109,92 @@
    ========================================================================== */
 
 /* OBRIGATORIO pro motor: sem min-height:0 o canvas nao encolhe e vaza a janela */
-.qd-corpo{flex:1;display:flex;min-height:0;min-width:0}
+.qd-corpo,.qd-meio{flex:1;display:flex;min-height:0;min-width:0}
 
-.qd-ferramentas{flex:none;width:52px;padding:9px 8px;
+/* 64px (e nao 52): com 52 sobravam 36px uteis e as 7 bolinhas de cor caiam em
+   COLUNA UNICA, empurrando o balde, a espessura e o grupo de selecao para fora
+   da tela. Com 64 e padding de 6, sobram 52 (48 quando a rolagem aparece) —
+   cabem 2 bolinhas de 20px com 5 de respiro. */
+.qd-ferramentas{flex:none;width:64px;padding:9px 6px;
   display:flex;flex-direction:column;align-items:center;gap:5px;
   border-right:1px solid var(--line);background:var(--bg2);
-  overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
-.qd-ferramentas::-webkit-scrollbar{display:none}
+  overflow-y:auto;overflow-x:hidden}
+/* rolagem VISIVEL de proposito: em janela baixa a barra nao cabe e, escondida,
+   ninguem descobria que o botao de Apagar existia mais embaixo. */
+.qd-ferramentas::-webkit-scrollbar{width:6px;height:6px}
+.qd-ferramentas::-webkit-scrollbar-thumb{background:var(--line2);border-radius:99px}
+.qd-ferramentas::-webkit-scrollbar-thumb:hover{background:var(--fg-fraco)}
+.qd-ferramentas::-webkit-scrollbar-track{background:transparent}
 
 .qd-fer{width:34px;height:34px;flex:none;position:relative;
-  display:grid;place-items:center;border-radius:9px;
+  display:grid;place-items:center;border-radius:9px;padding:0;
   color:var(--fg-dim);background:transparent;border:1px solid transparent;cursor:pointer;
   transition:background .12s,color .12s,border-color .12s}
 .qd-fer .ic{width:17px;height:17px;pointer-events:none}
 .qd-fer:hover{background:var(--hover2);color:var(--fg)}
-.qd-fer.ativo{background:var(--hover2);color:var(--accent);
+/* 'ativa' e o unico nome do estado ligado (o antigo 'ativo'/'on' morreu) */
+.qd-fer.ativa{background:var(--hover2);color:var(--accent);
   border-color:color-mix(in srgb,var(--accent) 55%,transparent);
   box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent)}
 .qd-fer:disabled{opacity:.32;cursor:default;background:transparent}
+/* o Apagar da selecao mora nesta barra e e o unico .qd-fer de risco */
+.qd-fer.perigo:hover{background:var(--erro-fundo);color:#fff;border-color:transparent}
 
-/* a letrinha do atalho, no canto do botao */
+/* a letrinha do atalho, no canto do botao (o quadro.js cria o span) */
 .qd-fer-tecla{position:absolute;right:3px;bottom:1px;
   font:9px/1 var(--mono);color:var(--fg-fraco);pointer-events:none}
-.qd-fer.ativo .qd-fer-tecla{color:var(--accent);opacity:.8}
+.qd-fer.ativa .qd-fer-tecla{color:var(--accent);opacity:.8}
 
-.qd-fer-sep{width:22px;height:1px;flex:none;background:var(--line2);margin:3px 0;border:0}
+/* risquinho que separa os grupos da barra. Sem esta regra os quatro
+   separadores ficavam com 0 de altura e sumiam. */
+.qd-sep,.qd-fer-sep{width:22px;height:1px;flex:none;background:var(--line2);
+  margin:3px 0;border:0;padding:0}
+
+/* ---- as 7 cores, em 2 colunas ---- */
+.qd-cores{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:5px}
+.qd-cor{width:20px;height:20px;flex:none;border-radius:50%;cursor:pointer;padding:0;
+  border:2px solid transparent;background:var(--fg-strong);
+  box-shadow:inset 0 0 0 1px var(--borda-forte);
+  transition:transform .12s}
+.qd-cor:hover{transform:scale(1.1)}
+.qd-cor.ativa{border-color:var(--accent);box-shadow:0 0 0 2px var(--bg2),inset 0 0 0 1px var(--borda-forte)}
+/* "tinta" = a cor do texto do tema. O motor ja pinta a bolinha por style
+   inline; isto aqui e so a rede de seguranca. */
+.qd-cor[data-cor="tinta"]{background:var(--fg-strong)}
+
+/* ---- balde: pintar por dentro (liga/desliga) ---- */
+.qd-fundo{position:relative}
+.qd-fundo.ativa{background:var(--hover2);color:var(--accent);
+  border-color:color-mix(in srgb,var(--accent) 55%,transparent)}
+
+/* ---- espessura do traco: um botao so, que cicla 2 -> 4 -> 7 ----
+   Este botao NAO leva icone: quem desenha a barrinha e o ::before daqui, que
+   engorda conforme o data-esp que o motor escreve. Por isso ele repete o
+   tamanho do .qd-fer em vez de herdar (ele vem sozinho, sem .qd-fer). */
+.qd-esp-bt{width:34px;height:34px;flex:none;position:relative;
+  display:grid;place-items:center;border-radius:9px;padding:0;
+  color:var(--fg-dim);background:transparent;border:1px solid transparent;cursor:pointer;
+  transition:background .12s,color .12s,border-color .12s}
+.qd-esp-bt::before{content:'';display:block;width:17px;height:2px;border-radius:99px;
+  background:currentColor}
+.qd-esp-bt[data-esp="2"]::before{height:2px}
+.qd-esp-bt[data-esp="4"]::before{height:4px}
+.qd-esp-bt[data-esp="7"]::before{height:6px}
+.qd-esp-bt:hover{background:var(--hover2);color:var(--fg)}
+.qd-esp-bt.ativa{background:var(--hover2);color:var(--accent);
+  border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+
+/* ---- grupo que so aparece com alguma forma escolhida ---- */
+/* o motor liga e desliga por style.display; aqui fica so a arrumacao */
+.qd-grupo-sel{flex:none;flex-direction:column;align-items:center;gap:5px;width:100%}
+.qd-prop-frente,.qd-prop-tras,.qd-prop-duplicar{color:var(--fg-fraco)}
+.qd-prop-frente:hover,.qd-prop-tras:hover,.qd-prop-duplicar:hover{color:var(--fg-strong)}
+.qd-prop-apagar{color:var(--fg-fraco)}
 
 /* ---- o palco ---- */
 /* OBRIGATORIO pro motor: position:relative (editor e zoom sao absolutos aqui dentro)
    e min-width/min-height 0 (senao o flex nunca deixa o canvas diminuir) */
-.qd-area{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--bg)}
+.qd-area,.qd-palco{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--bg)}
 
 /* OBRIGATORIO pro motor: sem touch-action:none o iPad rola a pagina em vez de desenhar */
 .qd-canvas{display:block;position:absolute;inset:0;
@@ -124,74 +202,22 @@
   user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
   cursor:crosshair}
 
-/* dica de quadro vazio (o motor liga/desliga a classe .hidden) */
-.qd-vazio{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
-  padding:24px;text-align:center;line-height:1.9;font-size:13px;color:var(--fg-fraco)}
+/* dica de quadro vazio, no meio do palco (o motor liga/desliga a classe .hidden).
+   white-space:normal e obrigatorio: em painel estreito as tres linhas precisam
+   quebrar, e nao virar reticencias. */
+/* NAO usar display:grid/flex aqui: o texto tem <br> e <b> soltos, e cada um
+   viraria um item proprio, espalhando as tres linhas pelo palco inteiro.
+   Fluxo normal + translate: as linhas ficam juntas, no meio. */
+.qd-vazio{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+  display:block;pointer-events:none;
+  padding:24px;text-align:center;white-space:normal;
+  line-height:1.9;font-size:13px;color:var(--fg-fraco)}
+.qd-vazio.hidden{display:none !important}
 .qd-vazio b{color:var(--fg-dim);font-weight:600}
 
 
 /* ==========================================================================
-   5) BARRA DE PROPRIEDADES (aparece so com algo selecionado)
-   ========================================================================== */
-
-.qd-props{position:absolute;left:10px;top:10px;z-index:4;
-  display:flex;align-items:center;gap:8px;flex-wrap:wrap;max-width:calc(100% - 20px);
-  padding:6px 9px;border-radius:11px;
-  background:var(--bg-flutua);border:1px solid var(--line2);
-  box-shadow:0 8px 22px var(--sombra1)}
-.qd-props.oculto{display:none}
-
-.qd-prop-rot{font-size:10.5px;color:var(--fg-fraco);white-space:nowrap;letter-spacing:.2px}
-.qd-prop-sep{width:1px;height:18px;background:var(--line2);flex:none}
-
-.qd-cores{display:flex;align-items:center;gap:5px}
-.qd-cor{width:20px;height:20px;flex:none;border-radius:50%;cursor:pointer;padding:0;
-  border:2px solid transparent;background:var(--fg-strong);
-  box-shadow:inset 0 0 0 1px var(--borda-forte)}
-.qd-cor:hover{transform:scale(1.1)}
-.qd-cor.ativa{border-color:var(--accent);box-shadow:0 0 0 2px var(--bg-flutua),inset 0 0 0 1px var(--borda-forte)}
-
-/* a paleta: o motor so escreve data-cor, quem pinta e o CSS */
-.qd-cor[data-cor="tinta"]{background:var(--fg-strong)}
-.qd-cor[data-cor="#d95c4a"]{background:var(--qd-t1)}
-.qd-cor[data-cor="#d98b2b"]{background:var(--qd-t2)}
-.qd-cor[data-cor="#4aa564"]{background:var(--qd-t3)}
-.qd-cor[data-cor="#4a90d9"]{background:var(--qd-t4)}
-.qd-cor[data-cor="#9a6fd9"]{background:var(--qd-t5)}
-.qd-cor[data-cor="#d94a9a"]{background:var(--qd-t6)}
-/* "sem preenchimento": bolinha vazada com um risco atravessado */
-.qd-cor.transp{position:relative;background:transparent;
-  border:2px dashed var(--line2);box-shadow:none}
-.qd-cor.transp::after{content:'';position:absolute;left:2px;right:2px;top:50%;height:1px;
-  background:var(--fg-fraco);transform:rotate(-45deg);opacity:.7}
-.qd-cor.transp.ativa{border-color:var(--accent);border-style:solid}
-
-/* espessura do traco: 3 botoes com uma barrinha que engorda */
-.qd-esp{display:flex;align-items:center;gap:3px}
-.qd-esp-bt{width:26px;height:24px;flex:none;display:grid;place-items:center;
-  border-radius:7px;background:transparent;border:1px solid transparent;cursor:pointer}
-.qd-esp-bt::before{content:'';display:block;width:15px;border-radius:99px;background:var(--fg-dim)}
-.qd-esp-bt[data-esp="2"]::before{height:2px}
-.qd-esp-bt[data-esp="4"]::before{height:4px}
-.qd-esp-bt[data-esp="7"]::before{height:6px}
-.qd-esp-bt:hover{background:var(--hover2)}
-.qd-esp-bt:hover::before{background:var(--fg)}
-.qd-esp-bt.ativa{background:var(--hover2);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
-.qd-esp-bt.ativa::before{background:var(--accent)}
-
-.qd-prop-bt{width:27px;height:25px;flex:none;display:grid;place-items:center;border-radius:7px;
-  color:var(--fg-dim);background:transparent;border:0;cursor:pointer}
-.qd-prop-bt .ic{width:15px;height:15px;pointer-events:none}
-.qd-prop-bt:hover{background:var(--hover2);color:var(--fg-strong)}
-.qd-prop-bt.perigo:hover{background:var(--erro-fundo);color:#fff}
-/* os tres do fim da barra: frente, tras e apagar */
-.qd-prop-frente,.qd-prop-tras{color:var(--fg-fraco)}
-.qd-prop-frente:hover,.qd-prop-tras:hover{color:var(--fg-strong)}
-.qd-prop-apagar{color:var(--fg-fraco)}
-
-
-/* ==========================================================================
-   6) ZOOM (canto de baixo do palco)
+   5) ZOOM (canto de baixo do palco)
    ========================================================================== */
 
 .qd-zoom{position:absolute;left:10px;bottom:10px;z-index:3;
@@ -200,7 +226,7 @@
   box-shadow:0 6px 18px var(--sombra1)}
 .qd-zoom-bt{width:26px;height:24px;flex:none;display:grid;place-items:center;
   border:0;border-radius:7px;background:transparent;color:var(--fg-dim);cursor:pointer;
-  font-size:14px;line-height:1}
+  font-size:14px;line-height:1;padding:0}
 .qd-zoom-bt .ic{width:14px;height:14px;pointer-events:none}
 .qd-zoom-bt:hover{background:var(--hover2);color:var(--fg-strong)}
 .qd-zoom-n{min-width:46px;text-align:center;font:11px var(--mono);color:var(--fg-dim);
@@ -209,65 +235,74 @@
 
 
 /* ==========================================================================
-   7) EDITOR DE TEXTO FLUTUANTE (aparece por cima da forma que esta sendo escrita)
+   6) EDITOR DE TEXTO FLUTUANTE (aparece por cima da forma que esta sendo escrita)
    ========================================================================== */
 
-.qd-editor-wrap{position:absolute;z-index:5}
-.qd-editor-wrap.hidden{display:none !important}
 .qd-editor{
-  display:block;width:100%;height:100%;
+  display:block;
   margin:0;padding:4px 6px;border:0;outline:0;resize:none;overflow:hidden;
   background:transparent;color:var(--fg-strong);
   font-family:var(--sans);font-size:13px;line-height:1.35;text-align:center;
   /* body{user-select:none} e global: sem isto o Homero nao seleciona o que digita */
   user-select:text;-webkit-user-select:text;
   caret-color:var(--accent)}
+.qd-editor.hidden{display:none !important}
 .qd-editor::selection{background:color-mix(in srgb,var(--accent) 35%,transparent)}
 
 
 /* ==========================================================================
-   8) RODAPE — 4 botoes; o principal e o "Mandar pro chat"
+   7) RODAPE — a conta de formas + 4 botoes; o principal e o "Mandar pro chat"
    ========================================================================== */
 
 .qd-rodape{flex:none;display:flex;align-items:center;gap:8px;
   padding:10px 14px;border-top:1px solid var(--line);background:var(--bg2)}
 .qd-rod-gap{flex:1}
+/* "Quadro vazio" / "3 caixas, 2 setas" — o resumo do que ha desenhado */
+.qd-conta{font-size:11.5px;color:var(--fg-fraco);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;min-width:0}
 
-.qd-bt{flex:none;display:inline-flex;align-items:center;gap:7px;
+/* A pilula esta PRESA ao rodape de proposito. Solta como ".qd-bt" ela vencia
+   o .qd-fer da barra vertical na cascata e enchia as ferramentas de moldura. */
+.qd-rodape .qd-bt,.qd-rodape .qd-mandar{
+  flex:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;
   padding:8px 13px;border-radius:9px;white-space:nowrap;cursor:pointer;
   font:500 12.5px var(--sans);
   color:var(--fg-dim);background:transparent;border:1px solid var(--line2)}
-.qd-bt .ic{width:15px;height:15px;pointer-events:none}
-.qd-bt:hover{background:var(--hover2);color:var(--fg-strong)}
-.qd-bt:disabled{opacity:.45;cursor:default;background:transparent}
-.qd-bt.perigo:hover{background:var(--erro-fundo);color:#fff;border-color:transparent}
+.qd-rodape .qd-bt .ic,.qd-rodape .qd-mandar .ic{width:15px;height:15px;pointer-events:none}
+.qd-rodape .qd-bt:hover{background:var(--hover2);color:var(--fg-strong)}
+.qd-rodape .qd-bt:disabled{opacity:.45;cursor:default;background:transparent}
+.qd-rodape .qd-bt.perigo:hover{background:var(--erro-fundo);color:#fff;border-color:transparent}
 /* o "Limpar" vira "Confirmar?" por 3s — o motor so troca o texto e liga esta classe */
-.qd-bt.perigo.confirmando{background:var(--erro-fundo);color:#fff;border-color:transparent;font-weight:650}
+.qd-rodape .qd-bt.perigo.confirmando{background:var(--erro-fundo);color:#fff;
+  border-color:transparent;font-weight:650}
 
 /* botao principal: pintado com a cor do motor daquele chat.
    a cor do texto e --sobre-accent (mesma regra do .p-send do app): fica branco no tema
    claro e no jornal, e escuro no tema escuro, onde o azul do Codex e claro demais
    para carregar texto branco. */
-.qd-bt.principal,.qd-mandar{
+.qd-rodape .qd-mandar,.qd-rodape .qd-bt.principal{
   padding:9px 17px;border:0;border-radius:10px;
   background:var(--qd);color:var(--sobre-accent);
   font:650 12.5px var(--sans);
   box-shadow:0 6px 18px color-mix(in srgb,var(--qd) 30%,transparent)}
-.qd-bt.principal:hover,.qd-mandar:hover{background:var(--qd);color:var(--sobre-accent);filter:brightness(1.07)}
-.qd-bt.principal:active,.qd-mandar:active{transform:translateY(1px)}
-.qd-bt.principal:disabled,.qd-mandar:disabled{opacity:.5;cursor:default;box-shadow:none;filter:none}
-/* os tres secundarios do rodape */
-.qd-limpar{margin-right:auto}
-.qd-png,.qd-copiar{color:var(--fg-dim)}
+.qd-rodape .qd-mandar:hover,.qd-rodape .qd-bt.principal:hover{filter:brightness(1.07)}
+.qd-rodape .qd-mandar:active,.qd-rodape .qd-bt.principal:active{transform:translateY(1px)}
+.qd-rodape .qd-mandar:disabled,.qd-rodape .qd-bt.principal:disabled{
+  opacity:.5;cursor:default;box-shadow:none;filter:none}
+
+/* enquanto gera o PNG e anexa no chat */
 .qd-mandar.ocupado{opacity:.7;cursor:progress}
 .qd-mandar.ocupado::after{content:'';width:12px;height:12px;flex:none;border-radius:50%;
   border:2px solid color-mix(in srgb,var(--sobre-accent) 35%,transparent);
-  border-top-color:var(--sobre-accent);animation:qd-gira .7s linear infinite}
-@keyframes qd-gira{to{transform:rotate(360deg)}}
+  border-top-color:var(--sobre-accent);animation:qdgira .7s linear infinite}
+@keyframes qdgira{to{transform:rotate(360deg)}}
+
+/* rotulo dos 3 secundarios: some no iPhone em pe, deixando so o icone */
+.qd-rot{display:inline}
 
 
 /* ==========================================================================
-   9) AVISO FLUTUANTE (toast)
+   8) AVISO FLUTUANTE (toast)
    ========================================================================== */
 
 .qd-toast{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);z-index:10;
@@ -284,7 +319,7 @@
 
 
 /* ==========================================================================
-   10) TELA ESTREITA — iPad em retrato e iPhone
+   9) TELA ESTREITA — iPad em retrato e iPhone
    A caixa vira tela cheia, a barra de ferramentas deita embaixo (perto do polegar,
    nao debaixo do dedo que desenha) e tudo cresce para 44px de alvo de toque.
    O JS nao muda nada: quem vira a barra e o flex-direction do .qd-corpo.
@@ -295,55 +330,73 @@
   .qd-cx{width:100vw;width:100%;height:100%;border:0;border-radius:0;box-shadow:none}
 
   .qd-top{padding:calc(9px + env(safe-area-inset-top,0px)) 12px 9px}
-  .qd-dica{display:none}
-  .qd-x{width:34px;height:32px}
+  .qd-sub{display:none}                  /* "pasta · Claude" nao cabe no celular */
+  .qd-mini{width:34px;height:32px}
 
   /* column-reverse: o palco fica em cima, a barra de ferramentas embaixo dele */
-  .qd-corpo{flex-direction:column-reverse}
+  .qd-corpo,.qd-meio{flex-direction:column-reverse}
   .qd-ferramentas{width:100%;height:auto;padding:7px 8px;
     flex-direction:row;justify-content:flex-start;gap:6px;
     border-right:0;border-top:1px solid var(--line);
     overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch}
-  .qd-fer{width:44px;height:44px;border-radius:11px}
+  .qd-fer,.qd-esp-bt{width:44px;height:44px;border-radius:11px}
   .qd-fer .ic{width:21px;height:21px}
+  .qd-esp-bt::before{width:21px}
   .qd-fer-tecla{display:none}            /* no toque nao existe atalho de teclado */
-  .qd-fer-sep{width:1px;height:26px;margin:0 3px}
+  .qd-sep,.qd-fer-sep{width:1px;height:26px;margin:0 3px}
 
-  .qd-props{left:8px;right:8px;top:8px;max-width:none;gap:7px;padding:7px 9px;justify-content:center}
+  /* deitada, a barra e uma FILA: os blocos que o motor cria com width:100%
+     inline (cores e grupo de selecao) ocupariam a largura toda e empurrariam
+     tudo. O !important e o unico jeito de vencer style inline. */
+  .qd-cores{width:auto !important;flex-wrap:nowrap !important;gap:7px}
   .qd-cor{width:26px;height:26px}
-  .qd-esp-bt{width:34px;height:32px}
-  .qd-prop-bt{width:34px;height:32px}
-  .qd-prop-bt .ic{width:17px;height:17px}
-  .qd-prop-rot{display:none}
+  .qd-grupo-sel{width:auto !important;flex-direction:row !important;gap:6px}
 
   .qd-zoom{left:8px;bottom:8px}
   .qd-zoom-bt{width:34px;height:32px}
 
   .qd-rodape{gap:7px;padding:9px 10px calc(9px + env(safe-area-inset-bottom,0px))}
-  .qd-bt{padding:12px 12px;font-size:13px}
+  .qd-rodape .qd-bt{padding:12px 12px;font-size:13px}
+  .qd-conta{display:none}                /* a conta some: quem manda e o botao */
   .qd-rod-gap{flex:0 0 0}
   /* no toque o desfecho tem que ser o maior alvo da tela */
-  .qd-bt.principal,.qd-mandar{flex:1;justify-content:center;padding:13px 14px;font-size:14px}
+  .qd-rodape .qd-mandar,.qd-rodape .qd-bt.principal{flex:1;padding:13px 14px;font-size:14px}
   .qd-toast{bottom:14px;left:10px;right:10px;transform:none;max-width:none}
   .qd-toast.some{transform:translateY(8px)}
+
+  /* a dica do meio do palco CONTINUA aparecendo: e justamente no dedo, sem
+     atalho de teclado, que ele mais precisa dela. So encolhe. */
+  .qd-vazio{padding:18px;font-size:12px;line-height:1.7}
 }
 
-/* telinha muito estreita (iPhone em pe): esconde o texto dos 2 botoes secundarios,
+/* telinha muito estreita (iPhone em pe): esconde o texto dos 3 botoes secundarios,
    deixando so o icone, para o "Mandar pro chat" nunca ser espremido */
 @media (max-width:430px){
-  .qd-png .qd-rot,.qd-copiar .qd-rot,.qd-limpar .qd-rot{display:none}
-  .qd-bt{padding:12px 11px}
+  .qd-limpar .qd-rot,.qd-png .qd-rot,.qd-copiar .qd-rot{display:none}
+  .qd-rodape .qd-bt{padding:12px 11px}
+}
+
+/* janela baixa (o app pode ir a 560px de altura): a barra vertical encolhe para
+   caber mais coisa antes de precisar rolar */
+@media (min-width:821px) and (max-height:760px){
+  .qd-ferramentas{gap:4px}
+  .qd-fer,.qd-esp-bt{width:30px;height:30px;border-radius:8px}
+  .qd-fer .ic{width:15px;height:15px}
+  .qd-esp-bt::before{width:15px}
+  .qd-cor{width:18px;height:18px}
+  .qd-sep,.qd-fer-sep{margin:2px 0}
 }
 
 
 /* ==========================================================================
-   11) Acessibilidade / detalhes finos
+   10) Acessibilidade / detalhes finos
    ========================================================================== */
 
 .qd-cx button:focus-visible,.qd-cx textarea:focus-visible{
   outline:2px solid var(--accent);outline-offset:2px}
 
 @media (prefers-reduced-motion:reduce){
-  .qd-fer,.qd-toast,.qd-cor{transition:none}
+  .qd-fer,.qd-mini,.qd-toast,.qd-cor{transition:none}
+  .qd-cor:hover{transform:none}
   .qd-mandar.ocupado::after{animation:none}
 }

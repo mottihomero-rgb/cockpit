@@ -1091,12 +1091,15 @@
     // Nada de nó-fantasma para a ponta solta: fantasma é lido como etapa real.
     for (i = 0; i < G.meias.length; i++) {
       var m = G.meias[i];
+      var eLinha = (m.tipo === 'linha');   // sem ponta: o comentário não pode afirmar sentido
       if (m._de && idm.has(m._de)) {
-        linhas.push('  %% ' + comentarioMermaid('seta solta saindo de ' + nomeDe(m._de, MAX_ROTULO) + ' ' +
-          direcao(m.para.x - m.de.x, m.para.y - m.de.y)));
+        linhas.push('  %% ' + comentarioMermaid((eLinha ? 'linha solta saindo de ' : 'seta solta saindo de ') +
+          nomeDe(m._de, MAX_ROTULO) + ' ' + direcao(m.para.x - m.de.x, m.para.y - m.de.y) +
+          (eLinha ? ' (nao diz para que lado vai)' : '')));
       } else if (m._para && idm.has(m._para)) {
-        linhas.push('  %% ' + comentarioMermaid('seta solta chegando em ' + nomeDe(m._para, MAX_ROTULO) + ', vinda ' +
-          ladoDeOrigem(m.para.x - m.de.x, m.para.y - m.de.y) + ' de fora'));
+        linhas.push('  %% ' + comentarioMermaid((eLinha ? 'linha solta encostando em ' : 'seta solta chegando em ') +
+          nomeDe(m._para, MAX_ROTULO) + ', vinda ' + ladoDeOrigem(m.para.x - m.de.x, m.para.y - m.de.y) + ' de fora' +
+          (eLinha ? ' (nao diz para que lado vai)' : '')));
       }
     }
 

@@ -4845,7 +4845,48 @@ document.addEventListener('keydown', (e) => {
 
 window.addEventListener('resize', () => { for (const P of panes.values()) paintEngine(P); encostarAbas(); });
 
+/* ---- Desfazer / Refazer / Selecionar tudo que vem do menu do Mac ----
+   No macOS o menu do aplicativo fica com ⌘Z, ⌘⇧Z e ⌘A, e o papel pronto do Electron so sabe
+   desfazer DENTRO de um campo de texto: dentro do quadro branco o desfazer morria. Agora o menu
+   avisa a tela e o destino e decidido aqui. O guarda de tempo existe porque, se um dia a tecla
+   passar a chegar tambem na pagina, o desfazer andaria DOIS passos de uma vez. */
+const ultimaTeclaEdicao = { desfazer: 0, refazer: 0, selecionarTudo: 0 };
+let teclaSintetica = false;    // a tecla que EU devolvo pro quadro nao conta como tecla dele
+window.addEventListener('keydown', (e) => {
+  if (teclaSintetica || !(e.metaKey || e.ctrlKey)) return;
+  const k = (e.key || '').toLowerCase();
+  if (k === 'z') ultimaTeclaEdicao[e.shiftKey ? 'refazer' : 'desfazer'] = Date.now();
+  else if (k === 'y') ultimaTeclaEdicao.refazer = Date.now();
+  else if (k === 'a') ultimaTeclaEdicao.selecionarTudo = Date.now();
+}, true);
+
+function edicaoDoMenu(acao) {
+  const jaFoi = () => Date.now() - (ultimaTeclaEdicao[acao] || 0) < 500;
+  if (jaFoi()) return;                                   // a pagina pegou a tecla e ja resolveu
+  setTimeout(() => { if (!jaFoi()) aplicarEdicao(acao); }, 70);   // ...ou ela esta a caminho
+}
+
+function aplicarEdicao(acao) {
+  if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto()) {
+    // o quadro tem a propria pilha de desfazer: devolvo a tecla para ele mesmo tratar
+    const t = { desfazer: { key: 'z' }, refazer: { key: 'z', shift: true }, selecionarTudo: { key: 'a' } }[acao];
+    if (!t) return;
+    teclaSintetica = true;
+    try {
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: t.key, code: t.key === 'z' ? 'KeyZ' : 'KeyA',
+        metaKey: true, shiftKey: !!t.shift, bubbles: true, cancelable: true,
+      }));
+    } catch (_) {} finally { teclaSintetica = false; }
+    return;
+  }
+  // fora do quadro vale o de sempre: desfazer/refazer/selecionar tudo do campo em foco
+  const cmd = { desfazer: 'undo', refazer: 'redo', selecionarTudo: 'selectAll' }[acao];
+  try { document.execCommand(cmd); } catch (_) {}
+}
+
 window.api.onMenu((a) => {
+  if (a === 'desfazer' || a === 'refazer' || a === 'selecionarTudo') return edicaoDoMenu(a);
   // clicou no recado do sistema: traz a aba e o chat que ficaram prontos para a frente
   if (a.startsWith('ir:')) {
     const P = panes.get(a.slice(3));
