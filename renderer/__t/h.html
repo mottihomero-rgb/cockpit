@@ -1,0 +1,31 @@
+<!doctype html><html data-tema="escuro"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../style.css"><link rel="stylesheet" href="../quadro.css"></head>
+<body>
+<div id="pane" style="position:fixed;bottom:0;left:0"><textarea class="p-input"></textarea><div class="cmp-bar"><button class="p-model">m</button></div></div>
+<script>
+window.LOG = [];
+window.CENA_TESTE = {v:1,formas:[
+ {id:'f1',tipo:'elipse',x:0,y:0,w:120,h:60,texto:'Início',cor:'tinta',fundo:'transparente'},
+ {id:'f2',tipo:'losango',x:0,y:150,w:160,h:100,texto:'Tem lead?',cor:'tinta',fundo:'transparente'},
+ {id:'f3',tipo:'retangulo',x:-260,y:340,w:160,h:90,texto:'Manda WhatsApp',cor:'tinta',fundo:'transparente'},
+ {id:'f4',tipo:'retangulo',x:260,y:340,w:160,h:90,texto:'Descarta',cor:'tinta',fundo:'transparente'},
+ {id:'f5',tipo:'nota',x:500,y:0,w:180,h:180,texto:'lembrar de medir',cor:'tinta',fundo:'transparente'},
+ {id:'f6',tipo:'caneta',x:-400,y:0,w:120,h:120,texto:'',cor:'tinta',fundo:'transparente',pontos:[[-400,0],[-350,60],[-300,20],[-280,120]]}
+],setas:[
+ {id:'s1',tipo:'seta',de:{forma:'f1',x:60,y:60},para:{forma:'f2',x:80,y:150},texto:'',cor:'tinta'},
+ {id:'s2',tipo:'seta',de:{forma:'f2',x:0,y:200},para:{forma:'f3',x:-180,y:340},texto:'sim',cor:'tinta'},
+ {id:'s3',tipo:'seta',de:{forma:'f2',x:160,y:200},para:{forma:'f4',x:340,y:340},texto:'não',cor:'tinta'}
+]};
+window.api = {
+  quadroRascunhoLer: () => Promise.resolve({cena: window.CENA_TESTE}),
+  quadroRascunhoGravar: (o) => { window.LOG.push(['rascunhoGravar', JSON.stringify(o).length]); return Promise.resolve({ok:true}); },
+  quadroSalvar: (o) => { window.ULT_PNG = o.png; window.LOG.push(['quadroSalvar', 'pngLen='+o.png.length, 'cenaLen='+JSON.stringify(o.cena).length]); return Promise.resolve({png:'/tmp/quadro-teste.png', json:'/tmp/quadro-teste.json'}); },
+  openPath: () => {},
+};
+window.abrirQuadroAnexar = (P, c) => { window.LOG.push(['anexar', c]); return Promise.resolve(); };
+window.abrirQuadroTexto = (P, t) => { window.LOG.push(['texto', t]); document.querySelector('.p-input').value += t; };
+window.P_TESTE = { id:'p1', engine:'claude', cwd:'/Users/homeromotti/cockpit', el: document.getElementById('pane') };
+</script>
+<script src="../quadro-texto.js"></script>
+<script src="../quadro.js"></script>
+</body></html>
