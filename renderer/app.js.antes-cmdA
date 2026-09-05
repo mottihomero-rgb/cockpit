@@ -5248,15 +5248,6 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'a') acao = 'selecionarTudo';
   if (!acao) return;
   ultimaTeclaEdicao[acao] = Date.now();
-  /* 🔴 O carimbo acima cala o recado do menu pelos proximos 150ms — entao quem carimba TEM de
-     fazer o trabalho. Antes so anotava a hora e nao selecionava nada: sempre que a tecla chegava
-     aqui (e ela chega, dependendo de onde esta o foco), o ⌘A ficava morto nos dois caminhos —
-     a pagina nao fazia, e o menu era ignorado. Foi exatamente a queixa dele.
-     Excecao: com o quadro aberto quem trata e o proprio quadro, que tem a pilha dele e ja escuta
-     a tecla no document; fazer aqui tambem andaria dois passos num aperto so. */
-  if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto()) return;
-  e.preventDefault();
-  aplicarEdicao(acao);
 }, true);
 
 /* Se a tecla chegou na pagina ha pouco, a pagina e a dona e o menu fica quieto (senao o desfazer
