@@ -489,14 +489,24 @@ function devolverRolagem(P) {
   const g = P && P.rolagem, c = P && P.chat;
   if (!g || !c || !c.isConnected || !c.clientHeight) return false;
   if (g.noFim) { c.scrollTop = c.scrollHeight; return true; }
-  if (g.anc && g.anc.parentNode === c) {
-    const rc = c.getBoundingClientRect(), r = g.anc.getBoundingClientRect();
+  /* O passo que o Modo foco esconde (body.foco .exec/.think = display:none) fica SEM retangulo:
+     getBoundingClientRect() vem tudo zero e a conta la embaixo viraria um numero solto — a
+     leitura pulava telas inteiras ao LIGAR o foco. Nesse caso a ancora anda para o primeiro
+     vizinho que ainda aparece, encostado no topo. */
+  let anc = g.anc, corteG = g.corte, altG = g.alt;
+  if (anc && anc.parentNode === c && !anc.offsetHeight) {
+    let v = anc.nextElementSibling;
+    while (v && !v.offsetHeight) v = v.nextElementSibling;
+    anc = v; corteG = 0; altG = 0;
+  }
+  if (anc && anc.parentNode === c) {
+    const rc = c.getBoundingClientRect(), r = anc.getBoundingClientRect();
     // a mensagem mudou de tamanho junto com a largura: manter o corte em pixels crus
     // jogaria o olho pra outro pedaco DENTRO dela (grave num bloco de codigo comprido).
     // Mas se a largura NAO mudou, ela cresceu porque o motor esta escrevendo dentro dela:
     // ai encolher o corte empurraria a leitura pra frente sozinha. Por isso a condicao.
     const mudouLarg = g.larg && c.clientWidth !== g.larg;
-    const corte = (mudouLarg && g.alt > 0 && r.height > 0) ? g.corte * (r.height / g.alt) : g.corte;
+    const corte = (mudouLarg && altG > 0 && r.height > 0) ? corteG * (r.height / altG) : corteG;
     const alvo = c.scrollTop + (r.top - rc.top) + corte;
     c.scrollTop = Math.max(0, Math.min(alvo, c.scrollHeight - c.clientHeight));
     return true;
@@ -1295,11 +1305,33 @@ function userMsg(P, text, anexos) {
 function marcarNaFila(P, d, texto) {
   if (!d) return;
   d.classList.add('esperando');
-  (P.filaMsgs = P.filaMsgs || []).push({ el: d, texto, iHist: P.hist.length - 1 });
+  /* o indice vem do proprio data-hist da bolha, que e mantido em dia quando algo sai do
+     historico. Contar "P.hist.length - 1" aqui errava quando a resposta do motor entrava
+     no historico entre pintar a bolha e marcar a fila. */
+  const i = Number(d.dataset.hist);
+  (P.filaMsgs = P.filaMsgs || []).push({ el: d, texto, iHist: Number.isFinite(i) ? i : P.hist.length - 1 });
 }
 function desmarcarFila(P) {
   for (const f of (P.filaMsgs || [])) if (f.el) f.el.classList.remove('esperando');
   P.filaMsgs = [];
+}
+/* tira do histórico o item de índice i e conserta o data-hist das mensagens seguintes
+   (o data-hist e o que o "voltar no tempo" usa para achar o pedaco certo da conversa) */
+function tirarDoHist(P, i) {
+  P.hist.splice(i, 1);
+  P.chat.querySelectorAll('.msg[data-hist]').forEach(el => {
+    const n = Number(el.dataset.hist);
+    if (n > i) el.dataset.hist = String(n - 1);
+  });
+}
+/* apaga UMA bolha da tela e o item dela no historico. Serve para a bolha que nunca saiu:
+   sem isto ela fica na tela e no P.hist, e o montarContexto manda a frase duas vezes. */
+function tirarBolha(P, d) {
+  if (!d) return;
+  const i = Number(d.dataset.hist);
+  if (d.parentNode) d.remove();
+  if (Number.isFinite(i) && i >= 0 && P.hist[i]) tirarDoHist(P, i);
+  if (P.filaMsgs) P.filaMsgs = P.filaMsgs.filter(f => f.el !== d);
 }
 function tirarBolhasDaFila(P) {
   const fila = P.filaMsgs || [];
@@ -1311,21 +1343,17 @@ function tirarBolhasDaFila(P) {
   }
   // de tras para a frente, senao a primeira remocao ja bagunca o indice da segunda
   idx.sort((a, b) => b - a);
-  for (const i of idx) {
-    P.hist.splice(i, 1);
-    // o data-hist e o que o "voltar no tempo" usa para achar o pedaco certo da conversa
-    P.chat.querySelectorAll('.msg[data-hist]').forEach(el => {
-      const n = Number(el.dataset.hist);
-      if (n > i) el.dataset.hist = String(n - 1);
-    });
-  }
+  for (const i of idx) tirarDoHist(P, i);
 }
 function devolverFilaAoCampo(P, texto) {
   const cx = $('.p-input', P.el);
   if (cx && !cx.value) {
     tirarBolhasDaFila(P);
     cx.value = texto;
-    cx.dispatchEvent(new Event('input'));
+    /* o 'input' aqui so serve para reajustar a altura do campo. Num comando de barra ("/graphify")
+       ele acordava o menu de skills, que ESVAZIA o campo — o texto devolvido sumia na hora. */
+    if (texto.startsWith('/') && !texto.includes(' ')) cx.style.height = 'auto';
+    else cx.dispatchEvent(new Event('input'));
     return;
   }
   /* Campo ocupado: nao da para jogar por cima do que ele esta escrevendo agora. A bolha fica
@@ -1365,6 +1393,10 @@ function editarMinhaMensagem(P, d, texto) {
     const novo = ta.value.trim();
     fim();
     if (!novo) return;
+    /* bolha que NUNCA saiu (ficou marcada "nao enviada"): some antes de ir de novo, senao
+       sobram duas iguais na tela e duas no P.hist. Em mensagem normal a antiga fica de
+       proposito — ali mostrar as duas versoes e o esperado. */
+    if (d.classList.contains('naoenviada')) tirarBolha(P, d);
     const inp = $('.p-input', P.el);
     inp.value = novo;
     inp.dispatchEvent(new Event('input'));
@@ -2124,7 +2156,7 @@ async function send(P) {
   const anexos = P.anexos.slice();
   P.anexos = []; pintarAnexos(P);
   inp.value = ''; inp.style.height = 'auto';
-  userMsg(P, text, anexos);
+  const bolha = userMsg(P, text, anexos);
   if (!P.titulo) { P.titulo = nomeDaConversa(P, text); pintarNome(P); }
   P.quadroColado = null;
 
@@ -2188,7 +2220,10 @@ async function send(P) {
       P.started = false; P.resumeId = P.sessaoId || P.resumeId;
       P.busy = false; setDot(P, 'off'); pararTrabalho(P); limparPassos(P);
       note(P, 'O motor não estava no ar e a mensagem não chegou. Manda de novo que ele religa.', true);
-      const cx = $('.p-input', P.el); if (cx && !cx.value) cx.value = text;
+      /* o texto volta para o campo E a bolha sai da tela junto. Antes so o texto voltava: a
+         bolha ficava, e cada Enter empilhava mais uma bolha e mais um item no P.hist. */
+      marcarNaFila(P, bolha, text);
+      devolverFilaAoCampo(P, text);
     }
   }
   catch (e) { P.busy = false; setDot(P, 'idle'); note(P, 'Falhou: ' + (e && e.message || e), true); }
@@ -5047,8 +5082,10 @@ document.addEventListener('keydown', (e) => {
       if (A) { e.preventDefault(); ativarAbaProjeto(A); }
     }
   }
-  // ⌘/ tambem aqui, e nao so no menu: no telefone nao existe menu do Mac
-  if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); alternarTelaAtalhos(); return; }
+  /* ⌘/ SO onde nao ha menu do Mac (telefone/navegador). No app o dono e o item
+     'Ver > Atalhos do teclado': com os dois vivos, um aperto abria e fechava a tela no mesmo
+     instante e para ele o ⌘/ "nao fazia nada". Um atalho, um dono. */
+  if (window.SEM_ELECTRON && (e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); alternarTelaAtalhos(); return; }
   // ⌘⇧E abre o quadro branco. No telefone nao ha menu do Mac: aqui e o unico caminho de teclado.
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
     if (!focusPane || !window.Quadro) return;
@@ -5081,7 +5118,8 @@ document.addEventListener('keydown', (e) => {
   if (alvo && alvo.closest && alvo.closest('input, textarea, [contenteditable="true"], .term-wrap')) return;
   if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto()) return;
   if (!$('#novaAba').classList.contains('hidden')) return;
-  if (!$('#telaAtalhos').classList.contains('hidden')) return;
+  const telaAt = $('#telaAtalhos');           // no telefone essa tela pode nem existir
+  if (telaAt && !telaAt.classList.contains('hidden')) return;
   if (agPainelAberto()) return;
   if ([...panes.values()].some(P => !$('.p-modal', P.el).classList.contains('hidden'))) return;
   if (!focusPane) return;
@@ -5146,8 +5184,10 @@ const ATALHOS = [
 
 function alternarTelaAtalhos() {
   const tela = $('#telaAtalhos');
+  if (!tela) return;                          // tela que nao existe nao abre nem estoura
   if (!tela.classList.contains('hidden')) { tela.classList.add('hidden'); return; }
   const lista = $('#atLista');
+  if (!lista) return;
   lista.innerHTML = '';
   for (const [grupo, linhas] of ATALHOS) {
     const g = document.createElement('div');
@@ -5260,6 +5300,24 @@ function aplicarEdicao(acao) {
       }));
     } catch (_) {} finally { teclaSintetica = false; }
     return;
+  }
+  /* ⌘A fora de campo de texto: o execCommand('selectAll') pega o DOCUMENTO inteiro — com dois
+     chats lado a lado ele copiava a conversa dos DOIS e ainda levava o rascunho que estava no
+     campo sem ter sido enviado. Aqui a selecao e montada na mao so na conversa do chat em foco;
+     o campo de escrever fica de fora porque nao entra no range. */
+  if (acao === 'selecionarTudo') {
+    const at = document.activeElement;
+    const emCampo = at && at.closest && at.closest('input, textarea, [contenteditable="true"]');
+    const conversa = focusPane && focusPane.el && $('.pane-chat', focusPane.el);
+    if (!emCampo && conversa) {
+      try {
+        const r = document.createRange();
+        r.selectNodeContents(conversa);
+        const s = window.getSelection();
+        s.removeAllRanges(); s.addRange(r);
+      } catch (_) {}
+      return;
+    }
   }
   // fora do quadro vale o de sempre: desfazer/refazer/selecionar tudo do campo em foco
   const cmd = { desfazer: 'undo', refazer: 'redo', selecionarTudo: 'selectAll' }[acao];
