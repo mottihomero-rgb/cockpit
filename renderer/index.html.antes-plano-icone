@@ -231,7 +231,6 @@
         <button class="cb p-plus" title="Anexar"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg></button>
         <button class="cb p-slash" title="Ações e comandos">/</button>
         <button class="cb p-modoenvio" title="O que fazer se ele já estiver trabalhando"></button>
-        <button class="cb p-plano hidden" aria-pressed="false" title="Planejar antes de executar"></button>
         <span class="cmp-gap"></span>
         <button class="p-model" title="Trocar o modelo e o esforço"></button>
         <button class="modo-btn p-modo" title="O que ele pode fazer sem perguntar">

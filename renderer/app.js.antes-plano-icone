@@ -2521,77 +2521,53 @@ function showApproval(P, ev) {
 
 /* O protocolo do Codex entrega escolhas, planos e perguntas separados da resposta. */
 function criarControlesCodex(P) {
-  // Plano/Executar e um icone na propria barra, junto do + e da /. Velocidade e Contexto
-  // moraram numa linha extra em cima da caixa: ninguem olhava, e a linha roubava altura do
-  // texto. Agora vivem dentro do cerebro, ao lado de modelo e esforco — que sao a mesma
-  // familia de escolha ("como este chat vai pensar").
-  const b = $('.p-plano', P.el); if (!b) return;
-  b.onclick = () => mudarEscolhasCodex(P, {
+  const linha = document.createElement('div'); linha.className = 'p-codex-opcoes hidden';
+  linha.innerHTML = '<button type="button" class="cx-plano"></button>'
+    + '<button type="button" class="cx-velocidade"></button>'
+    + '<button type="button" class="cx-contexto"></button><span class="cx-efetivo"></span>';
+  $('.cmp-top', P.el).insertAdjacentElement('beforebegin', linha);
+  $('.cx-plano', linha).onclick = () => mudarEscolhasCodex(P, {
     collaborationMode: P.collaborationMode === 'plan' ? 'default' : 'plan' });
-}
-/* Velocidade e Contexto por dentro do cerebro, em botoes pequenos lado a lado. Como item de
-   lista (um por linha, com explicacao embaixo) eles empurravam o menu para 1200px de rolagem:
-   quem abre o cerebro para trocar a velocidade nao achava, porque so via modelo. */
-function linhaChips(titulo, dica, opcoes, aoEscolher) {
-  const box = document.createElement('div'); box.className = 'mo-chips';
-  const h = document.createElement('div'); h.className = 'mo-chips-tit'; h.textContent = titulo;
-  if (dica) h.title = dica;
-  const linha = document.createElement('div'); linha.className = 'mo-chips-linha';
-  for (const o of opcoes) {
-    const b = document.createElement('button'); b.type = 'button';
-    b.className = 'mo-chip' + (o.on ? ' on' : ''); b.textContent = o.nome;
-    if (o.desc) b.title = o.desc;
-    b.onclick = () => { aoEscolher(o); };
-    linha.appendChild(b);
-  }
-  box.append(h, linha);
-  if (dica) { const d = document.createElement('div'); d.className = 'mo-chips-dica'; d.textContent = dica; box.appendChild(d); }
-  return box;
-}
-function secoesCodexNoCerebro(P, m, repintar) {
-  if (P.engine !== 'codex' || modeloPorCreditos(P.model)) return;
-  m.appendChild(elLinha());
-  m.appendChild(linhaChips('Velocidade', 'Fast responde mais rápido e gasta mais da sua cota.', [
-    { id: '', nome: 'Padrão', desc: 'Mantém a velocidade já configurada no Codex.', on: !(P.serviceTier || '') },
-    { id: 'default', nome: 'Normal', desc: 'Velocidade comum. Gasta o normal da sua cota.', on: P.serviceTier === 'default' },
-    { id: 'fast', nome: 'Fast', desc: 'Responde mais rápido e gasta mais da sua cota.', on: P.serviceTier === 'fast' },
-  ], (o) => { mudarEscolhasCodex(P, { serviceTier: o.id }); repintar && repintar(); }));
-  m.appendChild(linhaChips('Memória da conversa', 'Lembrar mais segura conversa longa sem esquecer o começo. Está em teste, gasta mais cota e nem todo modelo aceita.', [
-    { nome: 'Padrão', desc: 'Ele lembra do tanto de conversa de sempre.', on: !P.experimentalContext, v: false },
-    { nome: 'Lembrar mais', desc: 'Em teste. Só nesta conversa.', on: !!P.experimentalContext, v: true },
-  ], (o) => { mudarEscolhasCodex(P, { experimentalContext: o.v }); repintar && repintar(); }));
-  const e = P.effectiveSettings;
-  const pe = document.createElement('div'); pe.className = 'mo-sub mo-estado';
-  pe.textContent = P.settingsPending
-    ? 'Escolha nova: entra na próxima mensagem.'
-    : e ? 'O Codex já está usando estas escolhas.' : '';
-  if (pe.textContent) m.appendChild(pe);
+  $('.cx-velocidade', linha).onclick = (e) => {
+    e.stopPropagation(); const m = novoMenu(P);
+    m.appendChild(tituloPopup('Velocidade desta conversa'));
+    m.appendChild(subPopup('A escolha vale nas próximas mensagens.'));
+    for (const item of [
+      { id: '', nome: 'Padrão atual', desc: 'Mantém a velocidade configurada no Codex.' },
+      { id: 'default', nome: 'Normal', desc: 'Velocidade normal, sem a prioridade do Fast.' },
+      { id: 'fast', nome: 'Fast', desc: 'Responde mais rápido e consome mais da sua cota.' },
+    ]) m.appendChild(elItem({ ...item, on: P.serviceTier === item.id }, () => mudarEscolhasCodex(P, { serviceTier: item.id })));
+  };
+  $('.cx-contexto', linha).onclick = (e) => {
+    e.stopPropagation(); const m = novoMenu(P);
+    m.appendChild(tituloPopup('Contexto desta conversa'));
+    m.appendChild(subPopup('Contexto longo é experimental. Pode consumir mais cota; a disponibilidade depende do modelo.'));
+    m.appendChild(elItem({ nome: 'Contexto padrão', desc: 'Usa a janela normal do modelo.', on: !P.experimentalContext },
+      () => mudarEscolhasCodex(P, { experimentalContext: false })));
+    m.appendChild(elItem({ nome: 'Testar contexto longo', desc: 'Só nesta conversa. Não altera outras abas.', on: P.experimentalContext },
+      () => mudarEscolhasCodex(P, { experimentalContext: true })));
+  };
 }
 function pintarControlesCodex(P) {
-  const b = $('.p-plano', P.el); if (!b) return;
-  const codex = P.engine === 'codex', paid = modeloPorCreditos(P.model);
-  b.classList.toggle('hidden', !codex);
-  if (!codex) return;
-  const plano = P.collaborationMode === 'plan';
-  b.innerHTML = ico(plano ? 'clipboard-list' : 'code-xml');
-  b.classList.toggle('ligado', plano);
-  b.setAttribute('aria-pressed', String(plano));
-  b.disabled = paid;
-  b.title = paid ? 'Disponível no Codex pelo plano. A API usa controles próprios.'
-    : plano ? 'Modo Plano: ele só monta o plano, não mexe em nada. Clique para voltar a executar.'
-    : 'Modo Executar: ele faz o trabalho. Clique para ele planejar antes.';
-  // o pontinho no cerebro avisa que a escolha ainda nao chegou ao motor
-  const cer = $('.p-model', P.el);
-  if (cer) {
-    cer.classList.toggle('pendente', !!P.settingsPending && codex);
-    const e = P.effectiveSettings;
-    cer.title = (P.settingsPending ? 'Escolha nova: entra na próxima mensagem.\n' : '')
-      + 'Trocar o modelo, o esforço, a velocidade e a memória'
-      + (e ? '\n\nEm uso agora: ' + [e.model || '', e.effort ? 'Esforço: ' + (EF_PT[e.effort] || e.effort) : '',
-        e.serviceTier ? (['fast', 'priority'].includes(e.serviceTier) ? 'Fast' : 'Normal') : '',
-        e.collaborationMode === 'plan' ? 'Modo Plano' : 'Modo Executar',
-        e.experimentalContext ? 'Lembrar mais' : ''].filter(Boolean).join(' · ') : '');
-  }
+  const linha = $('.p-codex-opcoes', P.el); if (!linha) return;
+  linha.classList.toggle('hidden', P.engine !== 'codex');
+  const plano = P.collaborationMode === 'plan', paid = modeloPorCreditos(P.model);
+  const b = $('.cx-plano', linha);
+  b.innerHTML = ico(plano ? 'clipboard-list' : 'code-xml') + '<span>' + (plano ? 'Plano' : 'Executar') + '</span>';
+  b.setAttribute('aria-pressed', String(plano)); b.title = plano ? 'Só planeja. Clique para voltar a executar.' : 'Clique para planejar antes de executar.';
+  $('.cx-velocidade', linha).textContent = P.serviceTier === 'fast' ? 'Fast' : P.serviceTier === 'default' ? 'Normal' : 'Velocidade';
+  $('.cx-velocidade', linha).title = 'Escolher Normal ou Fast para esta conversa';
+  $('.cx-contexto', linha).textContent = P.experimentalContext ? 'Contexto longo' : 'Contexto';
+  $('.cx-contexto', linha).setAttribute('aria-pressed', String(!!P.experimentalContext));
+  $('.cx-contexto', linha).title = 'Contexto longo experimental, só nesta conversa';
+  $$('button', linha).forEach(x => { x.disabled = paid; if (paid) x.title = 'Disponível no Codex pelo plano. A API usa controles próprios.'; });
+  const efetivo = $('.cx-efetivo', linha), e = P.effectiveSettings;
+  efetivo.textContent = P.settingsPending ? 'próxima mensagem' : e ? 'confirmado' : '';
+  efetivo.title = e ? ['Confirmado pelo motor: ' + (e.model || ''),
+    e.effort ? 'Esforço: ' + (EF_PT[e.effort] || e.effort) : '',
+    e.serviceTier ? 'Velocidade: ' + (['fast', 'priority'].includes(e.serviceTier) ? 'Fast' : 'Normal') : '',
+    e.collaborationMode === 'plan' ? 'Modo Plano' : 'Modo Executar',
+    e.experimentalContext ? 'Contexto longo experimental' : 'Contexto padrão'].filter(Boolean).join('\n') : '';
 }
 async function mudarEscolhasCodex(P, patch) {
   Object.assign(P, patch); P.settingsPending = true;
@@ -3359,7 +3335,6 @@ async function menuModelos(P) {
     }
     m.appendChild(elLinha());
     m.appendChild(barraEsforco(P));
-    secoesCodexNoCerebro(P, m, pintar);
   };
   pintar();
   if (P.engine === 'codex' && !MODELOS_CODEX) {
