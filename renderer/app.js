@@ -933,7 +933,12 @@ async function trocarMotor(P, novo) {
   P.trocando = true;
   // o estado e o desenho mudam JA, antes da ida ao processo principal: enquanto se esperava
   // o paneStop responder, o icone continuava marcando o motor antigo
-  P.engine = novo; P.started = false; P.model = ''; P.resumeId = null;
+  // Cada motor usa um tipo diferente de numero de conversa. O id do Claude nao existe no
+  // Codex, e o id do Codex nao existe no Claude. Se ele atravessa a troca, o motor novo tenta
+  // retomar uma conversa impossivel ("no rollout found" no Codex). A continuidade entre os
+  // motores vem pelo contexto montado logo abaixo, nao pelo id do motor antigo.
+  P.engine = novo; P.started = false; P.model = '';
+  P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
   // o processo velho vai morrer: o chat deixa de estar ocupado e a fila morre com ele.
   // O texto que estava na fila volta para o campo, e a bolha dele sai da tela junto — senao
   // ele manda de novo e a mesma mensagem fica duas vezes na conversa.
@@ -2205,12 +2210,17 @@ async function send(P) {
         P.passarContexto = montarContexto(P, true);
         console.log('[cockpit] sem fio: mandei o contexto desta conversa junto');
       }
-      await window.api.paneStart({
+      const inicio = await window.api.paneStart({
         paneId: P.id, engine: P.engine, cwd: P.cwd,
         model: modeloSemOrigem(P.model) || undefined,
         billing: modeloPorCreditos(P.model) ? 'api' : 'plan',
         approval: modoDe(P).id, effort: esforcoDe(P), resumeId: fio || undefined,
       });
+      // Uma versao antiga podia guardar aqui o numero da conversa do outro motor. O processo
+      // principal se recupera abrindo outra; antes de mandar a fala, esta tela repoe o contexto.
+      if (inicio && inicio.nova && P.hist.length && !P.passarContexto) {
+        P.passarContexto = montarContexto(P, true);
+      }
       P.started = true; P.ultraAvisado = false;   // processo novo: liberar o ultracode de novo
     } catch (e) {
       setDot(P, 'off'); note(P, 'Não consegui ligar: ' + (e && e.message || e), true); return;
