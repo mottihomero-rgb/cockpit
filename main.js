@@ -2463,13 +2463,23 @@ handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId
   codexPaneDest.set(paneId, dest);
   codexPaneBilling.set(paneId, porCreditos ? 'api' : 'plan');
   await codexStart(dest);
+  let fioInvalido = false;
   if (resumeId) {
-    const r = await codexReq(dest, 'thread/resume', { threadId: resumeId });
-    const rid = (r && (r.threadId || (r.thread && r.thread.id))) || resumeId;
-    codex.threadToPane.set(rid, paneId);
-    codex.paneToThread.set(paneId, rid);
-    emit(paneId, 'sessao', { id: rid, file: (r && r.thread && r.thread.path) || '' });
-    return true;
+    try {
+      const r = await codexReq(dest, 'thread/resume', { threadId: resumeId });
+      const rid = (r && (r.threadId || (r.thread && r.thread.id))) || resumeId;
+      codex.threadToPane.set(rid, paneId);
+      codex.paneToThread.set(paneId, rid);
+      emit(paneId, 'sessao', { id: rid, file: (r && r.thread && r.thread.path) || '' });
+      return true;
+    } catch (e) {
+      // Protecao para estados gravados pela versao antiga: ela podia salvar um id do Claude
+      // dentro de um painel Codex. Repetir o resume prende o chat no mesmo erro para sempre.
+      // So este erro conhecido abre uma conversa nova; conta, rede e outros erros continuam
+      // aparecendo normalmente, sem esconder a causa real.
+      if (!/no rollout found for thread id/i.test(String(e && e.message || e))) throw e;
+      fioInvalido = true;
+    }
   }
   const pol = CODEX_MODE[approval] || CODEX_MODE.bypass;
   const res = await codexReq(dest, 'thread/start', {
@@ -2485,7 +2495,8 @@ handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId
   codex.threadToPane.set(tid, paneId);
   codex.paneToThread.set(paneId, tid);
   emit(paneId, 'sessao', { id: tid, file: (res.thread && res.thread.path) || '' });
-  return true;
+  if (fioInvalido) emit(paneId, 'note', { text: 'O número antigo era de outro motor. Abri uma conversa nova no Codex e mantive o contexto desta tela.' });
+  return fioInvalido ? { ok: true, nova: true } : true;
 });
 
 handle('pane:send', async (_e, { paneId, engine, text, effort }) => {
