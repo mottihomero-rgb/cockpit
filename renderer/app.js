@@ -571,6 +571,9 @@ function newPane(opts = {}) {
     envio: cfg.envioPadrao || 'fila',
     // conversa nova sempre nasce no Extra alto; painel restaurado mantém o que estava salvo
     mode: opts.mode || cfg.defMode || 'auto', effort: opts.effort || EF_NOVO,
+    serviceTier: opts.serviceTier || '', experimentalContext: opts.experimentalContext === true,
+    collaborationMode: opts.collaborationMode === 'plan' || (!opts.collaborationMode && (opts.mode || cfg.defMode) === 'plan') ? 'plan' : 'default',
+    effectiveSettings: null, settingsPending: false,
     blocks: new Map(), tools: new Map(), execEl: null, trabTimer: null, trabOque: '',
     chat: $('.pane-chat', el),
   };
@@ -703,6 +706,7 @@ function newPane(opts = {}) {
 
   // botao do time de agentes (fica na direita, ao lado do modelo)
   criarBotaoAgentes(P, el);
+  criarControlesCodex(P);
 
   // botao do microfone (ditar em vez de digitar)
   const btMic = document.createElement('button');
@@ -804,6 +808,8 @@ function savePanes() {
       const P = panes.get(pid); if (!P) return null;
       return {
         engine: P.engine, cwd: P.cwd, model: P.model, mode: P.mode, effort: P.effort,
+        serviceTier: P.serviceTier, experimentalContext: P.experimentalContext,
+        collaborationMode: P.collaborationMode,
         titulo: P.titulo, larg: P.el.style.flex || '',
         // guarda a conversa para ela voltar cheia, e nao uma caixa vazia
         sessao: P.sessaoId || P.resumeId || '',
@@ -871,6 +877,8 @@ async function restaurarAbasCorpo(salvas) {
       const P = newPane({
         engine: c.engine, aba: A, cwd: c.cwd || a.cwd,
         model: c.model, mode: c.mode, effort: c.effort, titulo: c.titulo,
+        serviceTier: c.serviceTier, experimentalContext: c.experimentalContext,
+        collaborationMode: c.collaborationMode,
       });
       if (c.larg) P.el.style.flex = c.larg;
       if (c.sessao) {
@@ -908,13 +916,7 @@ async function restaurarAbasCorpo(salvas) {
       // reconstroi sozinho a partir deles em vez de devolver conversa vazia
       const msgs = await window.api.sessionHistory({ engine: P.engine, file: arquivo, id, cwd });
       const aviso = $('.note', P.chat); if (aviso) aviso.remove();
-      for (const m of (msgs || [])) {
-        if (m.role === 'user') userMsg(P, m.text);
-        // a resposta tambem entra no historico da memoria da tela: e dele que sai o contexto
-        // de emergencia quando a conversa cai e volta sem numero
-        else if (m.role === 'bot') { const b = botBlock(P, 'r' + Math.random()); b.raw = m.text; b.el.innerHTML = marked.parse(m.text); P.hist.push({ quem: P.engine === 'codex' ? 'Codex' : 'Claude', texto: m.text }); }
-        else if (m.role === 'tool') toolStart(P, 'r' + Math.random(), m.name, m.arg);
-      }
+      for (const m of (msgs || [])) renderizarHistorico(P, m);
       $$('.tool-st.run', P.el).forEach(x => { x.className = 'tool-st ok'; x.innerHTML = ico('check'); });
       // sem isto o "Escreva embaixo pra começar" ficava por cima da conversa que acabou de voltar
       if (msgs && msgs.length) { clearEmpty(P); note(P, '— daqui pra baixo é a conversa de agora —'); }
@@ -930,6 +932,7 @@ async function trocarMotor(P, novo) {
   if (novo === P.engine || P.trocando) return;
   const antigo = P.engine === 'codex' ? 'Codex' : 'Claude';
   const velho = P.engine;
+  const estavaPlanejando = velho === 'codex' ? P.collaborationMode === 'plan' : P.mode === 'plan';
   P.trocando = true;
   // o estado e o desenho mudam JA, antes da ida ao processo principal: enquanto se esperava
   // o paneStop responder, o icone continuava marcando o motor antigo
@@ -938,6 +941,10 @@ async function trocarMotor(P, novo) {
   // retomar uma conversa impossivel ("no rollout found" no Codex). A continuidade entre os
   // motores vem pelo contexto montado logo abaixo, nao pelo id do motor antigo.
   P.engine = novo; P.started = false; P.model = '';
+  P.effectiveSettings = null; P.settingsPending = false;
+  P.collaborationMode = estavaPlanejando ? 'plan' : 'default';
+  if (novo === 'codex' && P.mode === 'plan') P.mode = 'manual';
+  if (novo === 'claude' && estavaPlanejando) P.mode = 'plan';
   P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
   // o processo velho vai morrer: o chat deixa de estar ocupado e a fila morre com ele.
   // O texto que estava na fila volta para o campo, e a bolha dele sai da tela junto — senao
@@ -967,7 +974,7 @@ function montarContexto(P, retomada, motivo) {
   const linhas = [];
   for (let i = P.hist.length - 1; i >= 0; i--) {
     const h = P.hist[i];
-    const t = '### ' + h.quem + ':\n' + (h.texto || '').trim();
+    const t = '### ' + h.quem + ':\n' + montarEnvio((h.texto || '').trim(), h.attachments);
     if (linhas.join('\n\n').length + t.length > LIM) break;
     linhas.unshift(t);
   }
@@ -1016,6 +1023,7 @@ function fillModels(P) {
   const ef = esforcosDe(P);
   if (listaReal && !ef.find(e => e.id === P.effort)) P.effort = modeloAtual(P).padraoEffort || ef[Math.min(2, ef.length - 1)].id;
   $('.p-model', P.el).innerHTML = ico('brain') + '<span>' + modeloAtual(P).nome + '</span>';
+  pintarControlesCodex(P);
 }
 function posicionarChave() {}   // o destaque do lado ativo é só CSS
 
@@ -1025,6 +1033,7 @@ function paintEngine(P) {
   posicionarChave(P);
   P.el.classList.toggle('eng-codex', P.engine === 'codex');
   P.el.classList.toggle('eng-claude', P.engine === 'claude');
+  pintarControlesCodex(P);
 }
 function setFocus(P) {
   if (!P) return;
@@ -1300,7 +1309,7 @@ function userMsg(P, text, anexos) {
   d.dataset.hist = String(P.hist.length);
   botoesDaMinhaMensagem(P, d, text);
   P.chat.appendChild(d); scroll(P, true);
-  P.hist.push({ quem: 'Você', texto: text });
+  P.hist.push({ quem: 'Você', texto: text, attachments: anexos || [] });
   return d;   // quem pinta a bolha da FILA precisa dela na mao para poder desfazer (ver marcarNaFila)
 }
 
@@ -1346,14 +1355,20 @@ function tirarBolhasDaFila(P) {
   P.filaMsgs = [];
   const idx = [];
   for (const f of fila) {
+    const i = f.el ? Number(f.el.dataset.hist) : f.iHist;
     if (f.el && f.el.parentNode) f.el.remove();
-    if (typeof f.iHist === 'number' && P.hist[f.iHist] && P.hist[f.iHist].texto === f.texto) idx.push(f.iHist);
+    if (Number.isFinite(i) && P.hist[i]) idx.push(i);
   }
   // de tras para a frente, senao a primeira remocao ja bagunca o indice da segunda
   idx.sort((a, b) => b - a);
   for (const i of idx) tirarDoHist(P, i);
 }
 function devolverFilaAoCampo(P, texto) {
+  if (texto && typeof texto === 'object') {
+    reporAnexos(P, texto.attachments || []);
+    texto = texto.displayText == null ? (texto.text || '') : texto.displayText;
+  }
+  texto = String(texto || '');
   const cx = $('.p-input', P.el);
   if (cx && !cx.value) {
     tirarBolhasDaFila(P);
@@ -2149,6 +2164,50 @@ function montarEnvio(text, anexos) {
     + anexos.map(a => '- ' + a.path).join('\n');
   return text ? (text + '\n\n' + lista) : lista;
 }
+function escolhasCodex(P) {
+  if (P.engine !== 'codex') return {};
+  return { model: modeloSemOrigem(P.model) || undefined, cwd: P.cwd,
+    approval: modoDe(P).id, effort: esforcoDe(P), serviceTier: P.serviceTier || undefined,
+    collaborationMode: P.collaborationMode || 'default', experimentalContext: !!P.experimentalContext };
+}
+function prepararEscolhasEnvio(P) {
+  if (P.engine !== 'codex') return null;
+  // A retomada informa as escolhas do turno antigo. O pedido atual precisa atravessar
+  // esse await intacto, até turn/start aceitar as escolhas novas.
+  const envio = { desired: escolhasCodex(P), revision: P.settingsRevision || 0,
+    phase: 'starting', confirmed: null };
+  P.settingsSend = envio; P.settingsPending = true;
+  pintarControlesCodex(P); return envio;
+}
+function concluirEscolhasEnvio(P, envio, aceito) {
+  if (!envio || P.settingsSend !== envio) return;
+  P.settingsSend = null;
+  if ((P.settingsRevision || 0) !== envio.revision) { pintarControlesCodex(P); return; }
+  P.settingsPending = !aceito || !!(envio.confirmed && envio.confirmed.pending);
+  if (aceito && envio.confirmed) aplicarSettingsCodex(P, envio.confirmed);
+  else pintarControlesCodex(P);
+}
+function envioComAnexos(P, text, anexos) {
+  return { text: P.engine === 'codex' ? text : montarEnvio(text, anexos),
+    attachments: anexos || [], displayText: text };
+}
+function juntarNaFila(P, pacote) {
+  const antes = typeof P.queued === 'string' ? { text: P.queued, displayText: P.queued } : P.queued;
+  P.queued = antes ? { text: [antes.text, pacote.text].filter(Boolean).join('\n\n'),
+    displayText: [antes.displayText, pacote.displayText].filter(Boolean).join('\n\n'),
+    attachments: [...(antes.attachments || []), ...(pacote.attachments || [])] } : pacote;
+}
+function reporAnexos(P, anexos) {
+  for (const a of anexos) if (!P.anexos.some(x => x.path === a.path)) P.anexos.push(a);
+  pintarAnexos(P);
+}
+function recuperarEnvio(P, bolha, text, anexos) {
+  tirarBolha(P, bolha);
+  const campo = $('.p-input', P.el);
+  campo.value = [text, campo.value].filter(Boolean).join('\n\n');
+  campo.style.height = 'auto';
+  reporAnexos(P, anexos);
+}
 async function send(P) {
   const inp = $('.p-input', P.el);
   const text = inp.value.trim();
@@ -2163,24 +2222,27 @@ async function send(P) {
     P.quadroColado = null;
     inp.value = ''; inp.style.height = 'auto';
     const bolha = userMsg(P, text, anx);
-    const envio = montarEnvio(text, anx);
+    const pacote = envioComAnexos(P, text, anx);
     // ja havia uma esperando? Junta em vez de trocar: o `P.queued = envio` de antes apagava a
     // primeira em silencio — a bolha dela ficava na tela e a mensagem nunca era enviada.
-    const juntar = (nova) => { P.queued = P.queued ? (P.queued + '\n\n' + nova) : nova; };
     if (P.envio === 'entra') {
       const nota = avisoEnvio(P, 'Mandando para dentro do trabalho…');
-      const r = await window.api.paneSteer({ paneId: P.id, engine: P.engine, text: ENTRA_MSG + envio });
+      let r;
+      try { r = await window.api.paneSteer({ paneId: P.id, engine: P.engine,
+        text: ENTRA_MSG + pacote.text, attachments: anx }); } catch { r = { ok: false }; }
       if (nota) nota.textContent = r && r.ok
         ? 'Entregue no meio do trabalho. Ele escolhe se atende agora ou ao terminar.'
         : 'Não deu para entrar agora, então ficou na fila.';
-      if (!(r && r.ok)) { juntar(envio); marcarNaFila(P, bolha, text || envio); }
+      if (!(r && r.ok)) { juntarNaFila(P, pacote); marcarNaFila(P, bolha, text); }
     } else {
-      juntar(envio);
-      marcarNaFila(P, bolha, text || envio);
+      juntarNaFila(P, pacote);
+      marcarNaFila(P, bolha, text);
       avisoEnvio(P, 'Na fila. Começa assim que ele terminar.');
     }
     return;
   }
+  const escolhasDoEnvio = prepararEscolhasEnvio(P);
+  const pedidoCodex = escolhasDoEnvio ? escolhasDoEnvio.desired : {};
   const anexos = P.anexos.slice();
   P.anexos = []; pintarAnexos(P);
   inp.value = ''; inp.style.height = 'auto';
@@ -2189,6 +2251,7 @@ async function send(P) {
   P.quadroColado = null;
 
   if (!P.started) {
+    P.busy = true;
     setDot(P, 'busy');
     note(P, P.engine === 'codex' ? 'Ligando o Codex…' : 'Ligando o Claude…');
     try {
@@ -2215,6 +2278,7 @@ async function send(P) {
         model: modeloSemOrigem(P.model) || undefined,
         billing: modeloPorCreditos(P.model) ? 'api' : 'plan',
         approval: modoDe(P).id, effort: esforcoDe(P), resumeId: fio || undefined,
+        ...pedidoCodex,
       });
       // Uma versao antiga podia guardar aqui o numero da conversa do outro motor. O processo
       // principal se recupera abrindo outra; antes de mandar a fala, esta tela repoe o contexto.
@@ -2223,14 +2287,16 @@ async function send(P) {
       }
       P.started = true; P.ultraAvisado = false;   // processo novo: liberar o ultracode de novo
     } catch (e) {
+      P.busy = false; concluirEscolhasEnvio(P, escolhasDoEnvio, false);
+      recuperarEnvio(P, bolha, text, anexos);
       setDot(P, 'off'); note(P, 'Não consegui ligar: ' + (e && e.message || e), true); return;
     }
   }
   P.busy = true; P.comecouEm = Date.now(); setDot(P, 'busy');
-  P.blocks.clear(); pararTrabalho(P); limparPassos(P); trabalhando(P);
+  P.blocks.clear(); P.codexPlan = null; P.codexEstados = new Map();
+  pararTrabalho(P); limparPassos(P); trabalhando(P);
   subirNaLista(P);
-  const paraOCampo = montarEnvio(text, anexos);   // sem os enfeites (contexto/ultracode) grudados
-  let envio = paraOCampo;
+  let envio = envioComAnexos(P, text, anexos).text;
   /* O contexto entra na FRENTE do 'envio' (que ja carrega a lista de anexos), nunca do 'text' cru:
      colando no 'text' a lista "Arquivos que anexei" era jogada fora, e o caminho do print ou do
      desenho do quadro nunca chegava ao motor — a fichinha aparecia na tela e nada era lido. */
@@ -2241,7 +2307,10 @@ async function send(P) {
     avisoEnvio(P, 'Esforço máximo: liberei os workflows (vários agentes em paralelo).');
   }
   try {
-    const ok = await window.api.paneSend({ paneId: P.id, engine: P.engine, text: envio, effort: P.engine === 'codex' ? esforcoDe(P) : undefined });
+    if (escolhasDoEnvio) escolhasDoEnvio.phase = 'sending';
+    const ok = await window.api.paneSend({ paneId: P.id, engine: P.engine, text: envio,
+      attachments: anexos, ...pedidoCodex });
+    concluirEscolhasEnvio(P, escolhasDoEnvio, ok !== false);
     // false = o motor caiu antes de receber. Sem isto o chat ficava em "trabalhando..."
     // para sempre, esperando uma resposta que nunca vem.
     if (ok === false) {
@@ -2252,15 +2321,16 @@ async function send(P) {
       note(P, 'O motor não estava no ar e a mensagem não chegou. Manda de novo que ele religa.', true);
       /* o texto volta para o campo E a bolha sai da tela junto. Antes so o texto voltava: a
          bolha ficava, e cada Enter empilhava mais uma bolha e mais um item no P.hist. */
-      marcarNaFila(P, bolha, text || paraOCampo);
-      devolverFilaAoCampo(P, text);
+      recuperarEnvio(P, bolha, text, anexos);
       /* o anexo tambem volta para o campo. Sem isto, o print que ele colou sem escrever nada
          sumia de vez quando o motor estava fora do ar: o texto voltava vazio e a fichinha
          ja tinha sido apagada do campo la em cima. */
-      if (anexos.length) { P.anexos = anexos.slice(); pintarAnexos(P); }
     }
   }
-  catch (e) { P.busy = false; setDot(P, 'idle'); note(P, 'Falhou: ' + (e && e.message || e), true); }
+  catch (e) { concluirEscolhasEnvio(P, escolhasDoEnvio, false);
+    P.busy = false; pararTrabalho(P); limparPassos(P);
+    recuperarEnvio(P, bolha, text, anexos);
+    setDot(P, 'idle'); note(P, 'Falhou: ' + (e && e.message || e), true); }
 }
 
 /* ============ eventos vindos do motor ============ */
@@ -2308,9 +2378,13 @@ window.addEventListener('unhandledrejection', (e) => {
   console.error('promessa rejeitada na tela:', e && e.reason);
 });
 
-window.api.onPaneEvent((ev) => {
+function receberEventoPane(ev) {
   const P = panes.get(ev.paneId); if (!P) return;
+  if (ev.globalEvent && window.api.onCodexEvent) return;
   switch (ev.kind) {
+    case 'account': case 'connectors':
+      if (!window.api.onCodexEvent) receberEventoGlobalCodex({ ...ev, destino: NA_VPS(P.cwd) ? 'vps' : 'local' });
+      break;
     case 'busy': P.busy = true; setDot(P, 'busy'); trabalhando(P); break;
     // o motor abriu (ou reabriu) a conversa: este id passa a ser o fio guardado
     case 'sessao': {
@@ -2334,7 +2408,15 @@ window.api.onPaneEvent((ev) => {
     case 'tool-start': toolStart(P, ev.id, ev.name, ev.arg, { edicao: ev.edicao, tarefas: ev.tarefas }); break;
     case 'tool-output': toolOutput(P, ev.id, ev.text); break;
     case 'tool-end': toolEnd(P, ev.id, ev.output, ev.error); break;
-    case 'compactou': avisoEnvio(P, 'Conversa resumida. O que importa foi mantido.'); break;
+    case 'compactou': estadoCodex(P, 'compactacao', 'Conversa resumida', 'O resumo liberou espaço para continuar.', true); break;
+    case 'compacting': estadoCodex(P, 'compactacao', 'Resumindo a conversa', ev.message || 'Guardando o contexto para continuar.'); break;
+    case 'question': perguntaCodex(P, ev); break;
+    case 'question-resolved': encerrarPerguntaCodex(P, ev.key); break;
+    case 'plan': planoCodex(P, ev); break;
+    case 'generated-image': imagemGeradaCodex(P, ev); break;
+    case 'waiting': esperaCodex(P, ev); break;
+    case 'goal': metaCodex(P, ev); break;
+    case 'settings': aplicarSettingsCodex(P, ev); break;
     case 'tokens':
       if (ev.janela) P.janela = ev.janela;
       P.tokens = ev.total || 0;
@@ -2350,7 +2432,7 @@ window.api.onPaneEvent((ev) => {
     case 'note': note(P, ev.text, ev.error); break;
     case 'turn-end':
       avisarQueTerminou(P);
-      P.busy = false; escondePerm(P);          // o pedido morre junto com o turno
+      P.busy = false; escondePerm(P, false);   // perguntas não bloqueantes continuam respondíveis
       setDot(P, 'idle'); P.blocks.clear(); pararTrabalho(P); limparPassos(P);
       setTimeout(() => { if (!P.busy) { pararTrabalho(P); limparPassos(P); } }, 400);
       // nao zera mais o histCache aqui: zerar trocava a lista por "Carregando..." e derrubava
@@ -2361,13 +2443,20 @@ window.api.onPaneEvent((ev) => {
       if (P.queued) { const q = P.queued; P.queued = null;
         setTimeout(async () => {
           P.busy = true; setDot(P, 'busy');
+          const escolhasDoEnvio = prepararEscolhasEnvio(P);
           try {
-            const ok = await window.api.paneSend({ paneId: P.id, engine: P.engine, text: q, effort: P.engine === 'codex' ? esforcoDe(P) : undefined });
+            const pacote = typeof q === 'string' ? { text: q } : q;
+            if (escolhasDoEnvio) escolhasDoEnvio.phase = 'sending';
+            const ok = await window.api.paneSend({ paneId: P.id, engine: P.engine,
+              text: pacote.text || '', attachments: pacote.attachments || [],
+              ...(escolhasDoEnvio ? escolhasDoEnvio.desired : {}) });
+            concluirEscolhasEnvio(P, escolhasDoEnvio, ok !== false);
             // se a mensagem da fila nao foi entregue, o chat NAO pode ficar preso em
             // "trabalhando" para sempre: destrava e avisa, com o texto de volta na caixa
             if (ok === false) throw new Error('nao foi entregue');
             desmarcarFila(P);   // saiu de verdade: a bolha deixa de ser "na fila"
           } catch (e) {
+            concluirEscolhasEnvio(P, escolhasDoEnvio, false);
             // sem zerar o "started" o proximo envio pula o religar e cai na MESMA tarja para
             // sempre: no Claude quem zerava era o engine-down; no Codex nao vem engine-down.
             P.busy = false; P.started = false;
@@ -2405,14 +2494,20 @@ window.api.onPaneEvent((ev) => {
     }
     case 'approval': showApproval(P, ev); break;
   }
-});
+}
+window.api.onPaneEvent(receberEventoPane);
 
 /* O pedido de permissao vale so enquanto AQUELE turno daquele motor esta vivo. Sem apagar a
    tarja no fim do turno, na queda e na troca de motor, ela ficava pendurada pedindo autorizacao
    para um processo que ja morreu — e responder "sim" ali derrubava o chat que estava no lugar. */
-function escondePerm(P) {
+function escondePerm(P, encerrarTodas = true) {
   const bar = P && P.el && $('.pane-perm', P.el);
   if (bar) bar.classList.add('hidden');
+  if (P && P.questions) for (const q of P.questions.values()) {
+    if (!q.done && (encerrarTodas || !q.persisteEntreTurnos)) { q.done = true; q.el.classList.add('encerrada');
+      $$('.cxq-input, button, input, select, textarea', q.el).forEach(x => { x.disabled = true; });
+      const status = $('.cxq-status', q.el); if (status) status.textContent = 'Pedido encerrado.'; }
+  }
 }
 
 function showApproval(P, ev) {
@@ -2422,6 +2517,282 @@ function showApproval(P, ev) {
   const done = (allow) => { bar.classList.add('hidden'); window.api.approve({ key: ev.key, allow }); };
   $('.pp-yes', bar).onclick = () => done(true);
   $('.pp-no', bar).onclick = () => done(false);
+}
+
+/* O protocolo do Codex entrega escolhas, planos e perguntas separados da resposta. */
+function criarControlesCodex(P) {
+  const linha = document.createElement('div'); linha.className = 'p-codex-opcoes hidden';
+  linha.innerHTML = '<button type="button" class="cx-plano"></button>'
+    + '<button type="button" class="cx-velocidade"></button>'
+    + '<button type="button" class="cx-contexto"></button><span class="cx-efetivo"></span>';
+  $('.cmp-top', P.el).insertAdjacentElement('beforebegin', linha);
+  $('.cx-plano', linha).onclick = () => mudarEscolhasCodex(P, {
+    collaborationMode: P.collaborationMode === 'plan' ? 'default' : 'plan' });
+  $('.cx-velocidade', linha).onclick = (e) => {
+    e.stopPropagation(); const m = novoMenu(P);
+    m.appendChild(tituloPopup('Velocidade desta conversa'));
+    m.appendChild(subPopup('A escolha vale nas próximas mensagens.'));
+    for (const item of [
+      { id: '', nome: 'Padrão atual', desc: 'Mantém a velocidade configurada no Codex.' },
+      { id: 'default', nome: 'Normal', desc: 'Velocidade normal, sem a prioridade do Fast.' },
+      { id: 'fast', nome: 'Fast', desc: 'Responde mais rápido e consome mais da sua cota.' },
+    ]) m.appendChild(elItem({ ...item, on: P.serviceTier === item.id }, () => mudarEscolhasCodex(P, { serviceTier: item.id })));
+  };
+  $('.cx-contexto', linha).onclick = (e) => {
+    e.stopPropagation(); const m = novoMenu(P);
+    m.appendChild(tituloPopup('Contexto desta conversa'));
+    m.appendChild(subPopup('Contexto longo é experimental. Pode consumir mais cota; a disponibilidade depende do modelo.'));
+    m.appendChild(elItem({ nome: 'Contexto padrão', desc: 'Usa a janela normal do modelo.', on: !P.experimentalContext },
+      () => mudarEscolhasCodex(P, { experimentalContext: false })));
+    m.appendChild(elItem({ nome: 'Testar contexto longo', desc: 'Só nesta conversa. Não altera outras abas.', on: P.experimentalContext },
+      () => mudarEscolhasCodex(P, { experimentalContext: true })));
+  };
+}
+function pintarControlesCodex(P) {
+  const linha = $('.p-codex-opcoes', P.el); if (!linha) return;
+  linha.classList.toggle('hidden', P.engine !== 'codex');
+  const plano = P.collaborationMode === 'plan', paid = modeloPorCreditos(P.model);
+  const b = $('.cx-plano', linha);
+  b.innerHTML = ico(plano ? 'clipboard-list' : 'code-xml') + '<span>' + (plano ? 'Plano' : 'Executar') + '</span>';
+  b.setAttribute('aria-pressed', String(plano)); b.title = plano ? 'Só planeja. Clique para voltar a executar.' : 'Clique para planejar antes de executar.';
+  $('.cx-velocidade', linha).textContent = P.serviceTier === 'fast' ? 'Fast' : P.serviceTier === 'default' ? 'Normal' : 'Velocidade';
+  $('.cx-velocidade', linha).title = 'Escolher Normal ou Fast para esta conversa';
+  $('.cx-contexto', linha).textContent = P.experimentalContext ? 'Contexto longo' : 'Contexto';
+  $('.cx-contexto', linha).setAttribute('aria-pressed', String(!!P.experimentalContext));
+  $('.cx-contexto', linha).title = 'Contexto longo experimental, só nesta conversa';
+  $$('button', linha).forEach(x => { x.disabled = paid; if (paid) x.title = 'Disponível no Codex pelo plano. A API usa controles próprios.'; });
+  const efetivo = $('.cx-efetivo', linha), e = P.effectiveSettings;
+  efetivo.textContent = P.settingsPending ? 'próxima mensagem' : e ? 'confirmado' : '';
+  efetivo.title = e ? ['Confirmado pelo motor: ' + (e.model || ''),
+    e.effort ? 'Esforço: ' + (EF_PT[e.effort] || e.effort) : '',
+    e.serviceTier ? 'Velocidade: ' + (['fast', 'priority'].includes(e.serviceTier) ? 'Fast' : 'Normal') : '',
+    e.collaborationMode === 'plan' ? 'Modo Plano' : 'Modo Executar',
+    e.experimentalContext ? 'Contexto longo experimental' : 'Contexto padrão'].filter(Boolean).join('\n') : '';
+}
+async function mudarEscolhasCodex(P, patch) {
+  Object.assign(P, patch); P.settingsPending = true;
+  const revision = P.settingsRevision = (P.settingsRevision || 0) + 1;
+  pintarControlesCodex(P); savePanes();
+  if (P.started && !P.busy && window.api.paneSettings) {
+    try {
+      const r = await window.api.paneSettings({ paneId: P.id, engine: P.engine, ...escolhasCodex(P) });
+      if (r && (r.ok === false || r.error)) throw new Error(r.error || 'Não foi possível aplicar esta escolha.');
+      if (r && r.settings && (P.settingsRevision || 0) === revision) {
+        P.settingsPending = !!r.pending;
+        aplicarSettingsCodex(P, { ...r.settings, pending: !!r.pending });
+      }
+    } catch (e) { avisoTemp(P, 'Escolha guardada para a próxima mensagem. ' + (e.message || '')); }
+  }
+}
+function aplicarSettingsCodex(P, ev) {
+  const s = ev.settings || ev; P.effectiveSettings = { ...(P.effectiveSettings || {}), ...s };
+  if (ev.pending || s.pending) P.settingsPending = true;
+  if (P.settingsSend && P.settingsSend.phase === 'sending') P.settingsSend.confirmed = s;
+  if (!P.settingsPending && !P.settingsSend) {
+    if (s.model && !modeloPorCreditos(P.model)) {
+      P.model = s.model;
+      if (MODELOS_CODEX && !MODELOS_CODEX.some(m => m.id === s.model)) {
+        MODELOS_CODEX.push({ id: s.model, nome: s.model, efforts: [s.effort || 'medium'] });
+      }
+    }
+    if (s.effort) P.effort = s.effort;
+    if (s.collaborationMode) P.collaborationMode = typeof s.collaborationMode === 'string' ? s.collaborationMode : s.collaborationMode.mode;
+    if (typeof s.experimentalContext === 'boolean') P.experimentalContext = s.experimentalContext;
+    if (s.serviceTier) P.serviceTier = ['fast', 'priority'].includes(s.serviceTier) ? 'fast' : 'default';
+  }
+  fillModels(P); pintarControlesCodex(P); savePanes();
+}
+function cartaoCodex(P, classe, titulo) {
+  clearEmpty(P);
+  const el = document.createElement('section'); el.className = 'cx-cartao ' + classe;
+  const h = document.createElement('h3'); h.textContent = titulo; el.appendChild(h);
+  P.chat.appendChild(el); scroll(P); return el;
+}
+function planoCodex(P, ev) {
+  const id = ev.turnId || ev.id || 'atual';
+  if (!P.codexPlan || !P.codexPlan.el.isConnected || P.codexPlan.id !== id) {
+    P.codexPlan = { id, el: cartaoCodex(P, 'cx-plano-cartao', 'Plano de trabalho') };
+  }
+  const el = P.codexPlan.el; el.replaceChildren();
+  const steps = ev.steps || ev.plan || [];
+  const feitos = steps.filter(s => ['completed', 'done'].includes(s.status)).length;
+  const h = document.createElement('h3'); h.textContent = 'Plano de trabalho' + (steps.length ? ' · ' + feitos + '/' + steps.length : ''); el.appendChild(h);
+  if (ev.explanation || ev.text) { const p = document.createElement('p'); p.textContent = ev.explanation || ev.text; el.appendChild(p); }
+  const lista = document.createElement('ol'); lista.className = 'cx-passos';
+  for (const step of steps) {
+    const li = document.createElement('li'); li.dataset.status = step.status || 'pending';
+    const pronto = ['completed', 'done'].includes(step.status);
+    const status = pronto ? 'Concluído' : ['in_progress', 'inProgress'].includes(step.status) ? 'Em andamento' : 'A fazer';
+    const marca = document.createElement('span'); marca.className = 'cx-passo-marca'; marca.textContent = pronto ? '✓' : status === 'Em andamento' ? '●' : '○'; marca.title = status;
+    const texto = document.createElement('span'); texto.textContent = step.step || step.text || step.title || String(step);
+    li.append(marca, texto); lista.appendChild(li);
+  }
+  el.appendChild(lista); scroll(P);
+}
+function estadoCodex(P, chave, titulo, mensagem, encerrado) {
+  if (!P.codexEstados) P.codexEstados = new Map();
+  let el = P.codexEstados.get(chave);
+  if (!el || !el.isConnected) { el = cartaoCodex(P, 'cx-estado', titulo); P.codexEstados.set(chave, el); }
+  el.classList.toggle('encerrado', !!encerrado); el.replaceChildren();
+  const h = document.createElement('h3'); h.textContent = titulo;
+  const p = document.createElement('p'); p.textContent = mensagem || '';
+  el.append(h, p); return el;
+}
+function esperaCodex(P, ev) {
+  const terminou = ['done', 'completed', 'cancelled', 'interrupted', 'ended'].includes(ev.status);
+  if (terminou && !(P.codexEstados && P.codexEstados.get('espera') && P.codexEstados.get('espera').isConnected)) return;
+  let mensagem = ev.message || (terminou ? 'A espera terminou.' : 'O trabalho continua quando a espera terminar.');
+  if (ev.until) { const d = new Date(ev.until); if (!Number.isNaN(d.valueOf())) mensagem += ' Até ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + '.'; }
+  estadoCodex(P, 'espera', terminou ? 'Espera encerrada' : 'Aguardando', mensagem, terminou);
+}
+function metaCodex(P, ev) {
+  const goal = ev.goal || ev;
+  const status = { active: 'Em andamento', complete: 'Concluída', completed: 'Concluída', blocked: 'Precisa de informação', paused: 'Pausada' }[goal.status] || goal.status || 'Em andamento';
+  estadoCodex(P, 'meta', 'Meta · ' + status, goal.objective || goal.objetivo || goal.message || '', ['complete', 'completed'].includes(goal.status));
+}
+async function imagemGeradaCodex(P, ev) {
+  const el = cartaoCodex(P, 'cx-imagem', 'Imagem gerada');
+  let src = ev.url || ev.imageUrl || ev.image_url || ev.dataUrl || '';
+  const path = ev.path || ev.localPath || ev.filePath;
+  const status = document.createElement('p'); status.textContent = 'Abrindo imagem…'; el.appendChild(status);
+  try {
+    if (path) { const a = await window.api.verArquivo(path); if (a && a.tipo === 'imagem') src = a.dados; }
+    if (!/^(https?:\/\/|data:image\/(png|jpe?g|webp|gif);base64,)/i.test(src)) {
+      status.textContent = path ? 'Imagem salva: ' + path.split('/').pop() : 'A imagem não está disponível para prévia.';
+    } else {
+      const img = document.createElement('img'); img.alt = ev.prompt || 'Imagem gerada pelo Codex'; img.loading = 'lazy'; img.src = src;
+      img.onload = () => { status.remove(); scroll(P); };
+      img.onerror = () => { img.remove(); status.textContent = 'Não foi possível carregar a prévia.'; };
+      el.appendChild(img);
+    }
+    if (ev.prompt) { const p = document.createElement('p'); p.textContent = ev.prompt; el.appendChild(p); }
+    if (path) { const b = document.createElement('button'); b.type = 'button'; b.className = 'cx-acao'; b.textContent = 'Abrir imagem'; b.onclick = () => verArquivo(P, path); el.appendChild(b); }
+  } catch { status.textContent = 'Não foi possível abrir a imagem.'; }
+}
+function encerrarPerguntaCodex(P, key, texto = 'Resposta enviada.') {
+  const q = P.questions && P.questions.get(String(key)); if (!q) return;
+  q.done = true; q.el.classList.add('encerrada');
+  $$('input, select, textarea, button', q.el).forEach(x => { x.disabled = true; });
+  $('.cxq-status', q.el).textContent = texto;
+}
+function campoSchemaCodex(schema, nome, obrigatorio) {
+  const wrap = document.createElement('div'); wrap.className = 'cxq-campo';
+  const label = document.createElement('label'); label.textContent = schema.title || nome;
+  wrap.appendChild(label);
+  let input, read;
+  const enums = schema.enum || (schema.items && schema.items.enum);
+  if (enums) {
+    input = document.createElement('select'); input.multiple = schema.type === 'array';
+    if (!input.multiple) { const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Escolha uma opção'; input.appendChild(empty); }
+    enums.forEach((v, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = (schema.enumNames || schema.enumTitles || [])[i] || String(v); input.appendChild(o); });
+    read = () => input.multiple ? [...input.selectedOptions].map(o => enums[Number(o.value)]) : input.value === '' ? undefined : enums[Number(input.value)];
+  } else if (schema.type === 'boolean') {
+    input = document.createElement('select');
+    for (const [v, t] of [['', 'Escolha'], ['true', 'Sim'], ['false', 'Não']]) { const o = document.createElement('option'); o.value = v; o.textContent = t; input.appendChild(o); }
+    read = () => input.value === '' ? undefined : input.value === 'true';
+  } else if (schema.type === 'object' || schema.type === 'array') {
+    input = document.createElement('textarea'); input.placeholder = schema.type === 'array' ? '["item"]' : '{"campo": "valor"}';
+    read = () => { if (!input.value.trim()) return undefined;
+      const v = JSON.parse(input.value); if (schema.type === 'array' ? !Array.isArray(v) : !v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Confira o formato de ' + nome + '.'); return v; };
+  } else {
+    input = document.createElement('input'); input.type = ['integer', 'number'].includes(schema.type) ? 'number' : schema.format === 'email' ? 'email' : schema.format === 'uri' ? 'url' : 'text';
+    if (input.type === 'number') { input.step = schema.type === 'integer' ? '1' : 'any'; if (schema.minimum != null) input.min = schema.minimum; if (schema.maximum != null) input.max = schema.maximum; }
+    if (schema.minLength != null) input.minLength = schema.minLength;
+    if (schema.maxLength != null) input.maxLength = schema.maxLength;
+    read = () => input.value === '' ? undefined : input.type === 'number' ? Number(input.value) : input.value;
+  }
+  input.classList.add('cxq-input'); input.required = !!obrigatorio; input.setAttribute('aria-label', schema.title || nome);
+  label.appendChild(input);
+  if (schema.description) { const d = document.createElement('small'); d.textContent = schema.description; wrap.appendChild(d); }
+  return { el: wrap, read };
+}
+function perguntaCodex(P, ev, historico = false) {
+  if (!P.questions) P.questions = new Map();
+  const key = String(ev.key ?? ev.id ?? 'historico-' + P.questions.size);
+  if (P.questions.has(key) && P.questions.get(key).el.isConnected) return;
+  const schema = ev.schema || ev.requestedSchema;
+  const tipo = ev.questionKind || ev.requestKind || ev.mode || 'input';
+  const titulo = tipo === 'permissions' ? 'Pedido de permissão' : schema || tipo === 'elicitation' ? 'Pergunta do conector' : 'Preciso da sua resposta';
+  const el = cartaoCodex(P, 'cx-pergunta', titulo); el.dataset.questionKey = key;
+  if (ev.message || ev.title) { const p = document.createElement('p'); p.textContent = ev.message || ev.title; el.appendChild(p); }
+  const form = document.createElement('form'); form.className = 'cxq-form';
+  const campos = [], perguntas = ev.questions || [];
+  for (const [index, q] of perguntas.entries()) {
+    const fs = document.createElement('fieldset'); const legend = document.createElement('legend'); legend.textContent = q.question || q.header || 'Sua resposta'; fs.appendChild(legend);
+    const group = P.id + '-q-' + index + '-' + Math.random().toString(36).slice(2);
+    for (const [n, option] of (q.options || []).entries()) {
+      const label = document.createElement('label'); label.className = 'cxq-opcao';
+      const radio = document.createElement('input'); radio.type = q.isMultipleChoice ? 'checkbox' : 'radio'; radio.name = group; radio.value = option.label || String(option); radio.id = group + '-' + n;
+      const span = document.createElement('span'); span.textContent = option.label || String(option);
+      if (option.description) { const small = document.createElement('small'); small.textContent = option.description; span.appendChild(small); }
+      label.append(radio, span); fs.appendChild(label);
+    }
+    const outro = document.createElement(q.isSecret ? 'input' : 'textarea');
+    if (q.isSecret) outro.type = 'password';
+    outro.className = 'cxq-input'; outro.placeholder = q.options && q.options.length ? 'Ou escreva outra resposta' : 'Escreva sua resposta'; outro.setAttribute('aria-label', outro.placeholder);
+    outro.addEventListener('input', () => { if (outro.value.trim()) $$('input:checked', fs).forEach(x => { x.checked = false; }); });
+    fs.addEventListener('change', (e) => { if (e.target.matches('input[type=radio],input[type=checkbox]')) outro.value = ''; });
+    fs.appendChild(outro); form.appendChild(fs);
+    campos.push({ key: q.id || String(index), read: () => outro.value.trim() ? [outro.value.trim()] : $$('input:checked', fs).map(x => x.value) });
+  }
+  const props = schema && schema.properties;
+  const conteudo = [];
+  if (props) for (const [name, value] of Object.entries(props)) {
+    const f = campoSchemaCodex(value, name, (schema.required || []).includes(name)); form.appendChild(f.el); conteudo.push({ name, read: f.read });
+  }
+  const url = ev.url && /^https?:\/\//i.test(ev.url) ? ev.url : null;
+  if (url) { const abrir = document.createElement('button'); abrir.type = 'button'; abrir.className = 'cx-acao'; abrir.textContent = 'Abrir conector'; abrir.onclick = () => window.api.openUrl(url); form.appendChild(abrir); }
+  if (!perguntas.length && !props && !url && tipo !== 'permissions') {
+    const f = campoSchemaCodex({ type: 'string', title: 'Sua resposta' }, 'resposta', true); form.appendChild(f.el); conteudo.push({ name: 'resposta', read: f.read });
+  }
+  if (tipo === 'permissions' && ev.permissions) { const pre = document.createElement('pre'); pre.textContent = JSON.stringify(ev.permissions, null, 2); form.appendChild(pre); }
+  const status = document.createElement('p'); status.className = 'cxq-status'; status.setAttribute('role', 'status');
+  const acoes = document.createElement('div'); acoes.className = 'cxq-acoes';
+  const enviar = document.createElement('button'); enviar.type = 'submit'; enviar.className = 'cx-acao principal'; enviar.textContent = tipo === 'permissions' ? 'Permitir' : url ? 'Já concluí' : 'Responder';
+  const cancelar = document.createElement('button'); cancelar.type = 'button'; cancelar.className = 'cx-acao'; cancelar.textContent = 'Cancelar';
+  acoes.append(enviar, cancelar); form.append(status, acoes); el.appendChild(form);
+  const estado = { el, done: false, isBlocking: ev.isBlocking !== false,
+    persisteEntreTurnos: tipo === 'async' || tipo === 'elicitation' || ev.isBlocking === false };
+  P.questions.set(key, estado);
+  const responder = async (action) => {
+    if (estado.done) return;
+    const answers = Object.create(null), content = Object.create(null);
+    try {
+      if (action === 'accept') {
+        if (!form.reportValidity()) return;
+        for (const f of campos) { const a = f.read(); if (!a.length) throw new Error('Responda todas as perguntas antes de enviar.'); answers[f.key] = { answers: a }; }
+        for (const f of conteudo) { const v = f.read(); if (v !== undefined) content[f.name] = v; }
+      }
+      enviar.disabled = cancelar.disabled = true; status.textContent = 'Enviando…';
+      const r = await window.api.paneRespond({ paneId: P.id, key: ev.key, action, answers, content });
+      if (r === false || r && (r.ok === false || r.error)) throw new Error(r && r.error || 'A resposta não chegou. Tente de novo.');
+      encerrarPerguntaCodex(P, key, action === 'accept' ? 'Resposta enviada.' : 'Pedido cancelado.');
+    } catch (e) { enviar.disabled = cancelar.disabled = false; status.textContent = e.message || 'Não foi possível responder.'; }
+  };
+  form.onsubmit = e => { e.preventDefault(); responder('accept'); };
+  cancelar.onclick = () => responder('cancel');
+  if (historico) encerrarPerguntaCodex(P, key, 'Pergunta do histórico.');
+  scroll(P);
+}
+function renderizarHistorico(P, m) {
+  const role = m.role || m.kind || m.type;
+  if (role === 'user') userMsg(P, m.text || '', m.attachments || m.anexos);
+  else if (['bot', 'assistant'].includes(role)) {
+    const b = botBlock(P, m.id || 'h' + Math.random()); b.raw = m.text || ''; b.el.innerHTML = marked.parse(b.raw); botoesDeCopia(b);
+    P.hist.push({ quem: P.engine === 'codex' ? 'Codex' : 'Claude', texto: b.raw });
+  } else if (role === 'tool') {
+    const id = m.id || 'h' + Math.random(); toolStart(P, id, m.name, m.arg, { edicao: m.edicao, tarefas: m.tarefas });
+    if (m.output) toolOutput(P, id, typeof m.output === 'string' ? m.output : JSON.stringify(m.output));
+    toolEnd(P, id, m.output || '', m.error);
+  } else if (role === 'plan') planoCodex(P, m);
+  else if (['generated-image', 'image'].includes(role)) imagemGeradaCodex(P, m);
+  else if (role === 'agentes') agentesEvento(P, m);
+  else if (role === 'question') perguntaCodex(P, m, true);
+  else if (role === 'goal') metaCodex(P, m);
+  else if (role === 'settings') aplicarSettingsCodex(P, m);
+  else if (role === 'waiting') esperaCodex(P, m);
+  else if (['compactou', 'compaction'].includes(role)) estadoCodex(P, 'compactacao', 'Conversa resumida', m.text || 'Resumo salvo no histórico.', true);
+  else if (role === 'note' && m.text) note(P, m.text, m.error);
 }
 
 /* ============ arvore de arquivos ============ */
@@ -2492,10 +2863,8 @@ const MODOS = {
   ],
 };
 const esforcoDe = (P) => P.effort;
-/* O Codex nao tem "Plano" nem "Editar automaticamente". Antes, um modo que nao existia no
-   outro motor caia no ULTIMO da lista — que e "Sem pedir permissao", o mais perigoso. Ou seja:
-   por um chat no modo mais seguro e trocar pro Codex ligava o modo mais solto, calado.
-   Agora cai no equivalente seguro, e no pior caso no primeiro da lista, que e "Manual". */
+/* Plano no Codex é collaborationMode, separado da permissão. A troca de motor preserva
+   essa intenção; aqui a permissão equivalente continua Manual, nunca a opção mais solta. */
 const MODO_EQUIVALENTE = { 'auto-edit': 'auto', plan: 'manual' };
 const modoDe = (P) => {
   const lista = MODOS[P.engine] || MODOS.claude;
@@ -2736,6 +3105,7 @@ async function trocarEsforco(P, id) {
   P.effort = id; P.ultraAvisado = false;
   lembrarEscolhaDaPasta(P);
   if (P.engine === 'claude' && P.started) await desligarMotor(P);
+  if (P.engine === 'codex' && !modeloPorCreditos(P.model)) await mudarEscolhasCodex(P, { effort: id });
   savePanes();
 }
 
@@ -2864,6 +3234,7 @@ function novoMenu(P) {
   const modal = $('.p-modal', P.el);
   modal.classList.remove('hidden');
   modal.classList.add('como-menu');
+  modal.dataset.codexSurface = 'menu';
   modal.onclick = (e) => { if (e.target === modal) fecharMenus(); };
   const cx = $('.modal-cx', modal);
   cx.className = 'modal-cx';
@@ -2949,7 +3320,9 @@ async function menuModelos(P) {
         if (!ef.find(e => e.id === P.effort)) P.effort = mo.padraoEffort || ef[0].id;
         fillModels(P);
         lembrarEscolhaDaPasta(P);        // esta pasta passa a nascer com este cérebro
-        await desligarMotor(P);
+        if (P.engine === 'codex' && !mudouOrigem && !vaiPorCreditos) {
+          await mudarEscolhasCodex(P, { model: mo.id, effort: P.effort });
+        } else await desligarMotor(P);
         if (mudouOrigem) {
           if (P.hist.length) P.passarContexto = montarContexto(P, true, 'troca-de-cobranca');
           P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
@@ -3201,6 +3574,7 @@ async function janelaConectores(P) {
   const modal = $('.p-modal', P.el);
   const cx = $('.modal-cx', modal);
   modal.classList.remove('hidden');
+  modal.dataset.codexSurface = 'connectors';
   modal.onclick = (e) => { if (e.target === modal) fecharModal(P); };
   cx.onclick = (e) => e.stopPropagation();
 
@@ -3865,6 +4239,7 @@ async function janelaConta(P, motorPedido) {
   const eng = motorPedido || P.engine;
   const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
   modal.classList.remove('hidden');
+  modal.dataset.codexSurface = eng === 'codex' ? 'account' : 'account-claude';
   modal.onclick = (e) => { if (e.target === modal) fecharModal(P); };
   cx.onclick = (e) => e.stopPropagation();
   const motor = eng === 'codex' ? 'Codex' : 'Claude';
@@ -3947,6 +4322,64 @@ const USO = { claude: null, codex: null };
 const USO_FECHADO = { claude: null, codex: null };
 const USO_QUANDO = { claude: 0, codex: 0 };
 const USO_LENDO = { claude: false, codex: false };
+
+const codexGlobais = { contaTimer: null, conectoresTimer: null, lendoConta: false, lendoConectores: false, vistos: new Map() };
+function receberEventoGlobalCodex(ev) {
+  if (!ev) return;
+  const destino = ev.destino || 'local';
+  const chave = JSON.stringify([destino, ev.kind, ev.method, ev.text, ev.rateLimits, ev.status, ev.serverName, ev.success]);
+  const agora = Date.now();
+  if (agora - (codexGlobais.vistos.get(chave) || 0) < 1000) return;
+  codexGlobais.vistos.set(chave, agora);
+  if (codexGlobais.vistos.size > 80) codexGlobais.vistos.delete(codexGlobais.vistos.keys().next().value);
+  if (ev.kind === 'note') {
+    const alvo = [focusPane, ...panes.values()].find(P => P && P.engine === 'codex' && (NA_VPS(P.cwd) ? 'vps' : 'local') === destino);
+    if (alvo) note(alvo, ev.text || 'Aviso do Codex', ev.error);
+    return;
+  }
+  // O cartão da barra lateral representa a conta do Mac. A VPS tem sua própria conta.
+  if (destino !== 'local') return;
+  if (ev.kind === 'account' && ev.rateLimits) {
+    const jan = x => x ? { pct: Math.round(x.usedPercent || 0), reseta: (x.resetsAt || 0) * 1000, mins: x.windowDurationMins || 0 } : null;
+    const r = ev.rateLimits;
+    USO.codex = { ...(USO.codex || {}), sessao: jan(r.primary), semana: jan(r.secondary),
+      limitado: (r.primary && r.primary.usedPercent >= 100) || (r.secondary && r.secondary.usedPercent >= 100) || false };
+    USO_QUANDO.codex = agora;
+    if (contaCache.codex) Object.assign(contaCache.codex, USO.codex);
+    for (const P of panes.values()) if (P.engine === 'codex' && !NA_VPS(P.cwd)) pintarUso(P);
+    if (contaCache.codex) pintarContaLateral('codex');
+    return;
+  }
+  if (ev.kind === 'account' && !codexGlobais.lendoConta && !codexGlobais.contaTimer) {
+    codexGlobais.contaTimer = setTimeout(async () => {
+      codexGlobais.contaTimer = null; codexGlobais.lendoConta = true;
+      try {
+        await pintarContaLateral('codex', true);
+        const c = contaCache.codex;
+        if (c) { USO.codex = { ...(USO.codex || {}), sessao: c.sessao || null, semana: c.semana || null, limitado: !!c.limitado };
+          USO_QUANDO.codex = Date.now(); for (const P of panes.values()) if (P.engine === 'codex') pintarUso(P); }
+        for (const P of panes.values()) {
+          const modal = $('.p-modal', P.el);
+          if (modal && !modal.classList.contains('hidden') && modal.dataset.codexSurface === 'account') await janelaConta(P, 'codex');
+        }
+      } catch (e) { console.warn('Não foi possível atualizar a conta do Codex:', e.message); }
+      finally { codexGlobais.lendoConta = false; }
+    }, 180);
+  }
+  if (ev.kind === 'connectors' && !codexGlobais.lendoConectores && !codexGlobais.conectoresTimer) {
+    codexGlobais.conectoresTimer = setTimeout(async () => {
+      codexGlobais.conectoresTimer = null; codexGlobais.lendoConectores = true;
+      try {
+        // Lista fechada não precisa buscar nada: sua abertura já consulta o estado atual.
+        const P = [...panes.values()].find(p => { const m = $('.p-modal', p.el);
+          return p.engine === 'codex' && m && !m.classList.contains('hidden') && m.dataset.codexSurface === 'connectors'; });
+        if (P) await janelaConectores(P);
+      } catch (e) { console.warn('Não foi possível atualizar os conectores:', e.message); }
+      finally { codexGlobais.lendoConectores = false; }
+    }, 180);
+  }
+}
+if (window.api.onCodexEvent) window.api.onCodexEvent(receberEventoGlobalCodex);
 
 async function lerUso(engine, forcar) {
   if (!window.api || !window.api.usoLer) return;
@@ -4117,16 +4550,16 @@ async function anexar(P, caminhos) {
 
 function fichaAnexo(a, comX, aoTirar, P) {
   const d = document.createElement('div');
-  d.className = 'anx' + (P ? ' clicavel' : '');
-  if (P) d.onclick = (e) => { if (!e.target.closest('.anx-x')) verArquivo(P, a.path); };
-  d.title = a.path;
+  d.className = 'anx' + (P && a.path ? ' clicavel' : '');
+  if (P && a.path) d.onclick = (e) => { if (!e.target.closest('.anx-x')) verArquivo(P, a.path); };
+  d.title = a.path || a.nome || a.name || 'Imagem anexada';
   d.innerHTML = '<div class="anx-mini"></div><div class="anx-txt">'
     + '<span class="anx-n"></span><span class="anx-s"></span></div>'
     + (comX ? '<button class="anx-x">' + ico('x') + '</button>' : '');
   const mini = $('.anx-mini', d);
   if (a.mini) { const img = document.createElement('img'); img.src = a.mini; mini.appendChild(img); }
   else mini.innerHTML = ico(TIPO_ICO(a.ext || ''));
-  $('.anx-n', d).textContent = a.nome;
+  $('.anx-n', d).textContent = a.nome || a.name || String(a.path || '').split('/').pop() || 'Imagem anexada';
   $('.anx-s', d).textContent = [(a.ext || '').toUpperCase(), tamanhoBonito(a.bytes)].filter(Boolean).join(' · ');
   if (comX) $('.anx-x', d).onclick = () => aoTirar(a);
   return d;
@@ -4549,6 +4982,8 @@ async function openSession(s, el) {
   await window.api.paneStop({ paneId: P.id, engine: P.engine });
   escondePerm(P);
   P.engine = s.engine; P.cwd = s.cwd; P.resumeId = s.id; P.sessaoId = null; P.started = false; P.busy = false; P.model = '';
+  P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
+  P.effectiveSettings = null; P.settingsPending = false;
   P.sessaoFile = s.file || '';   // guardado para a conversa voltar cheia quando reabrir o app
   P.titulo = s.title || ''; P.hist = [];
   P.blocks.clear(); P.tools.clear(); P.chat.innerHTML = ''; P.rolagem = null;   // solta a mensagem-ancora da memoria
@@ -4559,11 +4994,7 @@ async function openSession(s, el) {
 
   note(P, 'Conversa: ' + s.title);
   const msgs = await window.api.sessionHistory({ engine: s.engine, file: s.file });
-  for (const m of (msgs || [])) {
-    if (m.role === 'user') userMsg(P, m.text);
-    else if (m.role === 'bot') { const b = botBlock(P, 'h' + Math.random()); b.raw = m.text; b.el.innerHTML = marked.parse(m.text); botoesDeCopia(b); P.hist.push({ quem: P.engine === 'codex' ? 'Codex' : 'Claude', texto: m.text }); }
-    else if (m.role === 'tool') { toolStart(P, 'h' + Math.random(), m.name, m.arg); }
-  }
+  for (const m of (msgs || [])) renderizarHistorico(P, m);
   document.querySelectorAll('.tool-st').forEach(x => { if (x.classList.contains('run')) { x.className = 'tool-st ok'; x.innerHTML = ico('check'); } });
   note(P, '— daqui pra baixo é a conversa de agora —');
   scroll(P, true);
@@ -4580,6 +5011,8 @@ async function novaConversa(engine) {
   // o "religar" voltar para a conversa velha em vez desta nova
   P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.hist = [];
   P.effort = EF_NOVO; P.ultraAvisado = false;   // conversa nova sempre volta ao Extra alto
+  P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
+  P.effectiveSettings = null; P.settingsPending = false;
   P.blocks.clear(); P.tools.clear(); voltarVazio(P); pintarNome(P);
   fillModels(P); paintEngine(P); setDot(P, 'off'); setFocus(P);
   marcarAbertas();          // a conversa que estava aqui deixou de estar aberta
