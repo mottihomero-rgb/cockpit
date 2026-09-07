@@ -1286,7 +1286,10 @@ function userMsg(P, text, anexos) {
     cx.classList.remove('hidden');
     for (const a of anexos) cx.appendChild(fichaAnexo(a, false, null, P));
   }
-  $('.msg-body', d).textContent = text;
+  const corpo = $('.msg-body', d);
+  corpo.textContent = text;
+  // print colado sem uma palavra escrita: some com a bolha vazia que ficaria embaixo da fichinha
+  if (!text) corpo.classList.add('hidden');
   // marca onde esta mensagem entra na fila de edições: é o que permite voltar no tempo
   d.dataset.edicoes = String((P.edicoes || []).length);
   d.dataset.hist = String(P.hist.length);
@@ -2113,7 +2116,7 @@ function note(P, text, isErr) {
    no quadro…" e ele nao distinguiria um do outro na lista. Entao tiro o pedaco colado, fico
    com o que ELE digitou e, so se ele nao digitou nada, uso o resumo do desenho
    ("Fluxo de 3 caixas e 1 decisao, de Inicio ate Descarta"). */
-function nomeDaConversa(P, text) {
+function nomeDaConversa(P, text, anexos) {
   const curto = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, 70);
   const q = P.quadroColado;
   const colado = q && q.texto ? q.texto.trim() : '';
@@ -2122,20 +2125,40 @@ function nomeDaConversa(P, text) {
     if (dele.length >= 4) return dele;
     if (q.resumo) return curto(q.resumo);
   }
-  return curto(text);
+  const dele = curto(text);
+  if (dele) return dele;
+  /* Print colado sem uma palavra: o nome sai do proprio arquivo, senao a aba nasce sem nome
+     e ele nao acha a conversa na lista depois. */
+  if (anexos && anexos.length) {
+    const nome = String(anexos[0].path || '').split('/').pop() || 'imagem';
+    return curto(anexos.length > 1 ? (anexos.length + ' arquivos: ' + nome) : nome);
+  }
+  if (q && q.resumo) return curto(q.resumo);
+  return dele;
+}
+/* Monta o que SAI para o motor. Quando ele nao digitou nada, a mensagem E o anexo: nao pode
+   comecar com duas linhas em branco, senao o motor recebe um texto que abre vazio. */
+function montarEnvio(text, anexos) {
+  if (!anexos || !anexos.length) return text;
+  const lista = 'Arquivos que anexei (abra cada um antes de responder):\n'
+    + anexos.map(a => '- ' + a.path).join('\n');
+  return text ? (text + '\n\n' + lista) : lista;
 }
 async function send(P) {
   const inp = $('.p-input', P.el);
   const text = inp.value.trim();
-  if (!text) return;
+  /* Print colado sozinho TEM de sair. Antes o envio exigia texto: ele colava a imagem, apertava
+     Enter e nao acontecia nada — a fichinha ficava presa no campo e ele achava que tinha
+     mandado. Agora o anexo (ou o desenho do quadro) ja basta; so o campo totalmente vazio,
+     sem nada anexado, e que nao envia. */
+  if (!text && !(P.anexos || []).length && !P.quadroColado) return;
 
   if (P.busy) {
     const anx = P.anexos.slice(); P.anexos = []; pintarAnexos(P);
     P.quadroColado = null;
     inp.value = ''; inp.style.height = 'auto';
     const bolha = userMsg(P, text, anx);
-    let envio = text;
-    if (anx.length) envio += '\n\nArquivos que anexei (abra cada um antes de responder):\n' + anx.map(a => '- ' + a.path).join('\n');
+    const envio = montarEnvio(text, anx);
     // ja havia uma esperando? Junta em vez de trocar: o `P.queued = envio` de antes apagava a
     // primeira em silencio — a bolha dela ficava na tela e a mensagem nunca era enviada.
     const juntar = (nova) => { P.queued = P.queued ? (P.queued + '\n\n' + nova) : nova; };
@@ -2145,10 +2168,10 @@ async function send(P) {
       if (nota) nota.textContent = r && r.ok
         ? 'Entregue no meio do trabalho. Ele escolhe se atende agora ou ao terminar.'
         : 'Não deu para entrar agora, então ficou na fila.';
-      if (!(r && r.ok)) { juntar(envio); marcarNaFila(P, bolha, text); }
+      if (!(r && r.ok)) { juntar(envio); marcarNaFila(P, bolha, text || envio); }
     } else {
       juntar(envio);
-      marcarNaFila(P, bolha, text);
+      marcarNaFila(P, bolha, text || envio);
       avisoEnvio(P, 'Na fila. Começa assim que ele terminar.');
     }
     return;
@@ -2157,7 +2180,7 @@ async function send(P) {
   P.anexos = []; pintarAnexos(P);
   inp.value = ''; inp.style.height = 'auto';
   const bolha = userMsg(P, text, anexos);
-  if (!P.titulo) { P.titulo = nomeDaConversa(P, text); pintarNome(P); }
+  if (!P.titulo) { P.titulo = nomeDaConversa(P, text, anexos); pintarNome(P); }
   P.quadroColado = null;
 
   if (!P.started) {
@@ -2196,11 +2219,8 @@ async function send(P) {
   P.busy = true; P.comecouEm = Date.now(); setDot(P, 'busy');
   P.blocks.clear(); pararTrabalho(P); limparPassos(P); trabalhando(P);
   subirNaLista(P);
-  let envio = text;
-  if (anexos.length) {
-    envio += '\n\nArquivos que anexei (abra cada um antes de responder):\n'
-      + anexos.map(a => '- ' + a.path).join('\n');
-  }
+  const paraOCampo = montarEnvio(text, anexos);   // sem os enfeites (contexto/ultracode) grudados
+  let envio = paraOCampo;
   /* O contexto entra na FRENTE do 'envio' (que ja carrega a lista de anexos), nunca do 'text' cru:
      colando no 'text' a lista "Arquivos que anexei" era jogada fora, e o caminho do print ou do
      desenho do quadro nunca chegava ao motor — a fichinha aparecia na tela e nada era lido. */
@@ -2222,8 +2242,12 @@ async function send(P) {
       note(P, 'O motor não estava no ar e a mensagem não chegou. Manda de novo que ele religa.', true);
       /* o texto volta para o campo E a bolha sai da tela junto. Antes so o texto voltava: a
          bolha ficava, e cada Enter empilhava mais uma bolha e mais um item no P.hist. */
-      marcarNaFila(P, bolha, text);
+      marcarNaFila(P, bolha, text || paraOCampo);
       devolverFilaAoCampo(P, text);
+      /* o anexo tambem volta para o campo. Sem isto, o print que ele colou sem escrever nada
+         sumia de vez quando o motor estava fora do ar: o texto voltava vazio e a fichinha
+         ja tinha sido apagada do campo la em cima. */
+      if (anexos.length) { P.anexos = anexos.slice(); pintarAnexos(P); }
     }
   }
   catch (e) { P.busy = false; setDot(P, 'idle'); note(P, 'Falhou: ' + (e && e.message || e), true); }
