@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const codexProtocol = require('./codex-protocol');
 
 const plataforma = require('./plataforma');
 const { EH_WIN, acharBin, spawnBin, abrirPty } = plataforma;
@@ -140,7 +141,10 @@ function emit(paneId, kind, data) {
   // chave velha guardada a sessao inteira, responder "sim" ali escrevia num processo morto e
   // fazia aparecer "a conexao caiu" num chat que estava vivo.
   if (kind === 'turn-end' || kind === 'engine-down') {
-    for (const [k, a] of pendingApprovals) if (a && a.paneId === paneId) pendingApprovals.delete(k);
+    for (const [k, a] of pendingApprovals) {
+      const continua = a && (a.kind === 'async' || a.kind === 'elicitation' || a.kind === 'input' && a.isBlocking === false);
+      if (a && a.paneId === paneId && (kind === 'engine-down' || !continua)) pendingApprovals.delete(k);
+    }
   }
   const msg = { paneId, kind, ...data };
   if (win && !win.isDestroyed()) win.webContents.send('pane:event', msg);
@@ -178,6 +182,14 @@ function avisarWeb(canal, dados) {
 const codexConns = new Map();     // destino ('local' | 'vps') -> conexao
 const codexPaneDest = new Map();  // paneId -> destino
 const codexPaneBilling = new Map(); // paneId -> 'plan' | 'api'
+const codexPaneSettings = new Map(); // escolhas efetivas por conversa, nunca configuração global
+const codexPaneAgents = new Map();
+const codexAgentOwners = new Map(); // thread de agente -> painel pai, sem misturar turnos
+const codexSettingsRevision = new Map();
+const codexPendingSettings = new Map(); // escolhas que só serão efetivas no próximo turn/start
+const codexTurnRevision = new Map();
+const codexProcessPanes = new Map();
+const codexPlanText = new Map();
 const codexApiCortado = new Set();  // evita mandar varios pedidos de parada pelo mesmo teto
 const codex = {
   threadToPane: new Map(),   // threadId -> paneId
@@ -278,14 +290,15 @@ function escreverCodex(c, obj) {
   catch (e) { anota('nao consegui falar com o codex:', e && e.message); return false; }
 }
 
-function codexReq(destino, method, params) {
+function codexReq(destino, method, params, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
     const c = conexaoCodex(destino);
     if (!c.proc) return reject(new Error('codex fora do ar' + (destino !== 'local' ? ' na ' + destino : '')));
     const id = ++c.id;
-    c.pend.set(id, { resolve, reject });
+    const timer = setTimeout(() => { c.pend.delete(id); reject(new Error('O Codex não respondeu a ' + method + ' a tempo.')); }, timeoutMs);
+    c.pend.set(id, { resolve: v => { clearTimeout(timer); resolve(v); }, reject: e => { clearTimeout(timer); reject(e); } });
     if (!escreverCodex(c, { jsonrpc: '2.0', id, method, params })) {
-      c.pend.delete(id);
+      c.pend.delete(id); clearTimeout(timer);
       reject(new Error('o Codex caiu antes de receber o pedido'));
     }
   });
@@ -294,7 +307,7 @@ function codexNote(destino, method, params) {
   escreverCodex(conexaoCodex(destino), { jsonrpc: '2.0', method, params });
 }
 function codexReply(destino, id, result) {
-  escreverCodex(conexaoCodex(destino), { jsonrpc: '2.0', id, result });
+  return escreverCodex(conexaoCodex(destino), { jsonrpc: '2.0', id, result });
 }
 
 const pendingApprovals = new Map();  // approvalKey -> {rpcId, type}
@@ -310,60 +323,183 @@ function codexIncoming(destino, m) {
   // servidor pedindo algo (aprovacao)
   if (m.id !== undefined && m.method) { codexServerRequest(destino, m); return; }
   // notificacao
-  if (m.method) codexNotification(m.method, m.params || {});
+  if (m.method) codexNotification(m.method, m.params || {}, destino);
 }
 
 function paneOf(params) {
-  const tid = params.threadId || (params.thread && params.thread.id);
-  return tid ? codex.threadToPane.get(tid) : undefined;
+  const tid = params.threadId || params.thread_id || params.conversationId || (params.thread && params.thread.id);
+  return tid ? (codex.threadToPane.get(tid) ?? codexAgentOwners.get(tid)) : undefined;
 }
 
 function codexServerRequest(destino, m) {
-  const pane = paneOf(m.params || {});
+  const params = m.params || {};
+  const pane = paneOf(params);
   const meth = m.method;
-  const key = 'ap_' + m.id;
-
+  const key = 'ap_' + destino + '_' + m.id;
+  if (meth === 'currentTime/read') { codexReply(destino, m.id, { currentTimeAt: new Date().toISOString() }); return; }
+  if (pane === undefined && ['item/commandExecution/requestApproval', 'execCommandApproval', 'item/fileChange/requestApproval', 'applyPatchApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'mcpServer/elicitation/request'].includes(meth)) {
+    escreverCodex(conexaoCodex(destino), { jsonrpc: '2.0', id: m.id, error: { code: -32602, message: 'Não foi possível relacionar este pedido a um chat aberto.' } });
+    codexGlobal(destino, 'note', { text: 'Um pedido do Codex não encontrou o chat de origem. Nenhum acesso foi concedido.', error: true });
+    return;
+  }
+  const base = { rpcId: m.id, destino, paneId: pane, threadId: params.threadId, turnId: params.turnId };
   if (meth === 'item/commandExecution/requestApproval' || meth === 'execCommandApproval') {
-    pendingApprovals.set(key, { rpcId: m.id, kind: 'cmd', destino, paneId: pane });
-    emit(pane, 'approval', {
-      key, title: destino === 'local' ? 'Rodar comando no seu Mac' : 'Rodar comando na ' + destino.toUpperCase(),
-      detail: (m.params.command || '') + (m.params.cwd ? '\nem ' + m.params.cwd : ''),
-      reason: m.params.reason || '',
+    pendingApprovals.set(key, { ...base, kind: 'cmd', legacy: meth === 'execCommandApproval' });
+    emit(pane, 'approval', { key,
+      title: destino === 'local' ? 'Rodar comando no seu Mac' : 'Rodar comando na ' + destino.toUpperCase(),
+      detail: (Array.isArray(params.command) ? params.command.join(' ') : params.command || '') + (params.cwd ? '\nem ' + params.cwd : ''),
+      reason: params.reason || '',
     });
     return;
   }
   if (meth === 'item/fileChange/requestApproval' || meth === 'applyPatchApproval') {
-    pendingApprovals.set(key, { rpcId: m.id, kind: 'file', destino, paneId: pane });
-    emit(pane, 'approval', {
-      key, title: 'Alterar arquivos',
-      detail: m.params.grantRoot ? 'em ' + m.params.grantRoot : '',
-      reason: m.params.reason || '',
-    });
+    pendingApprovals.set(key, { ...base, kind: 'file', legacy: meth === 'applyPatchApproval' });
+    emit(pane, 'approval', { key, title: 'Alterar arquivos', detail: params.grantRoot ? 'em ' + params.grantRoot : '', reason: params.reason || '' });
     return;
   }
   if (meth === 'item/permissions/requestApproval') {
-    pendingApprovals.set(key, { rpcId: m.id, kind: 'perm', paneId: pane });
-    emit(pane, 'approval', {
-      key, title: 'Pedir mais acesso ao Mac',
-      detail: m.params.reason || JSON.stringify(m.params.permissions || {}).slice(0, 300),
-      reason: '',
-    });
+    pendingApprovals.set(key, { ...base, kind: 'perm', permissions: params.permissions || {} });
+    emit(pane, 'approval', { key, title: 'Permitir acesso adicional neste trabalho',
+      detail: JSON.stringify(params.permissions || {}, null, 2), reason: params.reason || '' });
     return;
   }
-  if (meth === 'currentTime/read') { codexReply(destino, m.id, { currentTimeAt: new Date().toISOString() }); return; }
-  // qualquer outro pedido: responde vazio pra nao travar
-  codexReply(destino, m.id, {});
+  if (meth === 'item/tool/requestUserInput') {
+    pendingApprovals.set(key, { ...base, kind: 'input', questions: params.questions || [], isBlocking: params.isBlocking !== false });
+    emit(pane, 'question', { key, questionKind: 'requestUserInput', questions: params.questions || [], isBlocking: params.isBlocking !== false });
+    return;
+  }
+  if (meth === 'mcpServer/elicitation/request') {
+    pendingApprovals.set(key, { ...base, kind: 'elicitation', mode: params.mode, schema: params.requestedSchema });
+    emit(pane, 'question', { key, questionKind: 'elicitation', message: params.message || '', serverName: params.serverName,
+      schema: params.requestedSchema || null, mode: params.mode, url: params.url || '', isBlocking: true });
+    return;
+  }
+  // Não responder {}: isso parecia aprovação e descartava perguntas. Ferramentas
+  // não implementadas recebem erro explícito, sem executar nem conceder acesso.
+  escreverCodex(conexaoCodex(destino), { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'O Cockpit não implementa este pedido: ' + meth } });
+  const text = meth === 'account/chatgptAuthTokens/refresh' ? 'O Codex precisa renovar o login. Abra Conta para entrar novamente.' : 'O motor pediu um recurso ainda indisponível: ' + meth;
+  if (pane !== undefined) emit(pane, 'note', { text, error: true });
+  else codexGlobal(destino, 'note', { text, error: true });
 }
 
-function codexNotification(method, params) {
+function codexGlobal(destino, kind, data) {
+  // Eventos de conta/conectores não carregam threadId. Distribuir só ao destino
+  // correto e também pelo canal global para quando nenhum chat estiver aberto.
+  const payload = { destino, kind, ...data };
+  if (win && !win.isDestroyed()) win.webContents.send('codex:event', payload);
+  avisarWeb('codex:event', payload);
+  for (const [paneId, d] of codexPaneDest) if (d === destino) emit(paneId, kind, { ...data, globalEvent: true });
+}
+
+function codexEffectiveSettings(pane, server = {}) {
+  const previous = codexPaneSettings.get(pane) || {};
+  const settings = codexProtocol.normalizeSettings(previous, {
+    ...server,
+    effort: server.effort !== undefined ? server.effort : server.reasoningEffort,
+    serviceTier: Object.prototype.hasOwnProperty.call(server, 'serviceTier') && server.serviceTier === null ? 'default' : server.serviceTier,
+  });
+  codexPaneSettings.set(pane, settings);
+  codexSettingsRevision.set(pane, (codexSettingsRevision.get(pane) || 0) + 1);
+  const requested = codexPendingSettings.get(pane);
+  const pending = requested && ['model', 'effort', 'serviceTier', 'collaborationMode'].some(key => requested[key] && requested[key] !== settings[key]);
+  if (requested && !pending) codexPendingSettings.delete(pane);
+  emit(pane, 'settings', { ...settings, effective: true, pending: !!pending,
+    ...(pending ? { requestedSettings: requested } : {}),
+    approvalPolicy: server.approvalPolicy, sandboxPolicy: server.sandboxPolicy || server.sandbox });
+  return settings;
+}
+
+function codexAgentItem(pane, item) {
+  let agents = codexPaneAgents.get(pane);
+  if (!agents) { agents = new Map(); codexPaneAgents.set(pane, agents); }
+  const ids = item.type === 'subAgentActivity' ? [item.agentThreadId] : [...new Set([...(item.receiverThreadIds || []), ...Object.keys(item.agentsStates || {})])];
+  for (const id of ids) {
+    codexAgentOwners.set(id, pane);
+    const state = (item.agentsStates || {})[id] || {};
+    const status = state.status || (item.kind === 'completed' ? 'completed' : item.kind === 'interrupted' ? 'interrupted' : 'running');
+    if (!agents.has(id)) {
+      emit(pane, 'agentes', { ev: 'inicio', id, toolId: item.id, desc: item.agentPath || item.prompt || 'Agente Codex',
+        tipo: item.model || 'Codex', classe: 'local_agent', prompt: item.prompt || '', em: Date.now() });
+    }
+    if (['completed', 'errored', 'shutdown', 'notFound', 'interrupted'].includes(status)) {
+      emit(pane, 'agentes', { ev: 'fim', id, estado: status === 'errored' || status === 'notFound' ? 'failed' : status,
+        resumo: state.message || '', em: Date.now() });
+    } else emit(pane, 'agentes', { ev: 'andamento', id, desc: item.prompt || item.agentPath || '', resumo: state.message || '', ferramenta: item.tool || '', em: Date.now() });
+    agents.set(id, status);
+  }
+}
+
+function codexRichItem(pane, item, complete) {
+  if (item.type === 'collabAgentToolCall' || item.type === 'subAgentActivity') { codexAgentItem(pane, item); return true; }
+  if (item.type === 'plan') {
+    if (complete) { codexPlanText.delete(item.id); emit(pane, 'plan', { id: item.id, text: item.text || '', complete: true }); }
+    return true;
+  }
+  if (item.type === 'sleep') {
+    emit(pane, 'waiting', { id: item.id, status: complete ? 'completed' : 'waiting', duration: item.durationMs, until: complete ? null : Date.now() + item.durationMs, message: complete ? 'Espera encerrada' : 'Aguardando para continuar' });
+    return true;
+  }
+  if (item.type === 'imageGeneration') {
+    if (complete) emit(pane, 'generated-image', codexProtocol.imageData(item));
+    else emit(pane, 'tool-start', { id: item.id, name: 'Criando imagem', arg: item.revisedPrompt || '' });
+    if (complete) emit(pane, 'tool-end', { id: item.id, output: item.savedPath || (item.failure ? shortJson(item.failure) : 'Imagem criada'), error: !!item.failure });
+    return true;
+  }
+  if (item.type === 'contextCompaction') {
+    emit(pane, complete ? 'compactou' : 'waiting', complete ? {} : { status: 'compacting', message: 'Organizando o contexto da conversa' });
+    return true;
+  }
+  return false;
+}
+
+function codexNotification(method, params, destino = 'local') {
+  if (['account/updated', 'account/rateLimits/updated', 'account/login/completed', 'mcpServer/startupStatus/updated', 'mcpServer/oauthLogin/completed', 'app/list/updated'].includes(method)) {
+    codexGlobal(destino, method.startsWith('account/') ? 'account' : 'connectors', { method, ...params });
+    return;
+  }
+  if (method === 'command/exec/outputDelta' || method === 'process/outputDelta') {
+    const pane = codexProcessPanes.get(destino + ':' + params.processId) ?? paneOf(params);
+    const data = { id: params.itemId || params.processId || params.callId, text: codexProtocol.decodeOutput(params.deltaBase64 ?? params.chunk ?? params.delta, params.deltaBase64 !== undefined || params.chunk !== undefined), stream: params.stream };
+    if (pane !== undefined) emit(pane, 'tool-output', data);
+    else codexGlobalProcess(destino, data);
+    return;
+  }
+  if (['warning', 'configWarning', 'guardianWarning', 'deprecationNotice'].includes(method)) {
+    const data = { text: params.message || params.summary || params.details || 'Aviso do Codex' };
+    const target = paneOf(params);
+    if (target !== undefined) emit(target, 'note', data); else codexGlobal(destino, 'note', data);
+    return;
+  }
+  if (method === 'serverRequest/resolved') {
+    const key = 'ap_' + destino + '_' + params.requestId;
+    const pending = pendingApprovals.get(key); pendingApprovals.delete(key);
+    if (pending) emit(pending.paneId, 'question-resolved', { key });
+    return;
+  }
   if (method === 'thread/started') {
     return; // o paneamento e feito no thread/start
   }
   const pane = paneOf(params);
   if (pane === undefined) return;
+  const sourceThread = params.threadId || params.thread && params.thread.id;
+  if (codexAgentOwners.has(sourceThread) && !codex.threadToPane.has(sourceThread)) {
+    // O turno do filho não é o turno do pai. Mostrar progresso no time sem
+    // encerrar o chat pai nem trocar seu identificador de interrupção.
+    const item = params.item || {};
+    if (method === 'turn/completed' || method === 'error') {
+      emit(pane, 'agentes', { ev: 'fim', id: sourceThread, estado: method === 'error' ? 'failed' : 'completed', resumo: params.error && params.error.message || '', em: Date.now() });
+    } else if (method === 'item/completed' && item.type === 'agentMessage') {
+      emit(pane, 'agentes', { ev: 'andamento', id: sourceThread, resumo: (item.text || '').slice(0, 600), em: Date.now() });
+    } else if (method === 'item/started') {
+      if (item.type === 'collabAgentToolCall' || item.type === 'subAgentActivity') codexAgentItem(pane, item);
+      else emit(pane, 'agentes', { ev: 'andamento', id: sourceThread, ferramenta: item.tool || item.type || '', em: Date.now() });
+    }
+    return;
+  }
 
   switch (method) {
     case 'turn/started':
+      codexTurnRevision.set(pane, (codexTurnRevision.get(pane) || 0) + 1);
       codexApiCortado.delete(pane);
       codex.paneTurn.set(pane, params.turnId || (params.turn && params.turn.id));
       emit(pane, 'busy', {});
@@ -380,24 +516,33 @@ function codexNotification(method, params) {
 
     case 'item/started': {
       const it = params.item || {};
+      if (codexRichItem(pane, it, false)) break;
+      if (it.processId) codexProcessPanes.set(destino + ':' + it.processId, pane);
       if (it.type === 'commandExecution') emit(pane, 'tool-start', { id: it.id, name: 'Terminal', arg: it.command || '' });
       else if (it.type === 'fileChange') emit(pane, 'tool-start', { id: it.id, name: 'Editando arquivo', arg: fileChangeArg(it), edicao: edicaoDoCodex(it) });
       else if (it.type === 'mcpToolCall') emit(pane, 'tool-start', { id: it.id, name: mcpName(it), arg: shortJson(it.arguments) });
+      else if (it.type === 'dynamicToolCall') emit(pane, 'tool-start', { id: it.id, name: it.tool || 'Ferramenta', arg: shortJson(it.arguments) });
       else if (it.type === 'webSearch') emit(pane, 'tool-start', { id: it.id, name: 'Pesquisando na web', arg: it.query || '' });
       break;
     }
 
-    case 'item/commandExecution/outputDelta':
-    case 'command/exec/outputDelta': {
-      const txt = decodeChunk(params.chunk ?? params.delta ?? params.data);
+    case 'item/commandExecution/outputDelta': {
+      const txt = codexProtocol.decodeOutput(params.delta ?? params.chunk ?? params.data, params.delta === undefined && params.chunk !== undefined);
       if (txt) emit(pane, 'tool-output', { id: params.itemId || params.callId, text: txt });
       break;
     }
 
     case 'item/completed': {
       const it = params.item || {};
+      if (codexRichItem(pane, it, true)) break;
       if (it.type === 'agentMessage') {
         emit(pane, 'text-final', { id: it.id, text: it.text || '', phase: it.phase || '' });
+        if (it.delivery === 'async' && it.questions && it.questions.length) {
+          const key = 'async_' + destino + '_' + it.id;
+          const questions = it.questions.map((q, i) => ({ id: q.id || 'q' + i, header: 'Pergunta ' + (i + 1), question: q.title || q.question || '', options: (q.options || []).map(o => typeof o === 'string' ? { label: o, description: '' } : o) }));
+          pendingApprovals.set(key, { kind: 'async', paneId: pane, destino, questions, threadId: params.threadId, itemId: it.id });
+          emit(pane, 'question', { key, questionKind: 'async', questions, isBlocking: false });
+        }
       } else if (it.type === 'commandExecution') {
         emit(pane, 'tool-end', {
           id: it.id,
@@ -408,6 +553,8 @@ function codexNotification(method, params) {
         emit(pane, 'tool-end', { id: it.id, output: fileChangeSummary(it), error: it.status === 'failed' });
       } else if (it.type === 'mcpToolCall') {
         emit(pane, 'tool-end', { id: it.id, output: shortJson(it.result ?? it.output), error: it.status === 'failed' });
+      } else if (it.type === 'dynamicToolCall') {
+        emit(pane, 'tool-end', { id: it.id, output: shortJson(it.contentItems), error: it.success === false || it.status === 'failed' });
       } else if (it.type === 'webSearch') {
         emit(pane, 'tool-end', { id: it.id, output: it.query || '', error: false });
       } else if (it.type === 'error') {
@@ -417,13 +564,18 @@ function codexNotification(method, params) {
     }
 
     case 'turn/completed': {
+      codexTurnRevision.set(pane, (codexTurnRevision.get(pane) || 0) + 1);
       codex.paneTurn.delete(pane);
+      emit(pane, 'waiting', { status: 'completed', message: '' });
+      if (params.turn && params.turn.error) emit(pane, 'note', { text: params.turn.error.message || shortJson(params.turn.error), error: true });
       emit(pane, 'turn-end', {});
       break;
     }
 
     case 'turn/failed':
     case 'error': {
+      codexTurnRevision.set(pane, (codexTurnRevision.get(pane) || 0) + 1);
+      codex.paneTurn.delete(pane);
       // o erro pode vir como texto ou como objeto {message, codexErrorInfo}
       const e = params.error;
       const texto = params.message
@@ -458,22 +610,47 @@ function codexNotification(method, params) {
       break;
     }
 
+    case 'turn/plan/updated':
+      emit(pane, 'plan', { steps: params.plan || [], plan: params.plan || [], explanation: params.explanation || '' });
+      break;
+    case 'item/plan/delta': {
+      const text = (codexPlanText.get(params.itemId) || '') + (params.delta || '');
+      codexPlanText.set(params.itemId, text); emit(pane, 'plan', { id: params.itemId, text, complete: false });
+      break;
+    }
+    case 'thread/goal/updated':
+      emit(pane, 'goal', { ...(params.goal || {}), goal: params.goal });
+      break;
+    case 'thread/goal/cleared':
+      emit(pane, 'goal', { status: 'cleared', objective: '', goal: null });
+      break;
+    case 'thread/settings/updated':
+      codexEffectiveSettings(pane, params.threadSettings || {});
+      break;
+    case 'model/rerouted':
+      codexEffectiveSettings(pane, { model: params.toModel });
+      emit(pane, 'note', { text: 'O motor mudou de ' + (params.fromModel || 'modelo') + ' para ' + (params.toModel || 'outro modelo') + (params.reason ? ': ' + params.reason : '.') });
+      break;
     case 'thread/compacted':
       emit(pane, 'compactou', {});
       break;
 
     case 'thread/status/changed':
-      if (params.status && params.status.type === 'idle') emit(pane, 'turn-end', {});
+      if (params.status && params.status.type === 'idle') {
+        codexTurnRevision.set(pane, (codexTurnRevision.get(pane) || 0) + 1);
+        codex.paneTurn.delete(pane);
+        emit(pane, 'turn-end', {});
+      }
       break;
   }
 }
 
-function decodeChunk(c) {
-  if (!c) return '';
-  if (typeof c === 'string') { try { return Buffer.from(c, 'base64').toString('utf8'); } catch { return c; } }
-  if (Array.isArray(c)) { try { return Buffer.from(c).toString('utf8'); } catch { return ''; } }
-  return '';
+function codexGlobalProcess(destino, data) {
+  const payload = { destino, kind: 'process-output', ...data };
+  if (win && !win.isDestroyed()) win.webContents.send('codex:event', payload);
+  avisarWeb('codex:event', payload);
 }
+function decodeChunk(c, encoded = false) { return codexProtocol.decodeOutput(c, encoded); }
 function mcpName(it) { return (it.server ? it.server + ' · ' : '') + (it.tool || 'MCP'); }
 function shortJson(v) { if (v == null) return ''; try { return typeof v === 'string' ? v : JSON.stringify(v); } catch { return String(v); } }
 function fileChangeArg(it) {
@@ -520,6 +697,7 @@ function instrucoesCasa() {
 }
 
 const CODEX_MODE = {
+  plan:        { policy: 'on-request', sandbox: 'read-only' },
   manual:      { policy: 'untrusted',  sandbox: 'workspace-write' },
   'auto-edit': { policy: 'on-request', sandbox: 'workspace-write' },
   auto:        { policy: 'on-request', sandbox: 'workspace-write' },
@@ -1245,6 +1423,7 @@ function claudeHistory(file, maxFalas, maxTools) {
 
 function codexHistory(file, maxFalas, maxTools) {
   const msgs = [];
+  const calls = new Map();
   let data = '';
   try { data = fs.readFileSync(file, 'utf8'); } catch { return msgs; }
   for (const line of data.split('\n')) {
@@ -1255,17 +1434,70 @@ function codexHistory(file, maxFalas, maxTools) {
     if (p.type === 'message') {
       if (p.role === 'developer' || p.role === 'system') continue;
       const t = tiraBlocos((p.content || []).map(c => c.text || '').join('\n'));
-      if (!t) continue;
-      // pula o contexto tecnico que o Codex injeta como se fosse fala do usuario
-      if (ehTecnico(t) || t.includes('<workspace_roots>')) continue;
-      msgs.push({ role: p.role === 'user' ? 'user' : 'bot', text: p.role === 'user' ? (semContexto(t) || t) : t });
-    } else if (p.type === 'function_call' || p.type === 'local_shell_call') {
+      const attachments = (p.content || []).filter(c => ['input_image', 'image'].includes(c.type)).map(c => ({ url: c.image_url || c.url || '', nome: 'Imagem anexada' }));
+      if (!t && !attachments.length) continue;
+      if (t && (ehTecnico(t) || t.includes('<workspace_roots>'))) continue;
+      msgs.push({ role: p.role === 'user' ? 'user' : 'bot', text: p.role === 'user' ? (semContexto(t) || t) : t, attachments, anexos: attachments });
+    } else if (['function_call', 'local_shell_call', 'custom_tool_call'].includes(p.type)) {
       let arg = '';
-      try { const a = typeof p.arguments === 'string' ? JSON.parse(p.arguments) : (p.action || p.arguments || {}); arg = a.command ? (Array.isArray(a.command) ? a.command.join(' ') : a.command) : JSON.stringify(a).slice(0, 120); } catch { arg = String(p.arguments || '').slice(0, 120); }
-      msgs.push({ role: 'tool', name: p.name === 'shell' || p.type === 'local_shell_call' ? 'Terminal' : (p.name || 'Ferramenta'), arg });
+      const raw = p.input !== undefined ? p.input : p.arguments;
+      try {
+        const a = typeof raw === 'string' ? JSON.parse(raw) : (p.action || raw || {});
+        arg = a.command ? (Array.isArray(a.command) ? a.command.join(' ') : a.command) : a.cmd || (typeof raw === 'string' ? raw : JSON.stringify(a));
+      } catch { arg = String(raw || ''); }
+      const msg = { role: 'tool', name: p.name === 'shell' || p.type === 'local_shell_call' ? 'Terminal' : (p.name || 'Ferramenta'), arg, id: p.call_id || p.id };
+      msgs.push(msg); if (msg.id) calls.set(msg.id, msg);
+    } else if (['function_call_output', 'custom_tool_call_output', 'local_shell_call_output'].includes(p.type)) {
+      const call = calls.get(p.call_id || p.id);
+      const output = typeof p.output === 'string' ? p.output : shortJson(p.output);
+      if (call) call.output = output;
+      else msgs.push({ role: 'tool', name: p.name || 'Resultado de ferramenta', arg: '', output });
+    } else if (p.type === 'image_generation_call') {
+      msgs.push({ role: 'image', kind: 'generated-image', ...codexProtocol.imageData({ ...p, savedPath: p.saved_path || p.savedPath }) });
+    } else {
+      const msg = codexProtocol.historyItem(p);
+      if (msg) msgs.push(msg);
     }
   }
   return cortarHistorico(msgs, maxFalas || 600, maxTools);
+}
+
+function codexHistoryMessages(items) {
+  const messages = items.map(item => codexProtocol.historyItem(item)).filter(Boolean);
+  return messages.filter(message => {
+    if (message.role !== 'user') return true;
+    if (!message.text) return !!(message.attachments && message.attachments.length);
+    message.text = tiraBlocos(message.text);
+    if (ehTecnico(message.text) || message.text.includes('<workspace_roots>')) return false;
+    message.text = semContexto(message.text) || message.text;
+    return true;
+  });
+}
+async function codexOfficialHistory(id, destino) {
+  await codexStart(destino);
+  let readError;
+  try {
+    const result = await codexReq(destino, 'thread/read', { threadId: id, includeTurns: true }, 12000);
+    const thread = result && result.thread;
+    if (thread && Array.isArray(thread.turns) && thread.turns.length && thread.turns.every(turn => !turn.itemsView || turn.itemsView === 'full')) {
+      return codexHistoryMessages(thread.turns.flatMap(turn => turn.items || []));
+    }
+  } catch (e) { readError = e; }
+  // Conversas novas podem usar histórico paginado. O servidor é a fonte de
+  // verdade, inclusive quando o arquivo não existe no disco do Mac (VPS).
+  const items = [];
+  let cursor = null;
+  const seen = new Set();
+  for (let page = 0; page < 100; page++) {
+    let response;
+    try { response = await codexReq(destino, 'thread/items/list', { threadId: id, limit: 100, sortDirection: 'desc', ...(cursor ? { cursor } : {}) }, 12000); }
+    catch (error) { if (!items.length) throw readError || error; break; }
+    const data = response && response.data || [];
+    items.push(...data.map(entry => entry.item || entry));
+    if (!response.nextCursor || seen.has(response.nextCursor)) break;
+    cursor = response.nextCursor; seen.add(cursor);
+  }
+  return codexHistoryMessages(items.reverse());
 }
 
 handle('sessions:claude', (_e, incluirRobos) => claudeSessions(5000, incluirRobos));
@@ -1419,13 +1651,22 @@ function acharConversaClaude(id, cwd) {
   return '';
 }
 
-handle('sessions:history', (_e, { engine, file, id, cwd }) => {
+handle('sessions:history', async (_e, { engine, file, id, cwd }) => {
   let alvo = file && fs.existsSync(file) ? file : '';
-  // o caminho guardado pode estar vazio (config antigo) ou apontar para um lugar que nao
-  // existe mais: nos dois casos, procurar pelo id
-  if (!alvo && engine === 'claude') alvo = acharConversaClaude(id, cwd);
-  if (!alvo) return [];
-  return engine === 'claude' ? claudeHistory(alvo, 600, 250) : codexHistory(alvo, 600, 250);
+  if (engine === 'claude') {
+    if (!alvo) alvo = acharConversaClaude(id, cwd);
+    return alvo ? claudeHistory(alvo, 600, 250) : [];
+  }
+  if (id) {
+    try {
+      const messages = await codexOfficialHistory(id, destinoDoCwd(cwd));
+      if (messages.length) return cortarHistorico(messages, 600, 250);
+    } catch (e) { anota('histórico oficial indisponível, usando arquivo local:', e.message); }
+  }
+  if (!alvo && id) {
+    try { const session = codexSessions(true, {}).find(x => x.id === id); if (session) alvo = session.file; } catch {}
+  }
+  return alvo ? codexHistory(alvo, 600, 250) : [];
 });
 
 /* ======================= comandos e skills ======================= */
@@ -2452,61 +2693,142 @@ handle('shell:openUrl', (_e, u) => {
   shell.openExternal(u); return { ok: true };
 });
 
-handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId, effort, billing }) => {
+function codexSettingsFor(paneId, changes = {}) {
+  const base = codexProtocol.normalizeSettings(codexPaneSettings.get(paneId) || {}, codexPendingSettings.get(paneId) || {});
+  const settings = codexProtocol.normalizeSettings(base, changes);
+  if (settings.cwd && ehRemoto(settings.cwd)) settings.cwd = partesRemoto(settings.cwd).caminho;
+  return settings;
+}
+function claudeAttachmentText(text, attachments) {
+  const content = typeof text === 'string' ? text : '';
+  const paths = (attachments || []).filter(file => file && typeof file.path === 'string' && !content.includes(file.path)).map(file => '- ' + file.path);
+  return paths.length ? content + (content ? '\n\n' : '') + 'Arquivos anexados pelo usuário:\n' + paths.join('\n') : content;
+}
+function codexThreadParams(settings, billing) {
+  const policy = CODEX_MODE[settings.approval] || CODEX_MODE.bypass;
+  return { cwd: settings.cwd || HOME, sandbox: policy.sandbox, approvalPolicy: policy.policy,
+    developerInstructions: instrucoesCasa(), ...(settings.model ? { model: settings.model } : {}),
+    ...(billing === 'api' ? { serviceTier: 'default' } : settings.serviceTier ? { serviceTier: settings.serviceTier } : {}),
+    modelProvider: billing === 'api' ? ASTRA_PROVIDER : 'openai',
+    config: codexProtocol.threadConfig(settings),
+  };
+}
+function attachCodexThread(paneId, threadId, response, settings) {
+  const previous = codex.paneToThread.get(paneId);
+  if (previous && previous !== threadId) codex.threadToPane.delete(previous);
+  codex.threadToPane.set(threadId, paneId);
+  codex.paneToThread.set(paneId, threadId);
+  const previousMode = (codexPaneSettings.get(paneId) || {}).collaborationMode || 'default';
+  codexPaneSettings.set(paneId, { ...settings, collaborationMode: previousMode });
+  codexPendingSettings.set(paneId, settings);
+  codexEffectiveSettings(paneId, response);
+  emit(paneId, 'sessao', { id: threadId, file: response.thread && response.thread.path || '' });
+}
+
+handle('pane:start', async (_e, data) => {
+  const { paneId, engine, cwd, model, approval, resumeId, effort, billing } = data;
   if (engine === 'claude') return claudeStart(paneId, { cwd, model, approval, resumeId, effort });
   const dest = destinoDoCwd(cwd);
   const porCreditos = billing === 'api';
   if (porCreditos) {
     if (dest !== 'local') throw new Error('O Astra por créditos funciona no Mac, não na VPS.');
     await validarUsoAstra();
+    if (data.experimentalContext) throw new Error('O contexto experimental exige login ChatGPT. Use a assinatura neste chat.');
   }
+  const settings = codexSettingsFor(paneId, { ...data, cwd: cwd || HOME, ...(porCreditos ? { serviceTier: 'default' } : {}) });
   codexPaneDest.set(paneId, dest);
   codexPaneBilling.set(paneId, porCreditos ? 'api' : 'plan');
   await codexStart(dest);
+  const params = codexThreadParams(settings, porCreditos ? 'api' : 'plan');
   let fioInvalido = false;
   if (resumeId) {
     try {
-      const r = await codexReq(dest, 'thread/resume', { threadId: resumeId });
-      const rid = (r && (r.threadId || (r.thread && r.thread.id))) || resumeId;
-      codex.threadToPane.set(rid, paneId);
-      codex.paneToThread.set(paneId, rid);
-      emit(paneId, 'sessao', { id: rid, file: (r && r.thread && r.thread.path) || '' });
+      const r = await codexReq(dest, 'thread/resume', { threadId: resumeId, ...params });
+      const rid = r && (r.threadId || r.thread && r.thread.id) || resumeId;
+      attachCodexThread(paneId, rid, r || {}, settings);
       return true;
     } catch (e) {
-      // Protecao para estados gravados pela versao antiga: ela podia salvar um id do Claude
-      // dentro de um painel Codex. Repetir o resume prende o chat no mesmo erro para sempre.
-      // So este erro conhecido abre uma conversa nova; conta, rede e outros erros continuam
-      // aparecendo normalmente, sem esconder a causa real.
       if (!/no rollout found for thread id/i.test(String(e && e.message || e))) throw e;
       fioInvalido = true;
     }
   }
-  const pol = CODEX_MODE[approval] || CODEX_MODE.bypass;
-  const res = await codexReq(dest, 'thread/start', {
-    cwd: (dest === 'local' ? (cwd || HOME) : partesRemoto(cwd).caminho),
-    sandbox: pol.sandbox,
-    approvalPolicy: pol.policy,
-    developerInstructions: instrucoesCasa(),
-    ...(model ? { model } : {}),
-    ...(porCreditos ? { modelProvider: ASTRA_PROVIDER, serviceTier: 'default' } : {}),
-  });
-  const tid = res && (res.threadId || (res.thread && res.thread.id));
+  const res = await codexReq(dest, 'thread/start', params);
+  const tid = res && (res.threadId || res.thread && res.thread.id);
   if (!tid) throw new Error('Codex não devolveu a conversa');
-  codex.threadToPane.set(tid, paneId);
-  codex.paneToThread.set(paneId, tid);
-  emit(paneId, 'sessao', { id: tid, file: (res.thread && res.thread.path) || '' });
+  attachCodexThread(paneId, tid, res, settings);
   if (fioInvalido) emit(paneId, 'note', { text: 'O número antigo era de outro motor. Abri uma conversa nova no Codex e mantive o contexto desta tela.' });
   return fioInvalido ? { ok: true, nova: true } : true;
 });
 
-handle('pane:send', async (_e, { paneId, engine, text, effort }) => {
+async function codexApplySettings(paneId, changes) {
+  const tid = codex.paneToThread.get(paneId);
+  if (!tid) throw new Error('Abra uma conversa primeiro.');
+  const settings = codexSettingsFor(paneId, changes);
+  if (changes.cwd && destinoDoCwd(changes.cwd) !== destinoDoPane(paneId)) throw new Error('Troque a pasta pelo menu para mudar entre Mac e VPS.');
+  if (codexPaneBilling.get(paneId) === 'api') {
+    if (settings.experimentalContext) throw new Error('O contexto experimental exige login ChatGPT. Use a assinatura neste chat.');
+    settings.serviceTier = 'default';
+  }
+  if (codex.paneTurn.has(paneId)) {
+    codexPendingSettings.set(paneId, settings);
+    return { ok: true, pending: true, settings: codexPaneSettings.get(paneId) || {}, requestedSettings: settings, message: 'As escolhas entram no próximo envio.' };
+  }
+  // Config não é campo de turn/start: reaplicar somente a esta conversa via resume.
+  const response = await codexReq(destinoDoPane(paneId), 'thread/resume', { threadId: tid, ...codexThreadParams(settings, codexPaneBilling.get(paneId)) });
+  const previousMode = (codexPaneSettings.get(paneId) || {}).collaborationMode || 'default';
+  codexPaneSettings.set(paneId, { ...settings, collaborationMode: previousMode });
+  codexPendingSettings.set(paneId, settings);
+  const effective = codexEffectiveSettings(paneId, response || {});
+  const pending = codexPendingSettings.has(paneId);
+  return { ok: true, settings: effective, pending,
+    ...(pending ? { requestedSettings: settings, message: 'A escolha será aplicada no próximo envio.' } : {}) };
+}
+handle('pane:settings', async (_e, data) => {
+  if (data.engine === 'claude') return { ok: false, error: 'Estes ajustes pertencem ao Codex.' };
+  try { return await codexApplySettings(data.paneId, data); }
+  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+
+handle('pane:send', async (_e, data) => {
+  const { paneId, engine, text, attachments = data.anexos || [] } = data;
   if (engine === 'claude') {
-    return escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+    // A interface Claude continua usando o texto com a lista de caminhos.
+    const content = claudeAttachmentText(text, attachments);
+    return escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: content }] } });
   }
   const tid = codex.paneToThread.get(paneId);
   if (!tid) return false;
   if (codexPaneBilling.get(paneId) === 'api') await validarUsoAstra();
-  await codexReq(destinoDoPane(paneId), 'turn/start', { threadId: tid, input: [{ type: 'text', text }], ...(effort ? { effort } : {}) });
+  const previous = codexPaneSettings.get(paneId) || {};
+  let settings = codexSettingsFor(paneId, data);
+  if (settings.experimentalContext !== previous.experimentalContext) {
+    if (codex.paneTurn.has(paneId)) throw new Error('Espere o trabalho terminar para mudar o contexto.');
+    const updated = await codexApplySettings(paneId, data);
+    // resume pode devolver o esforço do turno anterior. O envio deve manter o
+    // snapshot escolhido pelo usuário, sem confundir intenção com valor efetivo.
+    settings = codexProtocol.normalizeSettings(updated.settings, settings);
+  }
+  if (data.cwd && destinoDoCwd(data.cwd) !== destinoDoPane(paneId)) throw new Error('Troque a pasta pelo menu para mudar entre Mac e VPS.');
+  if (codexPaneBilling.get(paneId) === 'api') settings.serviceTier = 'default';
+  const input = codexProtocol.userInput(text, attachments, { fs, destination: destinoDoPane(paneId) });
+  const policy = CODEX_MODE[settings.approval] || CODEX_MODE.bypass;
+  const revision = codexSettingsRevision.get(paneId) || 0;
+  const turnRevision = codexTurnRevision.get(paneId) || 0;
+  codexPendingSettings.set(paneId, settings);
+  const response = await codexReq(destinoDoPane(paneId), 'turn/start', { threadId: tid, input, ...codexProtocol.turnSettings(settings, policy) });
+  if ((codexSettingsRevision.get(paneId) || 0) === revision) {
+    codexPaneSettings.set(paneId, settings);
+    codexPendingSettings.delete(paneId);
+    emit(paneId, 'settings', { ...settings, effective: true, pending: false });
+  } else if (codexPendingSettings.has(paneId)) {
+    // O servidor informou valores diferentes depois de aceitar o turno. Eles
+    // vencem: não reanunciar o esforço escolhido como se tivesse sido aplicado.
+    codexPendingSettings.delete(paneId);
+    emit(paneId, 'settings', { ...(codexPaneSettings.get(paneId) || {}), effective: true, pending: false });
+  }
+  if (response && response.turn && response.turn.id && !['completed', 'failed', 'interrupted'].includes(response.turn.status) && (codexTurnRevision.get(paneId) || 0) === turnRevision) codex.paneTurn.set(paneId, response.turn.id);
+  // Notificações thread/settings/updated são autoritativas; esta emissão confirma
+  // que o servidor aceitou o pedido com as escolhas transmitidas.
   return true;
 });
 
@@ -2521,17 +2843,19 @@ handle('pane:compactar', async (_e, { paneId, engine }) => {
   catch (e) { return { error: String(e && e.message || e) }; }
 });
 
-handle('pane:steer', async (_e, { paneId, engine, text }) => {
+handle('pane:steer', async (_e, data) => {
+  const { paneId, engine, text, attachments = data.anexos || [] } = data;
   if (engine === 'claude') {
-    // o CLI aceita uma fala nova no meio do turno pelo mesmo canal
-    if (!escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } })) return { error: 'sessão fora do ar' };
+    const content = claudeAttachmentText(text, attachments);
+    if (!escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: content }] } })) return { error: 'sessão fora do ar' };
     return { ok: true };
   }
   const tid = codex.paneToThread.get(paneId);
   const turno = codex.paneTurn.get(paneId);
   if (!tid || !turno) return { error: 'nenhum trabalho em andamento' };
   try {
-    await codexReq(destinoDoPane(paneId), 'turn/steer', { threadId: tid, expectedTurnId: turno, input: [{ type: 'text', text }] });
+    const input = codexProtocol.userInput(text, attachments, { fs, destination: destinoDoPane(paneId) });
+    await codexReq(destinoDoPane(paneId), 'turn/steer', { threadId: tid, expectedTurnId: turno, input });
     return { ok: true };
   } catch (e) { return { error: String(e && e.message || e) }; }
 });
@@ -2564,6 +2888,12 @@ handle('pane:stop', async (_e, { paneId, engine }) => {
         ]);
       } catch {}
     }
+    // Outro chat pode ter ocupado o mesmo painel enquanto a interrupção aguardava.
+    // Nesse caso, a limpeza antiga não pode apagar destino, escolhas ou turno novos.
+    if (codex.paneToThread.get(paneId) !== tid) {
+      if (tid && codex.threadToPane.get(tid) === paneId) codex.threadToPane.delete(tid);
+      return true;
+    }
     codex.paneTurn.delete(paneId);
     codexApiCortado.delete(paneId);
     if (tid) {
@@ -2575,24 +2905,61 @@ handle('pane:stop', async (_e, { paneId, engine }) => {
     }
     codexPaneDest.delete(paneId);
     codexPaneBilling.delete(paneId);
+    codexPaneSettings.delete(paneId);
+    codexPaneAgents.delete(paneId);
+    codexSettingsRevision.delete(paneId);
+    codexPendingSettings.delete(paneId);
+    codexTurnRevision.delete(paneId);
+    for (const [thread, owner] of codexAgentOwners) if (owner === paneId) codexAgentOwners.delete(thread);
+    for (const [key, pending] of pendingApprovals) if (pending.paneId === paneId) pendingApprovals.delete(key);
+    for (const [key, owner] of codexProcessPanes) if (owner === paneId) codexProcessPanes.delete(key);
   }
   return true;
 });
 
-handle('pane:approve', (_e, { key, allow }) => {
+handle('pane:approve', (_e, { key, allow, paneId }) => {
   const a = pendingApprovals.get(key);
-  if (!a) return false;
-  pendingApprovals.delete(key);
+  if (!a || (paneId !== undefined && a.paneId !== paneId) || typeof allow !== 'boolean') return false;
   if (a.kind === 'claude') {
-    escreverClaude(a.paneId, {
-      type: 'control_response',
-      response: { request_id: a.reqId, subtype: 'success',
+    const sent = escreverClaude(a.paneId, {
+      type: 'control_response', response: { request_id: a.reqId, subtype: 'success',
         response: allow ? { behavior: 'allow', updatedInput: a.input } : { behavior: 'deny', message: 'Negado por você' } },
     });
-    return true;
+    if (sent) pendingApprovals.delete(key);
+    return sent;
   }
-  codexReply(a.destino || 'local', a.rpcId, { decision: allow ? 'acceptForSession' : 'reject' });
-  return true;
+  try {
+    const result = codexProtocol.requestResponse(a, { allow });
+    if (!codexReply(a.destino, a.rpcId, result)) return false;
+    pendingApprovals.delete(key);
+    return true;
+  } catch { return false; }
+});
+
+handle('pane:respond', async (_e, data) => {
+  const a = pendingApprovals.get(data.key);
+  if (!a || a.paneId !== data.paneId) return { error: 'Esta pergunta já foi encerrada.' };
+  try {
+    if (a.kind === 'async') {
+      if (data.action === 'cancel') { pendingApprovals.delete(data.key); return { ok: true }; }
+      const answers = codexProtocol.answersFor(a.questions, data.answers);
+      const text = 'Respostas às perguntas anteriores:\n' + a.questions.map(q => q.question + '\n' + answers[q.id].answers.join(', ')).join('\n\n');
+      const turnId = codex.paneTurn.get(a.paneId);
+      if (turnId) await codexReq(a.destino, 'turn/steer', { threadId: a.threadId, expectedTurnId: turnId, input: [{ type: 'text', text }] });
+      else {
+        // Resposta humana recebida depois do turno: mensagem nova na mesma conversa.
+        // Reusa o envio normal para respeitar escolhas pendentes e limite de créditos.
+        const sent = await HANDLERS['pane:send'](_e, { paneId: a.paneId, engine: 'codex', text });
+        if (sent === false) throw new Error('A conversa precisa ser reaberta antes de responder.');
+      }
+    } else {
+      const response = codexProtocol.requestResponse(a, data);
+      if (!codexReply(a.destino, a.rpcId, response)) throw new Error('O motor caiu. A resposta continua aqui para tentar novamente.');
+    }
+    pendingApprovals.delete(data.key);
+    emit(a.paneId, 'question-resolved', { key: data.key });
+    return { ok: true };
+  } catch (e) { return { error: String(e && e.message || e) }; }
 });
 
 handle('codex:models', async () => {
@@ -2607,6 +2974,10 @@ handle('codex:models', async () => {
       efforts: (m.supportedReasoningEfforts || []).map(e => ({ id: e.reasoningEffort, desc: e.description || '' })),
       padraoEffort: m.defaultReasoningEffort || 'medium',
       padrao: !!m.isDefault,
+      serviceTiers: m.serviceTiers || (m.additionalSpeedTiers || []).map(id => ({ id: id === 'fast' ? 'priority' : id, name: id, description: '' })),
+      defaultServiceTier: m.defaultServiceTier || 'default',
+      inputModalities: m.inputModalities || ['text', 'image'],
+      multiAgentVersion: m.multiAgentVersion || null,
     }));
   } catch { return []; }
 });

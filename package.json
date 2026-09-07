@@ -7,7 +7,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --mac --arm64"
+    "build": "electron-builder --mac --arm64",
+    "test": "node --test tests/astra-contract.test.cjs"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.15",
@@ -16,6 +17,7 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "ajv": "^6.12.6",
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8"
   },
@@ -27,6 +29,7 @@
     },
     "files": [
       "main.js",
+      "codex-*.js",
       "preload.js",
       "plataforma.js",
       "servidor-web.js",

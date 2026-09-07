@@ -46,6 +46,8 @@
     abrirLink: (u) => { window.open(u, '_blank'); return Promise.resolve(); },
     paneStart: (o) => chamar('pane:start', o),
     paneSend: (o) => chamar('pane:send', o),
+    paneRespond: (o) => chamar('pane:respond', o),
+    paneSettings: (o) => chamar('pane:settings', o),
     paneSteer: (o) => chamar('pane:steer', o),
     paneCompactar: (o) => chamar('pane:compactar', o),
     paneInterrupt: (o) => chamar('pane:interrupt', o),
@@ -91,6 +93,7 @@
     webLigar: () => Promise.resolve({ ligado: true, endereco: location.origin, senha: '' }),
     openUrl: (u) => { window.open(u, '_blank'); return Promise.resolve(); },
     onPaneEvent: (cb) => { (ouvintes['pane:event'] = ouvintes['pane:event'] || []).push(cb); },
+    onCodexEvent: (cb) => { (ouvintes['codex:event'] = ouvintes['codex:event'] || []).push(cb); },
     onMenu: () => {},
   };
 })();
