@@ -375,7 +375,8 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 .pane.focus .pane-cmp{border-color:var(--accent)}
 .cmp-top{padding:0 3px;position:relative}
 .p-input{width:100%;background:none;border:none;outline:none;resize:none;color:var(--fg);
-  font:13px/1.55 var(--sans);max-height:190px;padding:2px 0;user-select:text;display:block}
+  font:13px/1.55 var(--sans);max-height:190px;padding:2px 0;user-select:text;display:block;
+  overflow-wrap:anywhere}
 .p-input::placeholder{color:var(--fg-fraco)}
 /* ---- ditado ao vivo: a fala aparece apagadinha por cima da caixa ----
    O texto vive numa camada por cima do textarea (que fica invisivel por baixo, ainda medindo a
