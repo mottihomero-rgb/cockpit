@@ -292,7 +292,10 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 .msg-role .av{width:15px;height:15px;border-radius:4px;display:grid;place-items:center;font-size:9px;color:#fff}
 .msg.user .av{background:var(--bg4)}
 .msg.bot .av{background:var(--accent)}
-.msg-body{font-size:13px;line-height:1.62}
+/* overflow-wrap:anywhere e obrigatorio: link de checkout com UTM nao tem espaco nenhum,
+   entao pre-wrap sozinho nao acha onde quebrar e a linha vaza para fora da bolha.
+   Bloco de codigo fica de fora (ele tem a propria barra de rolagem lateral). */
+.msg-body{font-size:13px;line-height:1.62;overflow-wrap:anywhere;min-width:0}
 .msg.user .msg-body{background:var(--bg2);border:1px solid var(--line);border-radius:8px;
   padding:8px 11px;white-space:pre-wrap}
 
@@ -321,7 +324,7 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 .msg-body a:hover{text-decoration:underline}
 .msg-body code{font:11.5px var(--mono);background:var(--hover2);padding:1.5px 5px;border-radius:4px;color:var(--cod)}
 .msg-body pre{background:var(--fundo-fundo);border:1px solid var(--line);border-radius:7px;padding:10px 12px;
-  overflow-x:auto;margin:0 0 10px}
+  overflow-x:auto;margin:0 0 10px;overflow-wrap:normal;word-break:normal}
 .msg-body pre code{background:none;padding:0;color:var(--fg);font-size:11.8px;line-height:1.5}
 .msg-body table{border-collapse:collapse;margin:0 0 10px;font-size:12px;display:block;overflow-x:auto}
 .msg-body th,.msg-body td{border:1px solid var(--line);padding:4px 8px;text-align:left}
