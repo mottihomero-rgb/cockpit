@@ -2028,11 +2028,14 @@ function vozTirarNivel(P) {
   bt.style.removeProperty('--nivel');
 }
 /* Por que não saiu texto. "Não entendi" não ajuda quem está com o microfone mudo ou baixo
-   demais — e é justamente esse o caso que mais acontece. */
+   demais — e é justamente esse o caso que mais acontece.
+   O nível sozinho NÃO distingue "o microfone está morto" de "ele não falou": os dois dão
+   quase zero. Então o recado do silêncio total é escrito como pergunta, não como acusação. */
 function vozDiagnostico(jaAvisou) {
   const p = VIVO.picoGeral || 0;
-  if (p < VOZ_MUDO) return 'Não captei som nenhum. Veja em Ajustes do Sistema › Som › Entrada se o microfone certo está escolhido, e em Privacidade e Segurança › Microfone se o Cockpit está liberado.';
-  if (p < VOZ_LIMIAR) return 'O microfone captou muito baixo. Aumente o volume de entrada em Ajustes do Sistema › Som, ou fale mais perto.';
+  if (p < VOZ_MUDO) return 'Não chegou som nenhum. Se você falou, confira em Ajustes do Sistema › Som › Entrada qual microfone está escolhido.';
+  // captou, mas nunca no volume que o motor chama de fala: este ele CONSEGUE consertar
+  if (p < VOZ_LIMIAR) return 'O microfone captou, mas muito baixo. Aumente o volume de entrada em Ajustes do Sistema › Som, ou fale mais perto.';
   return jaAvisou ? '' : 'Não entendi o que foi falado. Tente falar um pouco mais devagar.';
 }
 
@@ -6041,6 +6044,28 @@ if ($('#chkWeb')) {
   });
 }
 
+/* Atalho global de ditar. A caixinha só existe no index.html do Mac — no telefone não há
+   teclado do Mac para atalhar — então TODA linha aqui é guardada por `if ($(...))`, senão o
+   boot do celular morria num TypeError (o app.js é o mesmo arquivo nos dois). */
+if ($('#chkAtalhosGlobais')) {
+  $('#chkAtalhosGlobais').addEventListener('change', async (e) => {
+    cfg.atalhosGlobais = !!e.target.checked;
+    await window.api.setConfig(cfg);
+    try {
+      const r = await window.api.atalhosLigar({ ligado: cfg.atalhosGlobais });
+      pintarAvisoAtalhos(r);
+    } catch (_) {}
+  });
+}
+function pintarAvisoAtalhos(r) {
+  const av = $('#atalhosAviso');
+  if (!av) return;
+  const falhos = (r && r.falhos) || [];
+  av.textContent = falhos.length
+    ? 'Outro programa já usa ' + falhos.join(', ') + '. Aqui vale só pelo menu (⌘⇧D).' : '';
+  av.classList.toggle('hidden', !av.textContent);
+}
+
 $('#chkRobos').addEventListener('change', async (e) => {
   cfg.verRobos = e.target.checked;
   await window.api.setConfig(cfg);
@@ -6521,6 +6546,11 @@ document.addEventListener('keydown', (e) => {
   cfg.defCwd = cfg.defCwd || HOME;
   $('#defCwd').textContent = cfg.defCwd;
   $('#chkRobos').checked = !!cfg.verRobos;
+  if ($('#chkAtalhosGlobais')) {
+    $('#chkAtalhosGlobais').checked = !!cfg.atalhosGlobais;
+    // se a tecla estiver tomada por outro programa, ele tem de saber ao abrir os Ajustes
+    if (window.api.atalhosEstado) { try { pintarAvisoAtalhos(await window.api.atalhosEstado()); } catch (_) {} }
+  }
   if (window.api.webEstado) { const st = await window.api.webEstado(); if ($('#chkWeb')) $('#chkWeb').checked = !!(st && st.ligado); pintarWeb(st); }
   // no telefone: a lateral vira gaveta
   const bg = $('#btnGaveta');
