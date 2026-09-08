@@ -4489,6 +4489,340 @@ handle('motores:versoes', async () => {
   return dados;
 });
 
+
+/* ===================== LEVA 11 — ROTINAS: os robôs agendados deste Mac =====================
+   As automações que rodam sozinhas nesta máquina (espelho da VPS, radar do painel, coletor do
+   WhatsApp, vigia financeiro...). O buraco que isto tapa é o SILÊNCIO: quando uma para, ninguém
+   fica sabendo. Por isso o que vale aqui é a FALHA, traduzida em português.
+
+   NÃO é o port do fork do Hugo: lá isto é PowerShell + Agendador do Windows, e no Mac quem
+   manda é o launchd. Backend escrito do zero, com as regras que os dados reais desta máquina
+   exigiram (551 jobs carregados, 37 plists dele, 190 "falhas" aparentes que na verdade eram 2).
+
+   Fontes, e por que cada uma:
+   - UM `launchctl list`: dá PID e Status (o código de saída da ÚLTIMA execução) de tudo.
+   - `~/Library/LaunchAgents/*.plist`: o que a lista não tem — horário, KeepAlive, log. Filtra
+     SÓ `.plist`: a pasta tem dezenas de arquivos renomeados de propósito (`.disabled`,
+     `.parado-17ago`, `.foi-pra-vps`) que NÃO devem virar rotina na tela.
+   - `launchctl print-disabled`: a única fonte de "desativada". Ele lista os `enabled` junto, por
+     isso o que importa é o VALOR depois do `=>`, não o nome estar na lista.
+   - `launchctl print` de cada rotina DELE: o `runs` (quantas vezes já rodou). É o relógio que o
+     launchd não tem — ver esse número mudar é como sabemos QUANDO ela rodou.
+
+   As duas regras que separam vermelho de verde (sem elas 188 jobs da Apple ficam vermelhos):
+   - Status POSITIVO (1..255) é código de erro. Status NEGATIVO é SINAL: -9 e -15 são parada
+     normal (o Mac desligou o serviço), e só -4/-6/-8/-11 são quebra de verdade.
+   - RESIDENTE (KeepAlive) x AGENDADA. Para a residente, "sem PID" É a falha — ela devia estar
+     de pé agora. Para a agendada, estar sem PID é o normal, e PID presente manda no código
+     velho: quem está trabalhando neste instante não pode sair como quebrada. */
+const ROTINAS_RUNS_PATH = () => path.join(app.getPath('userData'), 'rotinas-runs.json');
+const ROT_UID = () => String(typeof process.getuid === 'function' ? process.getuid() : 501);
+// R1 do disparo e do print: label vem da tela, e vira caminho de domínio do launchctl
+const ROT_LABEL_OK = /^[A-Za-z0-9._-]{1,200}$/;
+const ROT_PREFIXOS = ['com.homero.', 'com.homeromotti.', 'com.adsure.'];
+const ROT_SINAL_QUEBRA = new Set([-4, -6, -8, -11]);   // ILL, ABRT, FPE, SEGV
+const ROT_CODIGOS = {
+  1: 'o programa terminou com erro',
+  2: 'erro de uso do comando',
+  64: 'argumentos errados',
+  65: 'os dados de entrada estavam errados',
+  66: 'não achou um arquivo de que precisava',
+  69: 'um serviço de que ela depende não respondeu',
+  70: 'erro dentro do próprio programa',
+  71: 'erro do sistema',
+  72: 'faltou um arquivo do sistema',
+  73: 'não conseguiu criar um arquivo',
+  74: 'erro de leitura ou gravação',
+  75: 'falhou por enquanto (pode voltar sozinha)',
+  77: 'sem permissão',
+  78: 'erro de configuração',
+  126: 'o arquivo existe mas não é executável',
+  127: 'não achou o programa (caminho errado ou PATH)',
+  137: 'foi morta à força (falta de memória, normalmente)',
+};
+/* Lista-negra do disparo. Não é conservadorismo: cada uma destas derruba algo que está sendo
+   usado NESTE instante.
+   - com.adsure.cockpit é `open -a Cockpit.app`: dispará-la relança o próprio app por cima e
+     mata a sessão de quem clicou. A segunda linha pega qualquer outra rotina que aponte para o
+     Cockpit.app, venha ela com o nome que vier.
+   - wa-ponte é o motor de WhatsApp de TODOS os robôs; executor-mac executa tarefa remota;
+     tailscaled é a rede que segura o acesso à VPS. */
+const ROT_NAO_DISPARAR = [/^com\.adsure\.cockpit$/, /wa-ponte/, /executor-mac/, /tailscaled/];
+
+const ROT_SEP_DES = '===COCKPIT-ROT-DESLIGADOS===';
+const ROT_SEP_PL = '===COCKPIT-ROT-PLISTS===';
+const ROT_SEP_PS = '===COCKPIT-ROT-PS===';
+const ROT_SEP_JOBS = '===COCKPIT-ROT-JOBS===';
+const ROT_SEP_ITEM = '===COCKPIT-ROT-ITEM===';
+
+/* Tudo o que não depende de nome nenhum sai num spawn só: num Mac de 16 GB, um processo por
+   rotina (são centenas) seria o próprio app virando o problema que veio medir. */
+const ROT_SH_LISTA = [
+  '/bin/launchctl list 2>/dev/null',
+  'echo "' + ROT_SEP_DES + '"',
+  '/bin/launchctl print-disabled "gui/$(id -u)" 2>/dev/null',
+  'echo "' + ROT_SEP_PL + '"',
+  'for f in "$HOME"/Library/LaunchAgents/*.plist; do',
+  '  [ -f "$f" ] || continue',
+  '  echo "' + ROT_SEP_ITEM + ' $f"',
+  '  /usr/bin/plutil -convert json -o - -- "$f" 2>/dev/null',
+  '  echo',
+  'done',
+  'exit 0',
+].join('\n');
+/* Segundo spawn: os labels entram por ARGUMENTO ("$@"), nunca colados dentro do texto do
+   script — é o que impede um nome de rotina de virar outro comando. */
+const ROT_SH_DETALHE = [
+  'u="$1"; pids="$2"; shift 2',
+  'if [ -n "$pids" ]; then echo "' + ROT_SEP_PS + '"; /bin/ps -o pid=,etime= -p "$pids" 2>/dev/null; fi',
+  'echo "' + ROT_SEP_JOBS + '"',
+  'for l in "$@"; do',
+  '  echo "' + ROT_SEP_ITEM + ' $l"',
+  '  /bin/launchctl print "gui/$u/$l" 2>/dev/null',
+  'done',
+  'exit 0',
+].join('\n');
+
+const rotPartir = (txt, sep) => { const i = txt.indexOf(sep); return i < 0 ? [txt, ''] : [txt.slice(0, i), txt.slice(i + sep.length)]; };
+const rotNum = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+
+/* De quem é a rotina: dele ou do computador?
+   Prefixo do label resolve as dele. As outras só entram se o programa morar numa pasta DELE —
+   e ~/Library é a pasta que os PROGRAMAS instalados usam (Google, Zoom), não ele. Medido: sem
+   este corte, GoogleUpdater e syncthing apareciam como rotina dele. */
+function rotEhDele(label, p) {
+  if (/^com\.apple\./.test(label) || /^application\./.test(label)) return false;
+  if (ROT_PREFIXOS.some((x) => label.startsWith(x))) return true;
+  if (!p) return false;
+  const caminhos = [].concat(p.Program || [], Array.isArray(p.ProgramArguments) ? p.ProgramArguments : []);
+  return caminhos.some((c) => typeof c === 'string' && c.startsWith(HOME + '/') && !c.startsWith(HOME + '/Library/'));
+}
+
+/* A próxima hora marcada, calculada do StartCalendarInterval — o launchd não conta pra ninguém
+   quando vai rodar de novo. O dicionário pode vir SOZINHO ou dentro de uma LISTA (várias horas
+   no dia), chave que falta é curinga ("todo dia", "toda hora"), e Weekday 0 e 7 são o MESMO
+   domingo. Varre dia a dia porque o mês e o dia da semana podem não casar por semanas. */
+function rotProximaDe(d, agora) {
+  if (!d || typeof d !== 'object') return null;
+  const mi = rotNum(d.Minute), ho = rotNum(d.Hour), di = rotNum(d.Day), se = rotNum(d.Weekday), me = rotNum(d.Month);
+  const horas = ho === null ? Array.from({ length: 24 }, (_, k) => k) : [ho];
+  const minutos = mi === null ? Array.from({ length: 60 }, (_, k) => k) : [mi];
+  for (let i = 0; i <= 400; i++) {
+    const base = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + i);
+    if (me !== null && base.getMonth() + 1 !== me) continue;
+    if (di !== null && base.getDate() !== di) continue;
+    if (se !== null && (((se % 7) + 7) % 7) !== base.getDay()) continue;
+    for (const h of horas) for (const m of minutos) {
+      const t = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, m, 0, 0);
+      if (t.getTime() > agora.getTime()) return t;
+    }
+  }
+  return null;
+}
+function rotProxima(p) {
+  const cal = p && p.StartCalendarInterval;
+  if (!cal) return '';
+  const agora = new Date();
+  const lista = Array.isArray(cal) ? cal : [cal];
+  let melhor = null;
+  for (const d of lista) { const t = rotProximaDe(d, agora); if (t && (!melhor || t < melhor)) melhor = t; }
+  return melhor ? melhor.toISOString() : '';
+}
+/* Rotina de intervalo (StartInterval) não tem "hora marcada", tem ritmo. E a que só reage a
+   arquivo (WatchPaths) não tem nem ritmo: dizer "sem próxima marcada" nas duas seria contar
+   como defeito o jeito normal delas funcionarem. */
+function rotCadencia(p) {
+  const s = rotNum(p && p.StartInterval);
+  if (s !== null && s > 0) {
+    if (s < 60) return 'a cada ' + s + 's';
+    if (s < 3600) return 'a cada ' + Math.round(s / 60) + ' min';
+    if (s < 86400) return 'a cada ' + String(Math.round(s / 360) / 10).replace('.', ',') + 'h';
+    return 'a cada ' + String(Math.round(s / 8640) / 10).replace('.', ',') + ' dias';
+  }
+  if (Array.isArray(p && p.WatchPaths) && p.WatchPaths.length) return 'quando um arquivo mudar';
+  if (Array.isArray(p && p.QueueDirectories) && p.QueueDirectories.length) return 'quando chegar arquivo na pasta';
+  if (p && p.KeepAlive) return 'fica ligada o tempo todo';
+  if (p && p.RunAtLoad) return 'quando o Mac liga';
+  return '';
+}
+// o log só serve de relógio quando tem CONTEÚDO: arquivo de 0 byte guarda a data em que foi
+// criado, e isso mentiria sobre robô que roda de minuto em minuto sem nunca escrever nada
+function rotDataDoLog(p) {
+  let melhor = 0;
+  for (const k of ['StandardOutPath', 'StandardErrorPath']) {
+    const f = p && p[k];
+    if (!f || typeof f !== 'string') continue;
+    try { const st = fs.statSync(f); if (st.size > 0 && st.mtimeMs > melhor) melhor = st.mtimeMs; } catch {}
+  }
+  return melhor ? new Date(melhor).toISOString() : '';
+}
+// "02-03:24:37" (2 dias) ou "07:42:32" ou "12:03": há quanto tempo o processo está de pé
+function rotInicioPeloEtime(etime) {
+  const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(String(etime || ''));
+  if (!m) return '';
+  const seg = Number(m[1] || 0) * 86400 + Number(m[2] || 0) * 3600 + Number(m[3]) * 60 + Number(m[4]);
+  return new Date(Date.now() - seg * 1000).toISOString();
+}
+function rotMotivo(status, residente) {
+  if (Number.isFinite(status) && status > 0) return (ROT_CODIGOS[status] || 'saiu com o código ' + status) + ' (' + status + ')';
+  if (Number.isFinite(status) && ROT_SINAL_QUEBRA.has(status)) return 'o programa quebrou no meio (sinal ' + (-status) + ')';
+  if (residente) return 'devia ficar sempre ligada, e não está';
+  return 'motivo desconhecido';
+}
+
+let cacheRotinas = { quando: 0, itens: [] };
+handle('rotinas:listar', async () => {
+  if (process.platform !== 'darwin') return { itens: [], error: 'As rotinas agendadas deste Cockpit são as do launchd, que só existe no Mac.' };
+  if (Date.now() - cacheRotinas.quando < 15000) return { itens: cacheRotinas.itens };
+  try {
+    const r1 = await rodar('/bin/sh', ['-c', ROT_SH_LISTA], 30000);
+    const bruto = String(r1.out || '');
+    if (!bruto.trim()) throw new Error('o launchctl não respondeu');
+    const [txtLista, resto] = rotPartir(bruto, ROT_SEP_DES);
+    const [txtDes, txtPl] = rotPartir(resto, ROT_SEP_PL);
+
+    // 1) o que está CARREGADO: "PID<tab>Status<tab>Label" (o "-" quer dizer "não tem")
+    const carregados = new Map();
+    for (const ln of txtLista.split('\n')) {
+      const m = /^(\S+)\t(\S+)\t(.+)$/.exec(ln);
+      if (!m || m[3] === 'Label') continue;
+      carregados.set(m[3], {
+        pid: /^\d+$/.test(m[1]) ? Number(m[1]) : null,
+        status: /^-?\d+$/.test(m[2]) ? Number(m[2]) : null,
+      });
+    }
+    // 2) desativadas: o comando devolve os ligados JUNTO, então o que decide é o valor do "=>"
+    const desligados = new Set();
+    for (const m of txtDes.matchAll(/"([^"]+)"\s*=>\s*(\w+)/g)) if (m[2] === 'disabled') desligados.add(m[1]);
+    // 3) os plists da pasta dele (só os .plist: os renomeados ficam de fora de propósito)
+    const plists = new Map();
+    for (const bloco of txtPl.split(ROT_SEP_ITEM)) {
+      const nl = bloco.indexOf('\n');
+      if (nl < 0) continue;
+      const arq = bloco.slice(0, nl).trim(), json = bloco.slice(nl + 1).trim();
+      if (!arq || !json) continue;
+      let p = null;
+      try { p = JSON.parse(json); } catch { continue; }
+      if (!p || typeof p !== 'object') continue;
+      const label = String(p.Label || path.basename(arq).replace(/\.plist$/, ''));
+      if (label) plists.set(label, { arq, p });
+    }
+
+    // 4) monta a lista crua e separa o que é dele — só as dele merecem o segundo spawn
+    const labels = new Set([...carregados.keys(), ...plists.keys()]);
+    const crus = [];
+    for (const label of labels) {
+      if (!label || !ROT_LABEL_OK.test(label)) continue;
+      const pl = plists.get(label) || null;
+      const p = (pl && pl.p) || {};
+      crus.push({ label, arq: (pl && pl.arq) || '', p, car: carregados.get(label) || null, dele: rotEhDele(label, pl ? p : null) });
+    }
+    const meus = crus.filter((c) => c.dele);
+    const pids = meus.map((c) => c.car && c.car.pid).filter(Boolean);
+
+    // 5) segundo spawn: `runs` (o relógio das rotinas dele) e há quanto tempo as vivas estão de pé
+    const runsAgora = new Map(), inicios = new Map();
+    if (meus.length) {
+      const r2 = await rodar('/bin/sh', ['-c', ROT_SH_DETALHE, 'sh', ROT_UID(), pids.join(','), ...meus.map((c) => c.label)], 30000);
+      const t2 = String(r2.out || '');
+      const [, depoisPs] = rotPartir(t2, ROT_SEP_PS);
+      const [txtPs, txtJobs] = rotPartir(depoisPs || t2, ROT_SEP_JOBS);
+      for (const ln of String(txtPs || '').split('\n')) {
+        const m = /^\s*(\d+)\s+(\S+)\s*$/.exec(ln);
+        if (m) inicios.set(Number(m[1]), rotInicioPeloEtime(m[2]));
+      }
+      for (const bloco of String(txtJobs || '').split(ROT_SEP_ITEM)) {
+        const nl = bloco.indexOf('\n');
+        if (nl < 0) continue;
+        const label = bloco.slice(0, nl).trim();
+        const m = /^\s*runs\s*=\s*(\d+)\s*$/m.exec(bloco.slice(nl + 1));
+        if (label && m) runsAgora.set(label, Number(m[1]));
+      }
+    }
+
+    /* 6) a data da última execução. O launchd NÃO guarda isso. O que guardamos é o `runs`: no
+       dia em que ele muda, a rotina rodou AGORA. Enquanto o app nunca viu o número mudar, a
+       data do log serve de aproximação — e só quando o log tem conteúdo. mtime como fonte
+       principal mentiria: o espelho-vps tem 2 871 execuções e um log de 0 byte de 14/08, e
+       apareceria "morto há três semanas". */
+    const memoria = (() => { try { const o = JSON.parse(fs.readFileSync(ROTINAS_RUNS_PATH(), 'utf8')); return (o && typeof o === 'object') ? o : {}; } catch { return {}; } })();
+    let mudouMemoria = false;
+    const agoraIso = new Date().toISOString();
+    for (const [label, runs] of runsAgora) {
+      const antes = memoria[label];
+      if (!antes || !Number.isFinite(Number(antes.runs))) { memoria[label] = { runs, quando: '' }; mudouMemoria = true; }
+      else if (Number(antes.runs) !== runs) { memoria[label] = { runs, quando: agoraIso }; mudouMemoria = true; }
+    }
+    if (mudouMemoria) { try { gravarSeguro(ROTINAS_RUNS_PATH(), JSON.stringify(memoria)); } catch {} }
+
+    const itens = crus.map((c) => {
+      const p = c.p, car = c.car;
+      /* KeepAlive pode ser `true`, `false` OU um dicionário ({"SuccessfulExit":false}) — e o
+         dicionário também é residente. `!!` acerta os três; `=== true` deixaria de fora metade
+         dos serviços desta máquina. */
+      const residente = !!(p && p.KeepAlive);
+      // plist na pasta e ausente do launchctl list = descarregada; e o print-disabled é a fonte
+      const desativada = desligados.has(c.label) || (!car && !!c.arq);
+      const pid = car ? car.pid : null;
+      const status = car ? car.status : null;
+      const rodando = !!pid;
+      let falhou = false;
+      if (desativada || rodando) falhou = false;
+      else if (Number.isFinite(status) && status > 0 && status <= 255) falhou = true;
+      else if (Number.isFinite(status) && ROT_SINAL_QUEBRA.has(status)) falhou = true;
+      else if (residente) falhou = true;
+      const memo = memoria[c.label] || {};
+      const ultima = rodando ? (inicios.get(pid) || memo.quando || '') : (memo.quando || rotDataDoLog(p));
+      return {
+        nome: c.label,
+        caminho: c.arq,
+        estado: rodando ? 'rodando' : desativada ? 'desativada' : 'parada',
+        residente,
+        ultima,
+        proxima: desativada ? '' : rotProxima(p),
+        cadencia: rotCadencia(p),
+        motivo: falhou ? rotMotivo(status, residente) : '',
+        falhou,
+        dele: c.dele,
+        podeDisparar: !ROT_NAO_DISPARAR.some((re) => re.test(c.label)),
+      };
+    }).filter((t) => t.nome);
+    cacheRotinas = { quando: Date.now(), itens };
+    return { itens };
+  } catch (e) {
+    // lista velha vale mais que tela vazia: `velho` avisa a tela que aquilo não é de agora
+    return { itens: cacheRotinas.itens, velho: cacheRotinas.itens.length > 0, error: String((e && e.message) || e).slice(0, 200) };
+  }
+});
+
+/* R1: ipcMain.handle DIRETO, fora do mapa HANDLERS. Disparar roda o robô DE VERDADE (manda
+   e-mail, mexe em anúncio, escreve na VPS); um toque sem querer no iPhone não pode fazer isso.
+   `kickstart` SEM `-k` de propósito: o `-k` mata a execução que estiver em andamento — clicar
+   em "disparar" numa rotina que está no meio do trabalho a derrubaria em vez de rodá-la. */
+ipcMain.handle('rotinas:disparar', async (_e, { nome } = {}) => {
+  if (process.platform !== 'darwin') return { error: 'As rotinas do launchd só existem no Mac.' };
+  const label = String(nome || '');
+  if (!ROT_LABEL_OK.test(label)) return { error: 'nome de rotina inválido' };
+  if (ROT_NAO_DISPARAR.some((re) => re.test(label))) return { error: 'esta rotina não pode ser disparada daqui: ela derrubaria algo que está em uso agora' };
+  try {
+    // a rotina que aponta para o próprio Cockpit fica de fora venha com o nome que vier
+    const plist = path.join(HOME, 'Library/LaunchAgents', label + '.plist');
+    const cru = fs.existsSync(plist) ? fs.readFileSync(plist, 'utf8') : '';
+    if (/Cockpit\.app/i.test(cru)) return { error: 'esta rotina reabre o próprio Cockpit: disparar aqui mataria esta janela' };
+  } catch {}
+  try {
+    const r = await rodar('/bin/launchctl', ['kickstart', 'gui/' + ROT_UID() + '/' + label], 30000);
+    const saida = (String(r.out || '') + ' ' + String(r.errout || '')).trim();
+    if (!r.err) { cacheRotinas.quando = 0; return { ok: true }; }
+    const motivo = /No such process|not find|Could not find/i.test(saida) ? 'o launchd não achou essa rotina (ela pode estar desativada)'
+      : /Operation not permitted|denied/i.test(saida) ? 'o Mac negou a permissão'
+      : /Service is disabled/i.test(saida) ? 'a rotina está desativada: ligue-a antes'
+      : saida ? saida.slice(0, 160)
+      : 'o launchd não confirmou o disparo';
+    return { error: motivo };
+  } catch (e) { return { error: String((e && e.message) || e).slice(0, 200) }; }
+});
+
 /* ======================= menu ======================= */
 function menu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
