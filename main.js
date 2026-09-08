@@ -812,6 +812,10 @@ function claudeStart(paneId, opts) {
   if (opts.effort === 'max') args.push('--append-system-prompt', ULTRACODE_SP);
   if (opts.model) args.push('--model', opts.model);
   if (opts.resumeId) args.push('--resume', opts.resumeId);
+  /* RAMIFICAR de verdade: --resume + --fork-session abre uma conversa NOVA levando o historico
+     INTEIRO da antiga, e a de origem fica intacta. Linha nova, logo depois do --resume, para o
+     argv sair na mesma ordem do fork de origem. Sem opts.fork nada muda: e o caminho de sempre. */
+  if (opts.resumeId && opts.fork) args.push('--fork-session');
   // acesso amplo de saida so no modo que nao pergunta; nos outros ele pede na hora
   if (modo === 'bypass' && opts.cwd && opts.cwd !== HOME && !ehRemoto(opts.cwd)) args.push('--add-dir', HOME);
 
@@ -2261,6 +2265,66 @@ async function claudeHistoryRemoto(id) {
 
 handle('sessions:claudeRemoto', (_e, incluirRobos) => claudeSessionsRemoto(incluirRobos));
 handle('sessions:historyRemoto', (_e, o) => claudeHistoryRemoto(o && o.id));
+
+/* ============ apagar conversa e ramificar de verdade (leva 8) ============ */
+
+/* Trava obrigatoria: so e "arquivo de conversa" o .jsonl que mora DENTRO das pastas de sessao
+   do Claude ou do Codex. Sem ela, um caminho qualquer guardado na ficha do painel iria para a
+   Lixeira ao clicar em "Apagar conversa". */
+function ehArquivoDeConversa(f) {
+  try {
+    const p = path.resolve(String(f || ''));
+    if (!/\.jsonl$/i.test(p)) return false;
+    const raizes = [CLAUDE_PROJ, CODEX_SESS].filter(Boolean).map((r) => path.resolve(r));
+    return raizes.some((r) => p === r || p.startsWith(r + path.sep));
+  } catch { return false; }
+}
+
+/* ipcMain.handle DIRETO, fora do mapa HANDLERS (R1): apagar e destrutivo, e o iPhone nao pode
+   mandar arquivo do Mac para a Lixeira pelo Wi-Fi. Vai para a Lixeira, nunca unlink: da para
+   voltar atras se ele mudar de ideia. */
+ipcMain.handle('sessao:apagar', async (_e, dados) => {
+  const { id, file, engine } = dados || {};
+  try {
+    let f = ehArquivoDeConversa(file) ? path.resolve(String(file)) : null;
+    /* rede de seguranca so para o Claude: la o nome do arquivo E o numero da conversa. No Codex
+       o id vem de dentro do arquivo (fi.sid), entao procurar pelo nome pegaria o arquivo errado
+       — ali vale so o caminho que a lista mandou. */
+    if ((!f || !fs.existsSync(f)) && id && engine !== 'codex') {
+      const achados = [];
+      varrerConversas(CLAUDE_PROJ, achados, 0);
+      const it = achados.find((a) => a.id === id);
+      if (it && ehArquivoDeConversa(it.f)) f = it.f;
+    }
+    if (!f || !fs.existsSync(f)) return { error: 'Não achei o arquivo desta conversa.' };
+    try { await shell.trashItem(f); }
+    catch (e) { return { error: 'Não consegui mandar para a Lixeira: ' + String(e && e.message || e) }; }
+    /* o indice de busca do local guarda o TEXTO de cada conversa (~/.cockpit/indice-busca.json).
+       Sem tirar daqui, a conversa apagada continuaria aparecendo na busca da coluna lateral. */
+    try { const ind = lerIndiceBusca(); if (ind && ind[f]) { delete ind[f]; gravarIndiceDepois(); } } catch {}
+    // e o apelido que ele deu para ela
+    try { const nomes = lerNomes(); if (id && nomes[id]) { delete nomes[id]; salvarNomes(nomes); } } catch {}
+    // o indice de titulos tambem aponta para o arquivo que acabou de sumir
+    try { const ind2 = lerIndice(); if (ind2 && ind2[f]) { delete ind2[f]; gravarIndice(); } } catch {}
+    return { ok: true };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+});
+
+/* Ramificar de verdade. O Claude ramifica no PROPRIO start (--resume + --fork-session), entao
+   nem passa por aqui; o Codex tem thread/fork nativo (conferido no binario 0.153.4). Entra por
+   handle() de proposito: nao apaga nada, so CRIA uma conversa nova — e assim o iPhone, que roda
+   o mesmo app.js, ramifica igual ao Mac. */
+handle('sessao:fork', async (_e, dados) => {
+  const { engine, id } = dados || {};
+  try {
+    if (!id) return { error: 'esta conversa ainda não tem número' };
+    if (engine !== 'codex') return { error: 'Este motor não ramifica por aqui.' };
+    await codexStart('local');
+    const f = await codexReq('local', 'thread/fork', { threadId: id });
+    const nid = f && (f.threadId || (f.thread && f.thread.id));
+    return nid ? { id: nid } : { error: 'O Codex não devolveu a conversa nova.' };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+});
 
 /* ======================= comandos e skills ======================= */
 function readSkillDirs(dirs) {
@@ -3933,6 +3997,9 @@ function attachCodexThread(paneId, threadId, response, settings) {
 
 handle('pane:start', async (_e, data) => {
   const { paneId, engine, cwd, model, approval, resumeId, effort, billing } = data;
+  /* ramo do Claude: mesma chamada de sempre, so com o aviso de fork junto. Linha NOVA antes da
+     de baixo (que ficou intacta) — sem data.fork o caminho continua sendo exatamente o antigo. */
+  if (engine === 'claude' && data.fork) return claudeStart(paneId, { cwd, model, approval, resumeId, effort, fork: true });
   if (engine === 'claude') return claudeStart(paneId, { cwd, model, approval, resumeId, effort });
   const dest = destinoDoCwd(cwd);
   const porCreditos = billing === 'api';

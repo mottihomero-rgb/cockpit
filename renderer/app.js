@@ -38,6 +38,9 @@ Object.assign(ICONES, {
   // duas entradas visuais novas. 'crop' sao os dois cantos do recorte (nada a ver com a
   // moldura do 'image'); 'camera' e a maquininha com a lente, so dela.
   'crop': '<path d="M6 2v14a2 2 0 0 0 2 2h14" /> <path d="M18 22V8a2 2 0 0 0-2-2H2" />',
+  // ramificar: o tronco que se abre em dois. Nao se confunde com 'sparkles' (a ramificacao
+  // por resumo, que ja existia) nem com 'copy' (duas folhas iguais).
+  'git-branch': '<path d="M6 3v12" /> <circle cx="18" cy="6" r="3" /> <circle cx="6" cy="18" r="3" /> <path d="M18 9a9 9 0 0 1-9 9" />',
   'camera': '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /> <circle cx="12" cy="13" r="3" />',
 });
 const ico = (n) => '<svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + (ICONES[n] || '') + '</svg>';

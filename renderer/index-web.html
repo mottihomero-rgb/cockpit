@@ -53,6 +53,8 @@
       <button class="side-filtro" data-filtro="claude"><span class="sf-txt">Mac inteiro</span><span class="sf-seta"></span></button>
       <div class="side-pastas hidden" data-pastas="claude"></div>
       <input class="side-busca" data-busca="claude" placeholder="Buscar conversa…">
+      <!-- faixa de grupos de conversa (leva 8): desenhada por pintarAbasGrupo -->
+      <div class="grp-abas" data-grupos="claude"></div>
       <button class="new-chat" data-new="claude"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
       <div class="hist" id="histClaude"></div>
     </div>
@@ -62,6 +64,8 @@
       <button class="side-filtro" data-filtro="codex"><span class="sf-txt">Mac inteiro</span><span class="sf-seta"></span></button>
       <div class="side-pastas hidden" data-pastas="codex"></div>
       <input class="side-busca" data-busca="codex" placeholder="Buscar conversa…">
+      <!-- faixa de grupos de conversa (leva 8): desenhada por pintarAbasGrupo -->
+      <div class="grp-abas" data-grupos="codex"></div>
       <button class="new-chat" data-new="codex"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
       <div class="hist" id="histCodex"></div>
     </div>
@@ -173,6 +177,11 @@
     <p class="at-pe">⌘/ abre e fecha esta lista · Esc fecha</p>
   </div>
 </div>
+
+<!-- janelinha e menu que NAO pertencem a nenhum chat: a lista de conversas é da tela inteira,
+     e a janelinha de dentro do painel ficaria presa dentro de um chat -->
+<div class="modal global hidden" id="modalGrupo"><div class="modal-cx"></div></div>
+<div class="pop-global hidden" id="popGrupo"></div>
 
 <template id="tplEspaco">
   <div class="espaco"></div>

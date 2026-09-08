@@ -1491,3 +1491,81 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .anx-ocr{font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid var(--line2);color:var(--fg-dim);margin-left:4px;flex:none}
 .anx-ocr:hover{color:var(--fg);border-color:var(--accent)}
 .anx-ocr:disabled{opacity:.6}
+
+/* ================= conversas: apagar, ramificar, grupos (leva 8) ================= */
+
+/* Janelinha e menu que NAO pertencem a nenhum chat. O inset comeca em 38px de proposito:
+   com inset:0 (como no fork de origem, que e Windows) o veu cobriria a barra de titulo do
+   Mac e matava o arrasto da janela e os tres semaforos. 600/610 fica acima do #telaAtalhos
+   (560) e abaixo do arraste de aba (900). */
+.modal.global{position:fixed;inset:38px 0 0 0;z-index:600}
+.pop-global{position:fixed;z-index:610;min-width:200px;max-width:290px;padding:5px;
+  background:var(--bg-flutua);border:1px solid var(--line2);border-radius:10px;
+  box-shadow:0 14px 40px var(--sombra2)}
+.pop-cor{width:10px;height:10px;border-radius:3px;display:inline-block}
+/* item que apaga: vermelho, para nao ser clicado no automatico */
+.mi-perigo .mi-n{color:var(--red)}
+.mi-perigo .mi-ic{color:var(--red)}
+.mi-perigo:hover{background:color-mix(in srgb,var(--red) 14%,transparent)}
+
+/* botao "..." da linha da conversa */
+.hi-mais{width:20px;height:20px;border-radius:5px;color:var(--fg-dim);flex:none;opacity:0;
+  display:grid;place-items:center}
+.hist-item:hover .hi-mais{opacity:1}
+.hi-mais:hover{background:var(--hover3);color:var(--fg)}
+.hi-mais .ic{width:12px;height:12px}
+.hi-grupo{width:20px;height:20px;border-radius:5px;color:var(--fg-dim);flex:none;opacity:0;
+  display:grid;place-items:center}
+.hist-item:hover .hi-grupo{opacity:1}
+.hi-grupo.on{opacity:1}
+.hi-grupo:hover{background:var(--hover3);color:var(--fg)}
+.hi-grupo .ic{width:12px;height:12px}
+/* No resultado de busca os botoes sao ancorados no canto direito (o item vira display:block).
+   Com dois botoes novos a fila nao cabe mais em 52px: sem abrir espaco, o "..." fica em cima
+   do texto encontrado. Regras NOVAS, depois das antigas — nenhuma linha de cima foi mexida. */
+.hist-item.com-trecho{padding-right:98px}
+.hist-item.com-trecho .hi-grupo,
+.hist-item.com-trecho .hi-mais{position:absolute;top:5px}
+.hist-item.com-trecho .hi-mais{right:6px}
+.hist-item.com-trecho .hi-edit{right:29px}
+.hist-item.com-trecho .hi-grupo{right:52px}
+.hist-item.com-trecho .hi-fav{right:75px}
+
+/* faixa de grupos, acima da lista de conversas */
+.grp-abas{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 6px}
+.grp-abas:empty{display:none}
+.aba-grupo{display:flex;align-items:center;gap:5px;max-width:130px;padding:2px 8px;
+  border-radius:20px;border:1px solid var(--line2);background:transparent;
+  font-size:10.5px;color:var(--fg-dim);cursor:pointer}
+.aba-grupo:hover{background:var(--hover2);color:var(--fg)}
+.aba-grupo.on{background:var(--hover3);color:var(--fg-strong);border-color:var(--accent)}
+.aba-cor{width:7px;height:7px;border-radius:2px;flex:none}
+/* NOME PROPRIO: a classe .aba-txt do fork de origem ja é da aba de cliente daqui (tplAba) */
+.grp-aba-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aba-grupo.aba-add{padding:2px 6px;color:var(--fg-fraco)}
+.aba-grupo.aba-add .ic{width:11px;height:11px}
+
+/* cabecalho de um grupo dentro da lista */
+.grp-cab{display:flex;align-items:center;gap:6px;padding:6px 10px 3px;cursor:pointer;
+  font-size:10.5px;color:var(--fg-fraco);text-transform:uppercase;letter-spacing:.5px}
+.grp-cab:hover{color:var(--fg)}
+.grp-cab .chev{display:flex;transition:transform .12s}
+.grp-cab .chev .ic{width:11px;height:11px}
+.grp-cab.recolhido .chev{transform:rotate(-90deg)}
+.grp-cor{width:7px;height:7px;border-radius:2px;flex:none}
+.grp-nome{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp-conta{flex:none;font-size:10px;color:var(--fg-fraco)}
+.grp-gear{width:18px;height:18px;border-radius:5px;color:var(--fg-dim);flex:none;opacity:0;
+  display:grid;place-items:center}
+.grp-cab:hover .grp-gear{opacity:1}
+.grp-gear:hover{background:var(--hover3);color:var(--fg)}
+.grp-gear .ic{width:11px;height:11px}
+.grp-corpo.hidden{display:none}
+.grp-vazio{padding:3px 10px 5px;font-size:10.5px;color:var(--fg-fraco)}
+
+/* escolher a cor do grupo */
+.cor-linha{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
+.cor-sw{width:24px;height:24px;border-radius:7px;border:1px solid var(--line2);cursor:pointer;
+  display:grid;place-items:center;color:#fff}
+.cor-sw.on{outline:2px solid var(--fg-strong);outline-offset:1px}
+.cor-sw .ic{width:13px;height:13px}

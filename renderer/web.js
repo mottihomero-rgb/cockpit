@@ -64,6 +64,12 @@
     sessionTitulo: (o) => chamar('sessions:titulo', o),
     buscarConversas: (o) => chamar('sessions:buscar', o),
     renomear: (o) => chamar('sessao:renomear', o),
+    /* Apagar conversa manda arquivo do Mac para a Lixeira: o main nem expoe o canal ao Wi-Fi, e
+       aqui a resposta sai na hora, com o tipo certo, para o toque nao ficar 2 minutos esperando.
+       Sem esta linha o app.js (o MESMO arquivo nos dois) morreria num TypeError. */
+    apagarSessao: () => Promise.resolve({ error: 'Apagar conversa só funciona no Mac.' }),
+    // ramificar de verdade é só criar conversa nova: vai pelo mesmo cano
+    sessaoFork: (o) => chamar('sessao:fork', o),
     skills: (e) => chamar('skills:list', e),
     /* prompts salvos e busca de arquivo do "@": os dois moram no Mac e vem pelo mesmo cano.
        Sem estas duas linhas o menu "/" do telefone morria inteiro num TypeError — o app.js e
