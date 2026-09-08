@@ -308,7 +308,7 @@ function conversaDaPastaNova(P, pasta) {
   // para sempre. E o que estava na fila morreu junto com o processo.
   P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
   pararTrabalho(P); limparPassos(P); limparContinuar(P);
-  P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null;
+  P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null; P.forkPendente = false;
   P.titulo = ''; P.nomeManual = false; P.hist = [];
   P.blocks.clear(); P.tools.clear();
   P.ultraAvisado = false;
@@ -891,6 +891,9 @@ function savePanes() {
         // guarda a conversa para ela voltar cheia, e nao uma caixa vazia
         sessao: P.sessaoId || P.resumeId || '',
         arquivo: P.sessaoFile || '',
+        /* ramo que ainda nao mandou a 1a mensagem (leva 8.3). Sem guardar, reabrir o app faria
+           este chat virar CONTINUACAO da conversa de origem, escrevendo dentro dela. */
+        fork: P.forkPendente || undefined,
       };
     }).filter(Boolean),
   })).filter(a => a.chats.length).concat(abasQueNaoVoltaram);
@@ -958,6 +961,8 @@ async function restaurarAbasCorpo(salvas) {
         collaborationMode: c.collaborationMode,
       });
       if (c.larg) P.el.style.flex = c.larg;
+      // ramo que fechou o app antes da 1a mensagem: continua sendo ramo (leva 8.3)
+      if (c.fork) P.forkPendente = true;
       if (c.sessao) {
         P.resumeId = c.sessao;                       // a proxima mensagem continua a mesma conversa
         // Sem repor tambem o caminho do arquivo, o primeiro savePanes() apos abrir gravava
@@ -1027,7 +1032,7 @@ async function trocarMotor(P, novo) {
   P.collaborationMode = estavaPlanejando ? 'plan' : 'default';
   if (novo === 'codex' && P.mode === 'plan') P.mode = 'manual';
   if (novo === 'claude' && estavaPlanejando) P.mode = 'plan';
-  P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
+  P.sessaoId = null; P.resumeId = null; P.sessaoFile = ''; P.forkPendente = false;
   // o processo velho vai morrer: o chat deixa de estar ocupado e a fila morre com ele.
   // O texto que estava na fila volta para o campo, e a bolha dele sai da tela junto — senao
   // ele manda de novo e a mesma mensagem fica duas vezes na conversa.
@@ -1597,6 +1602,11 @@ function menuVoltarNoTempo(P, d, texto) {
     nome: 'Ramificar a conversa a partir daqui',
     desc: 'abre um chat novo levando só o que foi dito até este ponto',
   }, () => ramificarDaqui(P, d)));
+  m.appendChild(elItem({
+    ic: 'git-branch',
+    nome: 'Ramificar levando a conversa inteira',
+    desc: 'chat novo que lembra de TUDO, não de um resumo. O de origem fica intacto',
+  }, () => ramificarInteiro(P)));
 }
 
 async function desfazerDaqui(P, feitas) {
@@ -1628,6 +1638,70 @@ function ramificarDaqui(P, d) {
   pintarNome(Q);
   avisoTemp(Q, 'Este chat continua de onde aquela mensagem estava. O chat de origem segue intacto.');
   $('.p-input', Q.el).focus();
+}
+
+/* ---- ramificar de VERDADE (leva 8.3) ----
+   O "Ramificar a partir daqui" acima leva um RESUMO colado: acima de umas 14 mil letras o
+   resto se perde. Aqui o ramo é real, feito pelo próprio motor — o Claude abre com
+   --resume + --fork-session e o Codex tem thread/fork —, então o chat novo lembra da conversa
+   INTEIRA e o de origem continua intacto. Quando o motor não consegue, o resumo é a reserva. */
+async function ramificarInteiro(P) {
+  const id = P.sessaoId || P.resumeId;
+  if (!id) { ramoDeReserva(P, 'esta conversa ainda não tem número no motor'); return; }
+  if (panes.size >= 12) { avisoEnvio(P, 'Feche um chat para abrir a ramificação.'); return; }
+  if (P.engine === 'claude') { forkClaude(P, id); return; }
+  let r = null;
+  try { r = await window.api.sessaoFork({ engine: P.engine, id }); }
+  catch (e) { r = { error: String(e && e.message || e) }; }
+  if (r && r.id) { abrirRamo(P, r.id); return; }
+  ramoDeReserva(P, (r && r.error) || 'sem resposta');
+}
+
+/* Claude: o fork acontece no LIGAR do painel novo (--resume + --fork-session). Até lá o painel
+   guarda a intenção em forkPendente — e ela vai para a ficha também, senão fechar o app antes
+   da 1ª mensagem faria o ramo virar CONTINUAÇÃO da conversa de origem, escrevendo dentro dela. */
+function forkClaude(P, id) {
+  const Q = novoChatNaAba(P.engine);
+  if (!Q) return;
+  Q.cwd = P.cwd;
+  $('.p-cwd', Q.el).textContent = nomePasta(Q.cwd);
+  Q.resumeId = id; Q.forkPendente = true;
+  Q.titulo = 'Ramo de: ' + (P.titulo || 'conversa'); Q.nomeManual = true;
+  pintarNome(Q);
+  faixaDeRamo(Q, P);
+  savePanes();
+}
+
+/* Codex: o fork JÁ aconteceu no motor; aqui o painel novo só retoma o número novo */
+function abrirRamo(P, idNovo) {
+  const Q = novoChatNaAba(P.engine);
+  if (!Q) return;
+  Q.cwd = P.cwd;
+  $('.p-cwd', Q.el).textContent = nomePasta(Q.cwd);
+  Q.resumeId = idNovo;
+  Q.titulo = 'Ramo de: ' + (P.titulo || 'conversa'); Q.nomeManual = true;
+  pintarNome(Q);
+  faixaDeRamo(Q, P);
+  savePanes();
+}
+
+/* reserva: o caminho antigo, com o resumo colado. Continua existindo de propósito. */
+function ramoDeReserva(P, motivo) {
+  if (!P.hist.length) { note(P, 'Ainda não há conversa para levar adiante.', true); return; }
+  note(P, 'Não deu para ramificar de verdade (' + motivo + ') — vou levar só o resumo da conversa.', true);
+  /* o ramificarDaqui corta na mensagem clicada; aqui o pedido é a conversa INTEIRA, então o
+     ponto de corte é a última fala. Ele lê só o d.dataset.hist. */
+  ramificarDaqui(P, { dataset: { hist: String(P.hist.length - 1) } });
+}
+
+function faixaDeRamo(Q, P) {
+  clearEmpty(Q);   // a tela de "chat vazio" ocupa a altura toda e empurraria a faixa pra fora
+  const d = document.createElement('div');
+  d.className = 'troca'; d.innerHTML = '<span></span>';
+  $('span', d).textContent = 'ramo de “' + (P.titulo || 'conversa anterior')
+    + '” — ele lembra da conversa inteira; a tela começa daqui. Escreva pra continuar.';
+  Q.chat.appendChild(d);
+  const c = $('.p-input', Q.el); if (c) c.focus();
 }
 function pintarAvatar(el) {
   if (cfg.foto) el.innerHTML = '<img src="' + cfg.foto + '" alt="">';
@@ -2875,6 +2949,9 @@ async function send(P) {
         model: modeloSemOrigem(P.model) || undefined,
         billing: modeloPorCreditos(P.model) ? 'api' : 'plan',
         approval: modoDe(P).id, effort: esforcoDe(P), resumeId: fio || undefined,
+        // ramo de verdade (leva 8.3): o Claude nasce com --fork-session e leva a conversa
+        // inteira, sem escrever dentro da de origem. Sem isto o campo nem é mandado.
+        fork: P.forkPendente || undefined,
         ...pedidoCodex,
       });
       // Uma versao antiga podia guardar aqui o numero da conversa do outro motor. O processo
@@ -2883,6 +2960,7 @@ async function send(P) {
         P.passarContexto = montarContexto(P, true);
       }
       P.started = true; P.ultraAvisado = false;   // processo novo: liberar o ultracode de novo
+      P.forkPendente = false;   // o ramo já nasceu no start; não pode forkar de novo
     } catch (e) {
       P.busy = false; concluirEscolhasEnvio(P, escolhasDoEnvio, false);
       recuperarEnvio(P, bolha, text, anexos);
@@ -2999,7 +3077,7 @@ function receberEventoPane(ev) {
     }
     // o Claude disse que essa conversa nao existe mais: agora sim o fio se solta
     case 'sessao-sumiu':
-      P.sessaoId = null; P.resumeId = null; P.fioSolto = Date.now();
+      P.sessaoId = null; P.resumeId = null; P.fioSolto = Date.now(); P.forkPendente = false;
       note(P, 'Esta conversa não existe mais no Claude. A próxima mensagem começa uma nova, levando junto o que já foi dito aqui.', true);
       savePanes();
       break;
@@ -3981,7 +4059,7 @@ async function menuModelos(P) {
         } else await desligarMotor(P);
         if (mudouOrigem) {
           if (P.hist.length) P.passarContexto = montarContexto(P, true, 'troca-de-cobranca');
-          P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
+          P.sessaoId = null; P.resumeId = null; P.sessaoFile = ''; P.forkPendente = false;
           note(P, vaiPorCreditos
             ? 'A próxima mensagem usa créditos da API dentro do limite escolhido.'
             : 'A próxima mensagem volta a usar o seu plano do Codex.');
@@ -6210,6 +6288,331 @@ function marcarAbertas() {
   document.querySelectorAll('.hist-item[data-sid]').forEach(pintarAberta);
 }
 
+/* ============ janelinha e menu GLOBAIS (leva 8.1) ============
+   A lista lateral de conversas não pertence a nenhum chat: uma janelinha de dentro do painel
+   (.p-modal) ficaria presa dentro de um deles e sumiria ao trocar de aba. Estes dois vivem no
+   body, por cima de tudo, e são fechados por listeners NOVOS em captura (logo abaixo). */
+let aoFecharModalGlobal = null;
+function abrirModalGlobal() {
+  aoFecharModalGlobal = null;
+  const modal = $('#modalGrupo'); if (!modal) return document.createElement('div');
+  const cx = $('.modal-cx', modal);
+  cx.className = 'modal-cx';   // R9: limpa marca de uso anterior, senão a próxima sai deformada
+  modal.classList.remove('hidden');
+  modal.onclick = (e) => { if (e.target === modal) fecharModalGlobal(); };
+  cx.onclick = (e) => e.stopPropagation();
+  cx.innerHTML = '';
+  return cx;
+}
+function fecharModalGlobal() {
+  const f = aoFecharModalGlobal; aoFecharModalGlobal = null;
+  if (f) { try { f(); } catch {} }
+  const modal = $('#modalGrupo'); if (!modal) return;
+  modal.classList.add('hidden');
+  $('.modal-cx', modal).innerHTML = '';
+}
+function fecharPopGlobal() {
+  const pop = $('#popGrupo'); if (!pop) return;
+  pop.classList.add('hidden'); pop.innerHTML = '';
+}
+function abrirPopGlobal(anchorEl) {
+  fecharMenus(); fecharPopGlobal();
+  const pop = $('#popGrupo'); if (!pop) return document.createElement('div');
+  pop.innerHTML = ''; pop.onclick = (e) => e.stopPropagation();
+  pop.classList.remove('hidden');
+  const r = anchorEl.getBoundingClientRect();
+  const largura = 240;
+  pop.style.left = Math.min(window.innerWidth - largura - 10, Math.max(10, r.left)) + 'px';
+  pop.style.top = Math.min(window.innerHeight - 60, r.bottom + 6) + 'px';
+  // não coube embaixo: sobe. A altura só existe depois de pintar, por isso o setTimeout
+  setTimeout(() => {
+    if (pop.classList.contains('hidden')) return;
+    const alt = pop.getBoundingClientRect().height;
+    if (r.bottom + 6 + alt > window.innerHeight - 10) pop.style.top = Math.max(10, r.top - alt - 6) + 'px';
+  }, 0);
+  return pop;
+}
+/* item de uma linha do menu global (o elItem daqui desenha DENTRO de um painel) */
+function popItem({ nome, ic, cor, on, perigo }, aoClicar) {
+  const d = document.createElement('div');
+  d.className = 'mi' + (on ? ' on' : '') + (perigo ? ' mi-perigo' : '');
+  d.innerHTML = '<div class="mi-ic"></div><div class="mi-txt"><div class="mi-n"></div></div>'
+    + (on ? '<div class="mi-ck"></div>' : '');
+  if (cor) { const b = document.createElement('span'); b.className = 'pop-cor'; b.style.background = cor; $('.mi-ic', d).appendChild(b); }
+  else if (ic) $('.mi-ic', d).innerHTML = ico(ic);
+  if (on) $('.mi-ck', d).innerHTML = ico('check');
+  $('.mi-n', d).textContent = nome;     // nome de grupo é texto do dono: nunca vira HTML
+  d.addEventListener('click', () => { fecharPopGlobal(); aoClicar(); });
+  return d;
+}
+
+/* Esc do menu/janelinha global, em CAPTURA: roda ANTES do Esc do documento.
+   R8: o stopPropagation é obrigatório — sem ele, o mesmo Esc que fecha esta janelinha descia
+   até o tratador de baixo e MANDAVA PARAR o que a IA estava fazendo no chat em foco.
+   Com nada global aberto a função sai na primeira linha e nada do que já existia muda. */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const pop = $('#popGrupo'), mod = $('#modalGrupo');
+  if (!pop || !mod) return;
+  const temPop = !pop.classList.contains('hidden');
+  const temMod = !mod.classList.contains('hidden');
+  if (!temPop && !temMod) return;
+  // a lista de atalhos e o quadro branco ficam por cima de tudo: lá o Esc continua sendo deles
+  const telaAt = $('#telaAtalhos');
+  if (telaAt && !telaAt.classList.contains('hidden')) return;
+  if (typeof qdPainelAberto === 'function' && qdPainelAberto()) return;
+  e.preventDefault(); e.stopPropagation();
+  if (temPop) fecharPopGlobal(); else fecharModalGlobal();
+}, true);
+/* clique fora fecha o menu global. Em captura, com a guarda do closest: sem ela o próprio
+   clique que ABRE (ou o clique num item) fecharia o menu antes de ele fazer o que faz. */
+document.addEventListener('click', (e) => {
+  const pop = $('#popGrupo');
+  if (!pop || pop.classList.contains('hidden')) return;
+  if (e.target && e.target.closest && e.target.closest('#popGrupo')) return;
+  fecharPopGlobal();
+}, true);
+
+/* ============ apagar conversa (leva 8.2) ============
+   Vai para a LIXEIRA, nunca apaga de vez: dá para restaurar de lá se ele mudar de ideia.
+   Só o "Apagar" entra no menu — o "Exportar" do fork de origem joga em ~/Downloads, contra a
+   regra da casa, e aqui a conversa já sai pelo vault (⌘S). */
+async function apagarConversa(s, d) {
+  if (!confirm('Mandar “' + s.title + '” para a Lixeira?\n\nDá para restaurar de lá se mudar de ideia.')) return;
+  let r = null;
+  try { r = await window.api.apagarSessao({ id: s.id, file: s.file, engine: s.engine }); }
+  catch (e) { r = { error: String(e && e.message || e) }; }
+  if (!r || r.error) { alert('Não consegui apagar: ' + ((r && r.error) || 'sem resposta')); return; }
+  if (d) d.remove();
+
+  /* chat aberto que usava esta conversa: o motor dela morre e o painel volta a aceitar
+     mensagem. Sem isto ele ficava preso tentando retomar um arquivo que não existe mais.
+     É o mesmo bloco do conversaDaPastaNova (aqui não existe "destravarPainel"). */
+  for (const Q of panes.values()) {
+    if (Q.resumeId !== s.id && Q.sessaoId !== s.id) continue;
+    try { await window.api.paneStop({ paneId: Q.id, engine: Q.engine }); } catch {}
+    Q.busy = false; Q.queued = null; Q.filaMsgs = []; escondePerm(Q);
+    pararTrabalho(Q); limparPassos(Q); limparContinuar(Q);
+    Q.sessaoId = null; Q.sessaoFile = ''; Q.resumeId = null;
+    Q.started = false; Q.forkPendente = false;
+    setDot(Q, 'off');
+    note(Q, 'Esta conversa foi apagada. A próxima mensagem começa uma nova.', true);
+  }
+  /* R10: o savePanes() remonta cfg.abas DO ZERO a partir dos chats vivos — limpar antes dele
+     seria trabalho jogado fora. Depois dele sobram as abas gravadas que ainda não voltaram
+     (abasQueNaoVoltaram), preservadas às cegas: nelas o número da conversa apagada continuaria
+     lá e reabrir o app tentaria retomar uma conversa morta. */
+  savePanes();
+  for (const ab of (cfg.abas || [])) {
+    for (const c of (ab.chats || [])) if (c && c.sessao === s.id) { c.sessao = ''; c.arquivo = ''; }
+  }
+  if (Array.isArray(histCache[s.engine])) histCache[s.engine] = histCache[s.engine].filter(x => x.id !== s.id);
+  if (Array.isArray(cfg.favoritos)) cfg.favoritos = cfg.favoritos.filter(k => k !== chaveFav(s));
+  if (cfg.grupoSessao) delete cfg.grupoSessao[chaveFav(s)];
+  window.api.setConfig(cfg);
+  marcarAbertas();
+}
+
+/* menu "⋯" da linha da conversa */
+function menuDaConversa(bt, s, d) {
+  const pop = abrirPopGlobal(bt);
+  if (s.remoto) {
+    // o .jsonl dela mora no disco da VPS: apagar daqui não alcança o arquivo de lá
+    const av = popItem({ nome: 'Conversa do servidor: apagar só pela VPS', ic: 'server' }, () => {});
+    av.style.opacity = '.7';
+    pop.appendChild(av);
+    return;
+  }
+  pop.appendChild(popItem({ nome: 'Apagar conversa', ic: 'x', perigo: true }, () => apagarConversa(s, d)));
+}
+
+/* ============ grupos de conversa (leva 8.4) ============
+   Valem para o Claude e para o Codex juntos: o mesmo grupo pode ter conversa dos dois.
+   R10: a chave TEM de ser cfg.gruposConversa — o savePanes() faz `delete cfg.grupos` a cada
+   salvamento, então um grupo guardado em cfg.grupos sumiria sozinho no salvamento seguinte. */
+const GRUPO_CORES = ['#6ea8fe', '#d97757', '#5aa469', '#d7ba7d', '#e05252', '#b083f0', '#f0839f', '#4fd1c5'];
+const filtroGrupo = { claude: null, codex: null };   // não é salvo: volta a "Todos" a cada abertura
+// a cor entra em style: se o config foi editado na mão, só passa o que é cor de verdade
+const corSegura = (c) => (/^#[0-9a-fA-F]{3,8}$/.test(String(c || '')) ? String(c) : GRUPO_CORES[0]);
+
+function listaGrupos() { return Array.isArray(cfg.gruposConversa) ? cfg.gruposConversa : []; }
+function grupoPorId(id) { return listaGrupos().find(g => g.id === id); }
+function grupoDaSessao(s) { return (cfg.grupoSessao && cfg.grupoSessao[chaveFav(s)]) || null; }
+function moverParaGrupo(s, grupoId) {
+  if (!cfg.grupoSessao) cfg.grupoSessao = {};
+  if (grupoId) cfg.grupoSessao[chaveFav(s)] = grupoId; else delete cfg.grupoSessao[chaveFav(s)];
+  window.api.setConfig(cfg);
+  if (histCache[s.engine]) paintHist(s.engine, histCache[s.engine]);
+}
+function grupoRecolhido(id) { return Array.isArray(cfg.gruposRecolhidos) && cfg.gruposRecolhidos.includes(id); }
+function alternarGrupoRecolhido(id) {
+  if (!Array.isArray(cfg.gruposRecolhidos)) cfg.gruposRecolhidos = [];
+  const i = cfg.gruposRecolhidos.indexOf(id);
+  if (i >= 0) cfg.gruposRecolhidos.splice(i, 1); else cfg.gruposRecolhidos.push(id);
+  window.api.setConfig(cfg);
+}
+// grupo é dos DOIS motores: mexeu em um, as duas listas se redesenham
+function repintarGrupos() {
+  for (const eng of ['claude', 'codex']) {
+    pintarAbasGrupo(eng);
+    if (histCache[eng]) paintHist(eng, histCache[eng]);
+  }
+}
+
+/* faixa de grupos acima da lista. Sem nenhum grupo criado ela não aparece: barra vazia só
+   roubaria altura da lista. A porta de entrada para criar o primeiro é a pastinha da linha. */
+function pintarAbasGrupo(engine) {
+  const box = $('.grp-abas[data-grupos="' + engine + '"]');
+  if (!box) return;
+  box.innerHTML = '';
+  const grupos = listaGrupos();
+  if (!grupos.length) { filtroGrupo[engine] = null; return; }
+  const ativo = filtroGrupo[engine];
+  const bTodos = document.createElement('button');
+  bTodos.className = 'aba-grupo' + (!ativo ? ' on' : '');
+  bTodos.textContent = 'Todos';
+  bTodos.addEventListener('click', () => {
+    filtroGrupo[engine] = null; pintarAbasGrupo(engine);
+    if (histCache[engine]) paintHist(engine, histCache[engine]);
+  });
+  box.appendChild(bTodos);
+  for (const g of grupos) {
+    const bt = document.createElement('button');
+    bt.className = 'aba-grupo' + (ativo === g.id ? ' on' : '');
+    bt.title = g.nome;
+    /* NOME PRÓPRIO: no fork de origem esta classe é ".aba-txt", que AQUI já é da aba de
+       cliente (tplAba). Com o nome de lá, o CSS de uma repintava a outra. */
+    const cor = document.createElement('span'); cor.className = 'aba-cor'; cor.style.background = corSegura(g.cor);
+    const txt = document.createElement('span'); txt.className = 'grp-aba-txt'; txt.textContent = g.nome;
+    bt.appendChild(cor); bt.appendChild(txt);
+    bt.addEventListener('click', () => {
+      filtroGrupo[engine] = g.id; pintarAbasGrupo(engine);
+      if (histCache[engine]) paintHist(engine, histCache[engine]);
+    });
+    box.appendChild(bt);
+  }
+  const bAdd = document.createElement('button');
+  bAdd.className = 'aba-grupo aba-add';
+  bAdd.innerHTML = ico('plus');
+  bAdd.title = 'Novo grupo';
+  bAdd.addEventListener('click', () => abrirModalGrupo(null));
+  box.appendChild(bAdd);
+}
+
+/* criar / renomear grupo: nome + cor */
+function abrirModalGrupo(existente) {
+  const cx = abrirModalGlobal();
+  const editando = !!existente;
+  cx.innerHTML = '<div class="mo-top"><span class="mo-tit"></span><button class="mo-x"></button></div>'
+    + '<div class="mo-sub">Vale pro Claude e pro Codex juntos — o mesmo grupo pode ter conversa dos dois.</div>'
+    + '<div class="mo-form"><input id="pnNome" maxlength="40" placeholder="Nome do grupo, ex: Pedro"></div>'
+    + '<div class="mo-dica" style="margin-top:10px">Cor</div>'
+    + '<div class="cor-linha"></div>'
+    + '<div class="mo-rodape"><button class="mo-btn destaque" id="pnOk"></button>'
+    + '<button class="mo-btn" id="pnCancela">Cancelar</button></div>';
+  $('.mo-tit', cx).textContent = editando ? 'Renomear grupo' : 'Novo grupo';
+  $('.mo-x', cx).innerHTML = ico('x');
+  $('#pnOk', cx).textContent = editando ? 'Salvar' : 'Criar grupo';
+  $('.mo-x', cx).onclick = fecharModalGlobal;
+  $('#pnCancela', cx).onclick = fecharModalGlobal;
+  let corEscolhida = corSegura((existente && existente.cor) || GRUPO_CORES[Math.floor(Math.random() * GRUPO_CORES.length)]);
+  const pintaCor = () => $$('.cor-sw', cx).forEach(b => {
+    const on = b.dataset.cor === corEscolhida;
+    b.classList.toggle('on', on);
+    b.innerHTML = on ? ico('check') : '';
+  });
+  const linha = $('.cor-linha', cx);
+  for (const c of GRUPO_CORES) {
+    const b = document.createElement('button');
+    b.className = 'cor-sw'; b.dataset.cor = c; b.style.background = c;
+    b.addEventListener('click', () => { corEscolhida = c; pintaCor(); });
+    linha.appendChild(b);
+  }
+  pintaCor();
+  const inp = $('#pnNome', cx);
+  inp.value = existente ? existente.nome : '';
+  setTimeout(() => { inp.focus(); inp.select(); }, 30);
+  const salvar = () => {
+    const nome = inp.value.trim();
+    if (!nome) { inp.focus(); return; }
+    if (!Array.isArray(cfg.gruposConversa)) cfg.gruposConversa = [];
+    if (editando) { existente.nome = nome; existente.cor = corEscolhida; }
+    else cfg.gruposConversa.push({ id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), nome, cor: corEscolhida });
+    window.api.setConfig(cfg);
+    fecharModalGlobal();
+    repintarGrupos();
+  };
+  $('#pnOk', cx).onclick = salvar;
+  // R8: Enter e Esc deste campo são DELE. O Esc já foi parado no listener em captura lá em
+  // cima, mas esta trava é a rede de segurança para o dia em que aquele sair do caminho.
+  inp.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); salvar(); }
+    if (e.key === 'Escape') { e.preventDefault(); fecharModalGlobal(); }
+  });
+}
+
+function apagarGrupo(g) {
+  if (!confirm('Apagar o grupo “' + g.nome + '”?\n\nAs conversas continuam onde estão — elas só saem do grupo.')) return;
+  cfg.gruposConversa = listaGrupos().filter(x => x.id !== g.id);
+  if (cfg.grupoSessao) for (const k of Object.keys(cfg.grupoSessao)) if (cfg.grupoSessao[k] === g.id) delete cfg.grupoSessao[k];
+  if (Array.isArray(cfg.gruposRecolhidos)) cfg.gruposRecolhidos = cfg.gruposRecolhidos.filter(x => x !== g.id);
+  if (filtroGrupo.claude === g.id) filtroGrupo.claude = null;
+  if (filtroGrupo.codex === g.id) filtroGrupo.codex = null;
+  window.api.setConfig(cfg);
+  fecharPopGlobal();
+  repintarGrupos();
+}
+
+/* menu da pastinha: para qual grupo esta conversa vai */
+function abrirMenuGrupoDaSessao(anchorEl, s) {
+  const pop = abrirPopGlobal(anchorEl);
+  const atual = grupoDaSessao(s);
+  pop.appendChild(popItem({ nome: 'Sem grupo', ic: 'x', on: !atual }, () => moverParaGrupo(s, null)));
+  const grupos = listaGrupos();
+  if (grupos.length) {
+    pop.appendChild(elLinha());
+    for (const g of grupos) pop.appendChild(popItem({ nome: g.nome, cor: corSegura(g.cor), on: atual === g.id }, () => moverParaGrupo(s, g.id)));
+  }
+  pop.appendChild(elLinha());
+  pop.appendChild(popItem({ nome: 'Novo grupo…', ic: 'plus' }, () => abrirModalGrupo(null)));
+}
+
+/* cabeçalho de um grupo dentro da lista, com as conversas dele embaixo */
+function linhaGrupo(g, sessoes) {
+  const cab = document.createElement('div');
+  cab.className = 'grp-cab' + (grupoRecolhido(g.id) ? ' recolhido' : '');
+  cab.innerHTML = '<span class="chev"></span><span class="grp-cor"></span>'
+    + '<span class="grp-nome"></span><span class="grp-conta"></span>'
+    + '<button class="grp-gear" title="Renomear, trocar cor ou apagar"></button>';
+  $('.chev', cab).innerHTML = ico('chevron-down');
+  $('.grp-cor', cab).style.background = corSegura(g.cor);
+  $('.grp-nome', cab).textContent = g.nome;
+  $('.grp-conta', cab).textContent = String(sessoes.length);
+  $('.grp-gear', cab).innerHTML = ico('pencil');
+  const corpo = document.createElement('div');
+  corpo.className = 'grp-corpo';
+  corpo.classList.toggle('hidden', grupoRecolhido(g.id));
+  if (sessoes.length) for (const s of sessoes) corpo.appendChild(linhaConversa(s, ''));
+  else corpo.appendChild(Object.assign(document.createElement('div'),
+    { className: 'grp-vazio', textContent: 'vazio — use a pastinha na linha da conversa' }));
+  cab.addEventListener('click', (e) => {
+    if (e.target.closest('.grp-gear')) return;
+    alternarGrupoRecolhido(g.id);
+    cab.classList.toggle('recolhido');
+    corpo.classList.toggle('hidden');
+  });
+  $('.grp-gear', cab).addEventListener('click', (e) => {
+    e.stopPropagation();
+    const pop = abrirPopGlobal(e.currentTarget);
+    pop.appendChild(popItem({ nome: 'Renomear / trocar cor', ic: 'pencil' }, () => abrirModalGrupo(g)));
+    pop.appendChild(popItem({ nome: 'Apagar grupo', ic: 'x', perigo: true }, () => apagarGrupo(g)));
+  });
+  const bloco = document.createDocumentFragment();
+  bloco.appendChild(cab); bloco.appendChild(corpo);
+  return bloco;
+}
+
 function linhaConversa(s, termo, trecho) {
   const d = document.createElement('div');
   d.className = 'hist-item' + (trecho ? ' com-trecho' : '');
@@ -6234,6 +6637,23 @@ function linhaConversa(s, termo, trecho) {
     trocarFavorita(s);
     histCache[s.engine] && paintHist(s.engine, histCache[s.engine]);
   });
+  /* ---- botões novos da leva 8, pendurados por DOM (a linha do innerHTML acima não foi
+     tocada): a pastinha manda a conversa para um grupo, o "⋯" abre o menu com o Apagar. ---- */
+  const gAtual = grupoDaSessao(s);
+  const bg = document.createElement('button');
+  bg.className = 'hi-grupo' + (gAtual ? ' on' : '');
+  bg.innerHTML = ico('folder');
+  const gg = gAtual ? grupoPorId(gAtual) : null;
+  if (gg) bg.style.color = corSegura(gg.cor);
+  bg.title = gg ? 'No grupo “' + gg.nome + '” — clique para mover' : 'Mover pra grupo';
+  bg.addEventListener('click', (e) => { e.stopPropagation(); abrirMenuGrupoDaSessao(bg, s); });
+  d.appendChild(bg);
+  const bm = document.createElement('button');
+  bm.className = 'hi-mais';
+  bm.title = 'Mais ações';
+  bm.innerHTML = ico('sliders-horizontal');
+  bm.addEventListener('click', (e) => { e.stopPropagation(); menuDaConversa(bm, s, d); });
+  d.appendChild(bm);
   d.title = s.title + '\n' + s.cwd;
   d.addEventListener('click', (e) => { if (!e.target.closest('.hi-edit')) openSession(s, d); });
   $('.hi-edit', d).addEventListener('click', (e) => {
@@ -6282,6 +6702,7 @@ async function paintHist(engine, listaCrua) {
   const box = $(engine === 'claude' ? '#histClaude' : '#histCodex');
   const termo = (buscaAtual[engine] || '').toLowerCase().trim();
   pintarBotaoFiltro(engine);
+  pintarAbasGrupo(engine);   // leva 8: a faixa de grupos acompanha cada desenho da lista
   const list = filtrarPorPasta(engine, listaCrua);
   box.innerHTML = '';
   if (!listaCrua.length) { box.innerHTML = '<div class="hist-load">Nenhuma conversa ainda.</div>'; return; }
@@ -6291,12 +6712,32 @@ async function paintHist(engine, listaCrua) {
   }
 
   if (!termo) {
+    /* leva 8: uma aba de grupo escolhida na faixa de cima — a lista mostra só o que está nele */
+    const alvoGrupo = filtroGrupo[engine];
+    if (alvoGrupo) {
+      const g = grupoPorId(alvoGrupo);
+      const doGrupo = list.filter(s => grupoDaSessao(s) === alvoGrupo);
+      if (!doGrupo.length) {
+        box.appendChild(Object.assign(document.createElement('div'),
+          { className: 'hist-load', textContent: 'Nada em “' + (g ? g.nome : '') + '” ainda.' }));
+      } else for (const s of doGrupo) box.appendChild(linhaConversa(s, ''));
+      return;
+    }
     const favs = list.filter(ehFavorita);
     if (favs.length) {
       box.appendChild(Object.assign(document.createElement('div'), { className: 'hist-cab', textContent: 'Favoritas' }));
       for (const s of favs) box.appendChild(linhaConversa(s, ''));
     }
-    const restantes = list.filter(s => !ehFavorita(s));
+    /* [EDITA aprovado pelo plano, 1 palavra] `const` virou `let`: o laço dos grupos abaixo
+       reatribui esta lista, e com `const` dava "Assignment to constant variable" — a coluna
+       lateral ficava em branco. */
+    let restantes = list.filter(s => !ehFavorita(s));
+    /* os grupos aparecem sempre, mesmo vazios: é neles que ele enxerga onde pôr a conversa */
+    for (const g of listaGrupos()) {
+      const doGrupo = restantes.filter(s => grupoDaSessao(s) === g.id);
+      restantes = restantes.filter(s => grupoDaSessao(s) !== g.id);
+      box.appendChild(linhaGrupo(g, doGrupo));
+    }
     let grupoAtual = '';
     for (const s of restantes) {
       const g = grupoDoTempo(s.when);
@@ -6377,6 +6818,7 @@ async function openSession(s, el) {
   await window.api.paneStop({ paneId: P.id, engine: P.engine });
   escondePerm(P);
   P.engine = s.engine; P.cwd = s.cwd; P.resumeId = s.id; P.sessaoId = null; P.started = false; P.busy = false; P.model = '';
+  P.forkPendente = false;   // leva 8.3: abrir outra conversa aqui cancela a intencao de ramificar
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
   P.effectiveSettings = null; P.settingsPending = false;
   P.sessaoFile = s.file || '';   // guardado para a conversa voltar cheia quando reabrir o app
@@ -6408,7 +6850,7 @@ async function novaConversa(engine) {
   escondePerm(P);
   // sessaoId TEM de zerar junto: se ficar o da conversa anterior, uma queda de conexao faria
   // o "religar" voltar para a conversa velha em vez desta nova
-  P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.hist = [];
+  P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.hist = []; P.forkPendente = false;
   P.effort = EF_NOVO; P.ultraAvisado = false;   // conversa nova sempre volta ao Extra alto
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
   P.effectiveSettings = null; P.settingsPending = false;

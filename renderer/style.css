@@ -1527,8 +1527,8 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .hist-item.com-trecho .hi-grupo,
 .hist-item.com-trecho .hi-mais{position:absolute;top:5px}
 .hist-item.com-trecho .hi-mais{right:6px}
-.hist-item.com-trecho .hi-edit{right:29px}
-.hist-item.com-trecho .hi-grupo{right:52px}
+.hist-item.com-trecho .hi-grupo{right:29px}
+.hist-item.com-trecho .hi-edit{right:52px}
 .hist-item.com-trecho .hi-fav{right:75px}
 
 /* faixa de grupos, acima da lista de conversas */
