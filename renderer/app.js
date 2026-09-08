@@ -312,6 +312,11 @@ function conversaDaPastaNova(P, pasta) {
   // leva 8.3: o fio mudou de conversa — a intenção de ramificar não pode ir junto, senão a
   // próxima mensagem forkaria a conversa ERRADA, em silêncio
   P.forkPendente = false;
+  /* leva 10.5: a pasta mudou, então a branch isolada da pasta ANTIGA não vai junto. Sem esta
+     linha o chat passaria a criar um .claude/worktrees/<nome> dentro da pasta nova, calado.
+     Esta função é chamada nos QUATRO pontos em que a pasta de um chat muda (trocar a pasta da
+     aba, arrastar o chat para outra aba, e os dois ramos do levarChatPara). */
+  P.worktree = '';
   P.titulo = ''; P.nomeManual = false; P.hist = [];
   P.blocks.clear(); P.tools.clear();
   P.ultraAvisado = false;
@@ -331,6 +336,7 @@ async function trocarPastaDaAba(A) {
     P.cwd = p; P.started = false; setDot(P, 'off');
     $('.p-cwd', P.el).textContent = nomePasta(p);
     conversaDaPastaNova(P, p);
+    mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
   }
   if (abaAtiva === A) { loadTree(p); const pn = $('#projName'); if (pn) pn.textContent = nomePasta(p); }
   lateralSegueAPasta();
@@ -358,6 +364,7 @@ function moverPane(P, A, indice) {
     P.cwd = A.cwd; P.started = false; setDot(P, 'off');
     $('.p-cwd', P.el).textContent = nomePasta(P.cwd);
     conversaDaPastaNova(P, P.cwd);
+    mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
   }
   remontarEspaco(A);
   if (antiga && antiga !== A) {
@@ -421,6 +428,10 @@ async function mudarPastaDoChat(P) {
 
 async function levarChatPara(P, escolhida) {
   if (!escolhida || escolhida === P.cwd) return;
+  /* leva 10.5: cinto e suspensório. O conversaDaPastaNova já zera a branch isolada nos dois
+     ramos de baixo, mas o terceiro (moverPane) só o chama quando a pasta do chat difere da da
+     aba de destino — aqui a limpeza vale para os TRÊS, sem exceção. */
+  P.worktree = '';
   const A0 = abaDe(P);
   const jaExiste = abaDoCaminho(escolhida, false);
 
@@ -429,6 +440,7 @@ async function levarChatPara(P, escolhida) {
     P.cwd = escolhida; P.started = false; setDot(P, 'off');
     $('.p-cwd', P.el).textContent = nomePasta(escolhida);
     conversaDaPastaNova(P, escolhida);
+    mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
     savePanes();
     return;
   }
@@ -443,6 +455,7 @@ async function levarChatPara(P, escolhida) {
     pintarAba(A0);
     if (abaAtiva === A0) { loadTree(escolhida); const pn = $('#projName'); if (pn) pn.textContent = nomePasta(escolhida); setFocus(P); }
     conversaDaPastaNova(P, escolhida);
+    mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
     lateralSegueAPasta();
     savePanes();
     return;
@@ -599,6 +612,8 @@ function newPane(opts = {}) {
     serviceTier: opts.serviceTier || '', experimentalContext: opts.experimentalContext === true,
     collaborationMode: opts.collaborationMode === 'plan' || (!opts.collaborationMode && (opts.mode || cfg.defMode) === 'plan') ? 'plan' : 'default',
     effectiveSettings: null, settingsPending: false,
+    // leva 10.5: nome da branch isolada em .claude/worktrees/<nome>; vazio = pasta principal
+    worktree: opts.worktree || '',
     blocks: new Map(), tools: new Map(), execEl: null, trabTimer: null, trabOque: '',
     chat: $('.pane-chat', el),
   };
@@ -897,6 +912,9 @@ function savePanes() {
         /* ramo que ainda nao mandou a 1a mensagem (leva 8.3). Sem guardar, reabrir o app faria
            este chat virar CONTINUACAO da conversa de origem, escrevendo dentro dela. */
         fork: P.forkPendente || undefined,
+        /* branch isolada (leva 10.5). Sem guardar, reabrir o app devolvia o chat para a pasta
+           principal em silencio — e a proxima mensagem mexeria na branch de verdade. */
+        worktree: P.worktree || undefined,
       };
     }).filter(Boolean),
   })).filter(a => a.chats.length).concat(abasQueNaoVoltaram);
@@ -966,6 +984,9 @@ async function restaurarAbasCorpo(salvas) {
       if (c.larg) P.el.style.flex = c.larg;
       // ramo que fechou o app antes da 1a mensagem: continua sendo ramo (leva 8.3)
       if (c.fork) P.forkPendente = true;
+      // chat que estava numa branch isolada volta nela (leva 10.5); o rotulo "⎇ nome" tem
+      // de ser repintado aqui porque o newPane desenhou antes de saber do worktree
+      if (c.worktree && !NA_VPS(c.cwd || a.cwd)) { P.worktree = c.worktree; mostrarPastaNoPainel(P); }
       if (c.sessao) {
         P.resumeId = c.sessao;                       // a proxima mensagem continua a mesma conversa
         // Sem repor tambem o caminho do arquivo, o primeiro savePanes() apos abrir gravava
@@ -1039,6 +1060,9 @@ async function trocarMotor(P, novo) {
   // leva 8.3: o fio mudou de conversa — a intenção de ramificar não pode ir junto, senão a
   // próxima mensagem forkaria a conversa ERRADA, em silêncio
   P.forkPendente = false;
+  // leva 10.5: a branch isolada é uma coisa do Claude (a flag -w é dele). Trocar de motor
+  // devolve o chat à pasta principal, senão o rótulo "⎇ nome" ficaria mentindo no Codex
+  P.worktree = '';
   // o processo velho vai morrer: o chat deixa de estar ocupado e a fila morre com ele.
   // O texto que estava na fila volta para o campo, e a bolha dele sai da tela junto — senao
   // ele manda de novo e a mesma mensagem fica duas vezes na conversa.
@@ -1136,6 +1160,7 @@ function setFocus(P) {
   focusPane = P;
   for (const q of panes.values()) q.el.classList.toggle('focus', q === P);
   loadTree(P.cwd);
+  atualizarGit(P);   // leva 10.4: o chip do git segue o chat que está em foco
   $('#tbTitle').textContent = shortPath(P.cwd) + '  ·  ' + (P.engine === 'codex' ? 'Codex' : 'Claude');
   const pn = $('#projName'); if (pn) pn.textContent = nomePasta(P.cwd);
 }
@@ -2962,6 +2987,9 @@ async function send(P) {
         // ramo de verdade (leva 8.3): o Claude nasce com --fork-session e leva a conversa
         // inteira, sem escrever dentro da de origem. Sem isto o campo nem é mandado.
         fork: P.forkPendente || undefined,
+        /* branch isolada (leva 10.5). Só no Claude e só fora da VPS: a flag -w é do Claude, e
+           o repositório quem confere é o Mac. Sem worktree o campo nem é mandado. */
+        worktree: (P.engine === 'claude' && !NA_VPS(P.cwd) && P.worktree) || undefined,
         ...pedidoCodex,
       });
       // Uma versao antiga podia guardar aqui o numero da conversa do outro motor. O processo
@@ -3141,6 +3169,7 @@ function receberEventoPane(ev) {
       P.busy = false; escondePerm(P, false);   // perguntas não bloqueantes continuam respondíveis
       setDot(P, 'idle'); P.blocks.clear(); pararTrabalho(P); limparPassos(P);
       mostrarContinuar(P);
+      atualizarGit(P);   // leva 10.4: o turno acabou; o chip mostra o que ele mexeu na pasta
       setTimeout(() => { if (!P.busy) { pararTrabalho(P); limparPassos(P); } }, 400);
       // nao zera mais o histCache aqui: zerar trocava a lista por "Carregando..." e derrubava
       // busca, filtro e favorito ate a releitura terminar. O loadHist ja sobrescreve o cache.
@@ -4268,6 +4297,14 @@ async function menuSkills(P, filtroInicial, focar) {
     /* Item NOVO, ao lado do terminal de sempre (que continua abrindo aqui no Mac). So aparece
        em painel da VPS. Quem monta a linha do ssh e o main: host e usuario nao saem de la. */
     ...(NA_VPS(P.cwd) ? [{ sec: 'Painel', ic: 'terminal', nome: 'terminal na VPS', desc: 'shell de verdade lá dentro, na pasta deste painel', act: () => abrirTerminalVps(P) }] : []),
+    /* leva 10.5: branch isolada. Aparece SEMPRE — inclusive no Codex e na VPS, onde entrar é
+       recusado com o motivo escrito, mas SAIR precisa continuar possível (ele pode ter
+       trocado de motor depois de entrar). */
+    { sec: 'Painel', ic: 'git-branch', nome: P.worktree ? 'Sair do worktree "' + P.worktree + '"' : 'Abrir em worktree…',
+      tag: P.worktree ? '⎇' : '',
+      desc: P.worktree ? 'volta a trabalhar na pasta principal deste chat'
+        : 'branch isolada em .claude/worktrees: experimenta sem sujar a branch de verdade (só Claude)',
+      act: () => alternarWorktree(P) },
     { sec: 'Conectores', ic: 'plug', nome: 'conectores', desc: 'ver, reconectar ou adicionar um conector', act: () => janelaConectores(P) },
     /* As duas ultimas de propósito: a seção nasce quando o nome muda, então grudadas aqui no
        FIM elas viram uma seção "Prompts" própria, sem quebrar nenhuma das de cima. */
@@ -6850,6 +6887,7 @@ async function openSession(s, el) {
   escondePerm(P);
   P.engine = s.engine; P.cwd = s.cwd; P.resumeId = s.id; P.sessaoId = null; P.started = false; P.busy = false; P.model = '';
   P.forkPendente = false;   // leva 8.3: abrir outra conversa aqui cancela a intencao de ramificar
+  P.worktree = '';          // leva 10.5: a conversa escolhida nasceu na pasta principal, nao na branch isolada
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
   P.effectiveSettings = null; P.settingsPending = false;
   P.sessaoFile = s.file || '';   // guardado para a conversa voltar cheia quando reabrir o app
@@ -6857,6 +6895,7 @@ async function openSession(s, el) {
   P.blocks.clear(); P.tools.clear(); P.chat.innerHTML = ''; P.rolagem = null;   // solta a mensagem-ancora da memoria
   fillModels(P); paintEngine(P); setDot(P, 'off');
   $('.p-cwd', P.el).textContent = nomePasta(P.cwd);
+  mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
   pintarModo(P); pintarNome(P);
   setFocus(P); savePanes();
 
@@ -6923,6 +6962,12 @@ document.querySelectorAll('[data-reload]').forEach(b =>
   b.addEventListener('click', () => loadHist(b.dataset.reload, true)));
 document.querySelectorAll('[data-new]').forEach(b =>
   b.addEventListener('click', () => novaConversa(b.dataset.new)));
+/* leva 10.2: "Atualizar agora" da torre. O `true` fura o cache de 30s da lista de fora — é o
+   único jeito de ver na hora um Claude que ele acabou de abrir no Terminal. */
+{
+  const btTorre = document.getElementById('btnTorreAtualizar');
+  if (btTorre) { btTorre.innerHTML = ico('refresh-cw'); btTorre.addEventListener('click', () => pintarTorre(true)); }
+}
 
 /* ============ arrastar: chats dentro da aba, e abas entre si ============ */
 
@@ -8153,4 +8198,10 @@ document.addEventListener('keydown', (e) => {
     setTimeout(() => alert('Não consegui trazer suas abas de antes.\n\nMotivo: ' + ((e && e.message) || e) + '\n\nO trabalho não foi apagado: ele está em ~/Library/Application Support/cockpit/config.json'), 300);
   }
   if (!voltou) telaNovaAba(true);
+  /* leva 10.4: o chip do git em TODOS os chats, não só no que está em foco — cada aba pode
+     estar numa pasta diferente, e a branch de cada uma importa. */
+  for (const Q of panes.values()) atualizarGit(Q);
+  /* leva 10.6: radar de versão. Atrasado de propósito: a consulta ao npm leva segundos e o
+     boot não pode esperar por ela. Se ainda não houver chat nenhum, ele mesmo se reagenda. */
+  setTimeout(checarVersoesDosMotores, 12000);
 })();
