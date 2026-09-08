@@ -1194,6 +1194,228 @@ async function lerArquivoRemoto(f) {
   return { content: rr.out };
 }
 
+/* ============ SSH: por que falhou, e conexao reaproveitada (bloco NOVO) ============
+   Nada aqui encosta no noServidor nem no argsSsh de cima: aqueles servem o visor, o seletor
+   de pasta e — o argsSsh — os spawns LONGOS do Claude e do Codex rodando na VPS. Funcionam
+   hoje e ficam como estao. O que entra por aqui e o caminho NOVO (arvore de arquivos, visor
+   remoto, lista de conversas da VPS), que e justamente o que dispara muitas idas seguidas
+   ao servidor e paga caro por isso.                                                       */
+
+/* O ssh explica a falha no stderr, em ingles e no jargao dele. Aqui isso vira uma frase que
+   diz o que houve e o que fazer — antes tudo virava lista vazia, que na tela e indistinguivel
+   de "essa pasta nao tem nada".
+   No fork de origem as frases mandavam "conferir em Editar aba"; aqui nao existe essa tela:
+   o endereco da VPS mora no SERVIDORES e no ~/.ssh/config do Mac. */
+function motivoDoSsh(txt, r) {
+  const s = String(txt || '');
+  const host = (r && r.host) || 'vps';
+  const onde = ' (' + host + ')';
+  const noConfig = ' Confira o host "' + host + '" no seu ~/.ssh/config.';
+  if (/Permission denied|denied \(publickey/i.test(s))
+    return 'O servidor' + onde + ' recusou a chave.' + noConfig;
+  if (/no such identity|could not open user config|Load key.*No such file/i.test(s))
+    return 'Não achei o arquivo da chave aqui no Mac.' + noConfig;
+  if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(s))
+    return 'A identidade do servidor' + onde + ' mudou (foi reinstalado?). Por segurança o ssh recusou — limpe a linha dele no ~/.ssh/known_hosts.';
+  if (/Connection refused/i.test(s))
+    return 'O servidor' + onde + ' recusou a conexão. O SSH está no ar? A porta é a 22?';
+  if (/Connection timed out|Operation timed out|No route to host/i.test(s))
+    return 'Não alcancei o servidor' + onde + '. Ele está no ar e liberado para o seu IP?';
+  if (/Could not resolve hostname|Name or service not known/i.test(s))
+    return 'Não achei o endereço' + onde + '.' + noConfig;
+  if (/ssh_exchange_identification/i.test(s))
+    return 'O servidor' + onde + ' está recusando conexões novas agora (muitas de uma vez). Tente de novo em instantes.';
+  const linha = s.split('\n').map(x => x.trim()).filter(x => x && !/^Warning: Permanently added/i.test(x))[0];
+  return linha ? ('O servidor' + onde + ' respondeu: ' + linha.slice(0, 160)) : '';
+}
+
+/* ---------- conexao reaproveitada (ControlMaster) ----------
+   Abrir a arvore de uma pasta na VPS custa uma conexao SSH NOVA por pasta expandida: medido
+   ~0,47s cada. Pior: o sshd padrao (MaxStartups 10:30:100) comeca a RECUSAR quando sao muitas
+   de uma vez, e a frase de "muitas conexoes de uma vez" viraria rotina.
+   Com ControlMaster a primeira conexao fica guardada num socket e as seguintes entram por
+   dentro dela: 0,47s -> 0,09s.
+   O OpenSSH do macOS multiplexa de verdade (o do Windows nao — por isso o fork de origem tem
+   uma sonda inteira que aqui nao faz falta). Mesmo assim nada e prometido: se a ida COM socket
+   falhar, o noServidorSsh tenta UMA vez sem ele; se ai der certo, o multiplexing sai de cena
+   pelo resto da sessao e tudo segue funcionando do jeito de sempre. */
+let muxLigado = true;      // desligado se uma ida com socket falhar e a sem socket der certo
+let muxProvado = false;    // ja vi uma ida COM socket dar certo: dai nao se tenta de novo sem
+const sockUsados = new Set();   // sockets que ESTE app abriu — so nesses o "-O exit" pode mandar
+
+function pastaSsh() {
+  const dir = path.join(app.getPath('userData'), 'ssh');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  return dir;
+}
+/* Socket de dominio Unix tem teto de ~104 caracteres no caminho INTEIRO. Por isso o nome e
+   curto e so [a-z0-9-]: "cm-" + 16 do sha1. Da 78 caracteres aqui, com folga.
+   Sha1 do HOST (nao de usuario@host): quem conecta e sempre o mesmo usuario do ~/.ssh/config;
+   o "usuario" do SERVIDORES e para quem o sudo troca DEPOIS, ja dentro da maquina. */
+function caminhoDoSocket(r) {
+  const nome = 'cm-' + crypto.createHash('sha1').update(String((r && r.host) || '')).digest('hex').slice(0, 16);
+  const p = path.join(pastaSsh(), nome);
+  /* Aspa dupla ou quebra de linha no caminho quebrariam o proprio -o do ssh (ver opSock).
+     Se a pasta do usuario tiver alguma delas, o multiplexing simplesmente nao entra. */
+  if (/["\r\n]/.test(p)) return '';
+  /* Socket de dominio Unix tem teto DURO de 104 bytes no caminho inteiro; o proprio ssh
+     recusa com "ControlPath too long" e sai 255. Na maquina dele da 78 e passa folgado, mas
+     numa userData mais funda (ja aconteceu num teste, com 151) e melhor nem tentar do que
+     gastar uma chamada perdida antes de cair no modo simples. */
+  return Buffer.byteLength(p) >= 104 ? '' : p;
+}
+/* MEDIDO NA MAQUINA DELE (08/09/2026, e o teste pegou isto): o caminho do socket TEM espaco
+   — a userData no Mac e ".../Library/Application Support/Cockpit". Sem aspas, o proprio ssh
+   recusa a opcao com "keyword controlpath extra arguments at end of line", devolve 255 em
+   ~10ms e TODA chamada da arvore falharia. As aspas duplas sao lidas pelo parser de opcoes
+   do ssh e nao entram no nome do arquivo. */
+const opSock = (sock) => 'ControlPath="' + sock + '"';
+/* Os MESMOS argumentos do argsSsh (que nao se toca) mais as tres opcoes do multiplexing.
+   Usado so nas idas CURTAS: a conversa do motor nunca troca de linha de comando. */
+function argsSshMux(r, comando, sock) {
+  const a = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=12', '-o', 'ServerAliveInterval=20',
+    '-o', 'ServerAliveCountMax=6', '-o', 'TCPKeepAlive=yes'];
+  if (sock) a.push('-o', 'ControlMaster=auto', '-o', opSock(sock), '-o', 'ControlPersist=120');
+  a.push(r.host, linhaNoServidor(r, comando));
+  return a;
+}
+/* O mestre do ControlPersist segue vivo em segundo plano depois da ultima chamada (ate 120s),
+   segurando uma conexao aberta. Fechar o Cockpit pede pra ele sair AGORA, em vez de deixar
+   processo e conexao pendurados. Se o pedido nao chegar, ele morre sozinho no tempo dele.
+   So manda o "-O exit" em socket DESTA pasta: existe outro ControlMaster nesta casa (o robo
+   espelho-vps), e derrubar o mestre dele quebraria um robo que nao e nosso. */
+function fecharMestresSsh() {
+  const nossa = pastaSsh();
+  for (const sock of [...sockUsados]) {
+    if (path.dirname(sock) !== nossa) continue;   // nao nasceu aqui: nao encosta
+    try {
+      // com o ControlPath explicito o nome do host nao serve pra nada, mas o ssh exige um
+      const p = spawn('ssh', ['-O', 'exit', '-o', opSock(sock), 'cockpit'],
+        { env: buildEnv(), stdio: 'ignore' });
+      p.on('error', () => {});
+      p.unref();
+    } catch {}
+  }
+  sockUsados.clear();
+}
+
+/* Uma ida ao servidor. NUNCA rejeita: devolve {code,out,errout}, mais {falhou} quando nem
+   chegou a chamar o ssh e {estourou} quando passou do tempo. */
+function sshUmaVez(r, comando, ms, sock) {
+  return new Promise((res) => {
+    let p;
+    try { p = spawn('ssh', argsSshMux(r, comando, sock), { env: buildEnv(), stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (e) { return res({ code: -1, out: '', errout: String((e && e.message) || e), falhou: true }); }
+    if (sock) sockUsados.add(sock);
+    let out = '', errout = '', acabou = false;
+    const fim = (x) => { if (acabou) return; acabou = true; clearTimeout(t); res(x); };
+    const t = setTimeout(() => { try { p.kill(); } catch {} fim({ code: -1, out, errout, estourou: true }); }, ms || 20000);
+    // 48 MB de folga: o teto de imagem do visor (25 MB) vira ~34 MB depois do base64
+    p.stdout.on('data', (d) => { if (out.length < 48 * 1024 * 1024) out += d.toString('utf8'); });
+    p.stderr.on('data', (d) => { if (errout.length < 8000) errout += d.toString('utf8'); });
+    p.on('error', (e) => fim({ code: -1, out, errout: String((e && e.message) || e), falhou: true }));
+    /* o normal e o 'close' chegar logo depois do 'exit'. Mas o ssh que fica de MESTRE
+       (ControlPersist) segue vivo em segundo plano, e se ele segurar o cano de saida o
+       'close' nunca vem — por isso o 'exit' tambem fecha, com um respiro para terminar de
+       ler o que ja chegou. */
+    p.on('exit', (code) => { setTimeout(() => fim({ code, out, errout }), 250); });
+    p.on('close', (code) => fim({ code, out, errout }));
+  });
+}
+
+/* Uma ida ao servidor para as chamadas CURTAS (arvore, visor, conversas da VPS).
+   Diferente do noServidor, devolve o CODIGO DE SAIDA: comando remoto que sai 1 — um find que
+   nao achou nada, por exemplo — e RESPOSTA, nao falha de conexao. So o 255 e do proprio ssh,
+   e so nele entra a frase do motivoDoSsh. Nunca rejeita. */
+async function noServidorSsh(r, comando, ms) {
+  if (!r || !r.host) return { code: -1, error: 'servidor desconhecido' };
+  const sock = muxLigado ? caminhoDoSocket(r) : '';
+  let x = await sshUmaVez(r, comando, ms, sock);
+  if (sock && !x.falhou && !x.estourou && x.code === 0) muxProvado = true;
+  /* Falhou COM socket e o multiplexing ainda nao tinha sido provado? Pode ser o socket, pode
+     ser a rede. Tenta UMA vez sem ele: se ai der certo, a culpa era do socket e o multiplexing
+     sai de cena pelo resto da sessao — nada quebra, so volta a ser lento. */
+  else if (sock && !muxProvado && (x.falhou || x.estourou || x.code === 255)) {
+    const y = await sshUmaVez(r, comando, ms, '');
+    if (!y.falhou && !y.estourou && y.code === 0) {
+      muxLigado = false; fecharMestresSsh();
+      return { code: 0, out: y.out, errout: y.errout };
+    }
+    x = y;
+  }
+  if (x.estourou) return { code: -1, out: x.out, errout: x.errout, error: 'a VPS demorou demais para responder' };
+  if (x.falhou) return { code: -1, out: '', errout: x.errout, error: 'não consegui chamar o ssh: ' + String(x.errout).slice(0, 200) };
+  const res = { code: x.code, out: x.out, errout: x.errout };
+  if (x.code === 255) res.error = motivoDoSsh(x.errout, r) || ('Não consegui falar com o servidor (' + r.host + ').');
+  return res;
+}
+
+/* ---------- listagem remota robusta ----------
+   "find -printf" e "base64 -w0" sao do GNU. Num BusyBox/Alpine ou num BSD o find nem entende a
+   opcao: ele falha, o 2>/dev/null engole o motivo, e o codigo de saida do cano e o do ULTIMO
+   comando (o base64, que sai 0 com entrada vazia). Sem a sonda abaixo isso chegaria aqui como
+   lista vazia e a tela diria "pasta vazia" — erro virando resultado.
+   A sonda custa nada e vai no MESMO comando (nenhuma ida a mais ao servidor). A VPS dele e
+   Ubuntu, entao hoje ela nunca dispara — fica pro dia em que ele abrir uma aba num Alpine. */
+const SONDA_GNU = "find . -maxdepth 0 -printf '' >/dev/null 2>&1 || { echo COCKPIT_FIND_SEM_PRINTF; exit 0; }; "
+  + "printf '' | base64 -w0 >/dev/null 2>&1 || { echo COCKPIT_SEM_BASE64; exit 0; }; ";
+const AVISO_SEM_GNU = 'Este servidor não tem o find e o base64 do GNU (é Alpine/BusyBox ou BSD?). '
+  + 'O Cockpit ainda não sabe listar arquivos aí — não é que a pasta esteja vazia.';
+const erroDaSondaGnu = (bruto) => (/^COCKPIT_(FIND_SEM_PRINTF|SEM_BASE64)/.test(String(bruto || '')) ? AVISO_SEM_GNU : '');
+
+/* desempacota a resposta em base64 de um "-printf ... \0". O ultimo pedaco tem que ser vazio
+   (todo registro termina em NUL); quando nao e, o "head -c" cortou no meio de um nome e
+   aquele pedaco vai fora em vez de virar um item torto na tela. */
+function registrosNul(b64) {
+  if (!b64) return { itens: [] };
+  let texto = '';
+  try { texto = Buffer.from(b64, 'base64').toString('utf8'); }
+  catch { return { error: 'A resposta do servidor veio corrompida.' }; }
+  const partes = texto.split('\0');
+  if (partes.length && partes[partes.length - 1] !== '') partes.pop();
+  return { itens: partes.filter(Boolean) };
+}
+
+/* A mesma pasta da arvore, dentro do servidor — versao NOVA, AO LADO da antiga (que continua
+   servindo o seletor de pasta da VPS, intocada). Conserta tres buracos reais do "ls -1Ap":
+   - nome com quebra de linha virava DOIS itens: aqui os campos vao separados por NUL e o
+     pacote inteiro volta em base64, entao espaco, acento e quebra de linha chegam inteiros;
+   - "%Y" (maiusculo) e o tipo DEPOIS de seguir o atalho, entao link-para-pasta aparece como
+     pasta, igual ao ramo local ja faz com o statSync — com o "ls -p" os dois discordavam;
+   - "head -c" poe teto na tragada: pasta com 200 mil arquivos nao vira resposta gigante.
+   A peneira e a ordem sao feitas AQUI, com o mesmo IGNORE e a mesma comparacao do ramo local. */
+async function listDirRemotoV2(cwd) {
+  const r = partesRemoto(cwd);
+  if (!r) return { error: 'servidor desconhecido' };
+  const alvo = r.caminho;
+  const script = 'cd -- ' + aspaSh(alvo) + ' 2>/dev/null || { echo COCKPIT_SEM_PASTA; exit 0; }; '
+    + SONDA_GNU
+    + "find . -mindepth 1 -maxdepth 1 -printf '%Y\\t%f\\0' 2>/dev/null | head -c 400000 | base64 -w0";
+  const rr = await noServidorSsh(r, script, 20000);
+  if (rr.error) return { error: rr.error };
+  const bruto = String(rr.out || '').trim();
+  if (bruto.startsWith('COCKPIT_SEM_PASTA')) {
+    return { error: 'Não consegui abrir a pasta ' + alvo + ' no servidor. Ela existe e você tem acesso a ela?' };
+  }
+  const semGnu = erroDaSondaGnu(bruto);
+  if (semGnu) return { error: semGnu };
+  const regs = registrosNul(bruto);
+  if (regs.error) return regs;
+  const base = alvo.endsWith('/') ? alvo : alvo + '/';
+  const out = [];
+  for (const rec of regs.itens) {
+    const t = rec.indexOf('\t');
+    if (t < 0) continue;                     // pedaco cortado pelo head: descarta
+    const nome = rec.slice(t + 1);
+    if (!nome) continue;
+    if (nome.startsWith('.') && !['.claude', '.codex', '.env.example'].includes(nome)) continue;
+    if (IGNORE.has(nome)) continue;
+    out.push({ name: nome, dir: rec.slice(0, t) === 'd', path: r.chave + ':' + base + nome });
+  }
+  out.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+  return { entries: out.slice(0, 800) };
+}
+
 /* ======================= conversas recentes ======================= */
 const CLAUDE_PROJ = path.join(HOME, '.claude/projects');
 const NOMES_PATH = () => path.join(app.getPath('userData'), 'nomes.json');
@@ -1755,6 +1977,124 @@ handle('sessions:history', async (_e, { engine, file, id, cwd }) => {
   }
   return alvo ? codexHistory(alvo, 600, 250) : [];
 });
+
+/* ============ conversas do Claude que rodaram DENTRO da VPS ============
+   Elas gravam o .jsonl LA, nao aqui: nao adianta olhar o disco do Mac. Um comando so traz
+   tudo (caminho + data + tamanho + a cabeca e a cauda de cada conversa recente, em base64),
+   pra nao abrir uma conexao SSH por arquivo. */
+
+/* o mesmo que a fichaConversa le do arquivo, mas a partir do texto que veio do servidor */
+function fichaDoTexto(head, tail) {
+  const em = head.match(/"entrypoint":"([^"]*)"/);
+  const entrada = em ? em[1] : '';
+  let title = '';
+  const tm = [...tail.matchAll(/"aiTitle":"((?:[^"\\]|\\.)*)"/g)];
+  if (tm.length) { try { title = JSON.parse('"' + tm[tm.length - 1][1] + '"'); } catch { title = tm[tm.length - 1][1]; } }
+  let cwd = '';
+  const cm = head.match(/"cwd":"((?:[^"\\]|\\.)*)"/);
+  if (cm) { try { cwd = JSON.parse('"' + cm[1] + '"'); } catch { cwd = cm[1]; } }
+  if (!title) {
+    for (const linha of head.split('\n')) {
+      if (!linha.includes('"type":"user"')) continue;
+      try {
+        const d = JSON.parse(linha);
+        if (d.isMeta) continue;
+        const c = d.message && d.message.content;
+        const bruto = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => (x && x.text) || '').join(' ') : '';
+        const t = tiraBlocos(bruto);
+        if (t && !ehTecnico(t)) { title = limparTitulo(t).slice(0, 90); break; }
+      } catch {}
+    }
+  }
+  return { title, cwd, entrada };
+}
+
+async function claudeSessionsRemoto(incluirRobos) {
+  const r = partesRemoto('vps:/');
+  if (!r) return { error: 'servidor desconhecido' };
+  const script = "cd ~/.claude/projects 2>/dev/null || exit 0; "
+    + "find . -name '*.jsonl' -not -path '*/subagents/*' -not -path '*/workflows/*' "
+    + "-printf '%T@ %s %p\\n' 2>/dev/null | sort -rn | head -80 "
+    + "| while IFS=' ' read -r mtime tam arq; do "
+    + "tb=$(tail -c 65536 \"$arq\" 2>/dev/null | base64 -w0); "
+    + "hb=$(head -c 65536 \"$arq\" 2>/dev/null | base64 -w0); "
+    + "printf '%s|~|%s|~|%s|~|%s|~|%s\\n' \"$arq\" \"$mtime\" \"$tam\" \"$tb\" \"$hb\"; done; exit 0";
+  const rr = await noServidorSsh(r, script, 30000);
+  if (rr.error) return { error: rr.error };
+  const nomesMeus = lerNomes();
+  const out = [];
+  for (const linha of String(rr.out || '').split('\n')) {
+    if (!linha) continue;
+    const partes = linha.split('|~|');
+    if (partes.length < 5) continue;
+    const [rel, mtimeStr, tamStr, tailB64, headB64] = partes;
+    if ((Number(tamStr) || 0) < 300) continue;
+    let tail = '', head = '';
+    try { tail = Buffer.from(tailB64, 'base64').toString('utf8'); } catch {}
+    try { head = Buffer.from(headB64, 'base64').toString('utf8'); } catch {}
+    const fi = fichaDoTexto(head, tail);
+    if (!incluirRobos && fi.entrada && !ENTRADAS_DE_GENTE.includes(fi.entrada)) continue;
+    const id = (rel.split('/').pop() || rel).replace(/\.jsonl$/, '');
+    const title = nomesMeus[id] || fi.title;
+    if (!title) continue;
+    /* O prefixo "vps:" e OBRIGATORIO. Sem ele o filtro de pasta da coluna lateral esvazia a
+       lista (a pasta da VPS nao existe no Mac) E o clique abre uma aba LOCAL apontando para
+       um caminho que nao existe aqui. */
+    out.push({
+      engine: 'claude', id, title, cwd: 'vps:' + (fi.cwd || '/'),
+      when: Math.round((parseFloat(mtimeStr) || 0) * 1000), file: '', entrada: fi.entrada, remoto: true,
+    });
+  }
+  out.sort((a, b) => b.when - a.when);
+  return out;
+}
+
+/* O mesmo leitor do claudeHistory, mas a partir do TEXTO que veio do servidor (la o arquivo
+   nao existe no disco daqui). Se um dia o claudeHistory mudar, este tem de mudar junto. */
+function claudeHistoryTexto(data, maxFalas, maxTools) {
+  const msgs = [];
+  for (const line of String(data || '').split('\n')) {
+    if (!line.startsWith('{')) continue;
+    let d; try { d = JSON.parse(line); } catch { continue; }
+    if (d.isMeta) continue;
+    if (d.type === 'user' && d.message) {
+      const c = d.message.content;
+      let t = typeof c === 'string' ? c : Array.isArray(c) ? c.filter(x => x && x.type === 'text').map(x => x.text).join('\n') : '';
+      t = tiraBlocos(t);
+      if (t && !ehTecnico(t)) msgs.push({ role: 'user', text: semContexto(t) || t });
+    } else if (d.type === 'assistant' && d.message) {
+      const c = d.message.content || [];
+      for (const x of c) {
+        if (x.type === 'text' && x.text && x.text.trim()) msgs.push({ role: 'bot', text: x.text });
+        else if (x.type === 'tool_use') msgs.push({ role: 'tool', name: x.name, arg: claudeToolArg(x.name, x.input) });
+      }
+    }
+  }
+  return cortarHistorico(msgs, maxFalas || 600, maxTools);
+}
+
+/* le o .jsonl de uma conversa que rodou na VPS: procura pelo id em ~/.claude/projects e traz o
+   conteudo em base64, numa conexao so. Sem isto, clicar na conversa abria um chat vazio. */
+async function claudeHistoryRemoto(id) {
+  const r = partesRemoto('vps:/');
+  if (!r) return { error: 'servidor desconhecido' };
+  const seguro = String(id || '').replace(/[^\w-]/g, '');
+  if (!seguro) return [];
+  const script = 'f=$(find ~/.claude/projects -name ' + aspaSh(seguro + '.jsonl') + ' -print -quit 2>/dev/null); '
+    + '[ -n "$f" ] && tail -c 6000000 "$f" | base64 -w0; exit 0';
+  const rr = await noServidorSsh(r, script, 30000);
+  if (rr.error) return { error: rr.error };
+  const b64 = String(rr.out || '').trim();
+  if (!b64) return [];   // nao esta mais la: isso e resposta, nao falha de conexao
+  let texto = '';
+  try { texto = Buffer.from(b64, 'base64').toString('utf8'); }
+  catch { return { error: 'A resposta do servidor veio corrompida.' }; }
+  // o corte e o DAQUI (600 falas / 250 ferramentas), nao os 60 itens do fork de origem
+  return claudeHistoryTexto(texto, 600, 250);
+}
+
+handle('sessions:claudeRemoto', (_e, incluirRobos) => claudeSessionsRemoto(incluirRobos));
+handle('sessions:historyRemoto', (_e, o) => claudeHistoryRemoto(o && o.id));
 
 /* ======================= comandos e skills ======================= */
 function readSkillDirs(dirs) {
@@ -2330,6 +2670,74 @@ handle('arquivo:ver', (_e, file) => {
   } catch (e) { return { erro: e.message, path: file, nome: path.basename(file) }; }
 });
 
+/* ---------- o mesmo visor, mas para arquivo que mora NA VPS ----------
+   Um comando so: confere que existe, diz o tamanho e — so se couber no MESMO teto do ramo
+   local — manda o conteudo em base64 (que serve pra imagem e pra texto, sem se preocupar com
+   codificacao). Quem nao cabe, ou nao e de um tipo que a tela sabe abrir, volta como 'outro'
+   sem gastar rede. O "exit 0" no fim e o que impede um "nao cabe" de virar codigo de erro e
+   ser lido como falha de conexao.
+   Handler NOVO de proposito: o lerArquivoRemoto devolve {content} e o visor espera
+   {nome,bytes,tipo,dados} — plugado direto, o titulo sairia "undefined ·". */
+async function verArquivoRemoto(f) {
+  const r = partesRemoto(f);
+  const nome = path.posix.basename(String(f || ''));
+  if (!r) return { erro: 'servidor desconhecido', path: f, nome };
+  const alvo = r.caminho;
+  const ext = path.posix.extname(alvo).slice(1).toLowerCase();
+  const ehImg = EXT_VIS_IMG.includes(ext);
+  const teto = ehImg ? 25 * 1024 * 1024 : /^(txt|md|json|js|ts|py|html|css|csv|log|sh|yml|yaml|toml|xml)$/.test(ext) ? 600 * 1024 : 0;
+  const q = aspaSh(alvo);
+  const script = '[ -e ' + q + ' ] || { echo COCKPIT_SEM_ARQUIVO; exit 0; }; '
+    + 't=$(stat -c %s -- ' + q + ' 2>/dev/null || echo -1); '
+    + "printf 'COCKPIT_TAM %s\\n' \"$t\"; "
+    + (teto > 0 ? '[ -f ' + q + ' ] && [ "$t" -ge 0 ] && [ "$t" -le ' + teto + ' ] && base64 -w0 -- ' + q + '; ' : '')
+    + 'exit 0';
+  // 60s, nao os 20s das outras: imagem de 25 MB vira ~34 MB em base64 e nao cabe no tempo curto
+  const rr = await noServidorSsh(r, script, 60000);
+  if (rr.error) return { erro: rr.error, path: f, nome };
+  const bruto = String(rr.out || '');
+  if (bruto.startsWith('COCKPIT_SEM_ARQUIVO')) return { erro: 'Não achei este arquivo no servidor.', path: f, nome };
+  const quebra = bruto.indexOf('\n');
+  const bytes = Number(((quebra >= 0 ? bruto.slice(0, quebra) : bruto).match(/^COCKPIT_TAM\s+(-?\d+)/) || [])[1]);
+  if (!Number.isFinite(bytes) || bytes < 0) return { erro: 'Não consegui ler este arquivo no servidor.', path: f, nome };
+  const b64 = quebra >= 0 ? bruto.slice(quebra + 1).trim() : '';
+  const base = { path: f, nome, ext, bytes, remoto: true };
+  if (!b64) { base.tipo = 'outro'; return base; }
+  if (ehImg) {
+    const mime = ext === 'jpg' ? 'jpeg' : ext === 'svg' ? 'svg+xml' : ext;
+    base.tipo = 'imagem';
+    base.dados = 'data:image/' + mime + ';base64,' + b64;
+    return base;
+  }
+  base.tipo = 'texto';
+  try { base.dados = Buffer.from(b64, 'base64').toString('utf8'); }
+  catch { return { erro: 'A resposta do servidor veio corrompida.', path: f, nome }; }
+  return base;
+}
+handle('arquivo:verVps', (_e, f) => (ehRemoto(f) ? verArquivoRemoto(f) : { erro: 'esse caminho não é da VPS', path: f, nome: String(f || '') }));
+
+/* ---------- terminal embutido entrando na VPS ----------
+   Host e usuario NAO saem do renderer: eles moram no SERVIDORES aqui do main, e e daqui que a
+   linha e montada. O embrulho vai com aspas SIMPLES (aspaSh) e nao com JSON.stringify: com
+   aspas duplas o $SHELL seria expandido AQUI no Mac e o comando mandaria "exec /bin/zsh" para
+   um servidor cujo shell e o bash. */
+handle('term:linhaShell', (_e, cwd) => {
+  if (!ehRemoto(cwd)) return { error: 'essa pasta não é da VPS' };
+  const r = partesRemoto(cwd);
+  if (!r) return { error: 'servidor desconhecido' };
+  const dir = aspaSh(r.caminho);
+  /* Duas camadas, e a segunda foi MEDIDA na VPS dele em 08/09/2026: o ~/.bashrc de la tem um
+     `cd /opt/adsure/trabalho` FIXO (linha 119), que roda depois do nosso cd e o desfazia — o
+     terminal abria sempre na mesma pasta, fosse qual fosse o painel. O PROMPT_COMMAND roda
+     DEPOIS do rc, pouco antes do primeiro prompt, e se apaga na mesma linha para nao repetir a
+     cada comando. O `cd` de antes fica porque vale para shell que nao usa PROMPT_COMMAND.
+     Pasta que sumiu nao pode deixar o terminal sem abrir: cai na home e avisa na propria tela. */
+  const dentro = 'cd -- ' + dir + ' 2>/dev/null || echo "[essa pasta não existe aí — abrindo na home]"; '
+    + 'exec env PROMPT_COMMAND=' + aspaSh('cd -- ' + dir + ' 2>/dev/null; unset PROMPT_COMMAND') + ' "$SHELL" -l';
+  const linha = 'ssh -t -o BatchMode=yes -o ConnectTimeout=12 ' + r.host + ' ' + aspaSh(linhaNoServidor(r, dentro));
+  return { linha, titulo: (r.nome || 'VPS') + ' — ' + (r.caminho.split('/').filter(Boolean).pop() || '/') };
+});
+
 handle('clipboard:anexos', () => {
   const arquivos = arquivosColados();
   if (arquivos.length) return { arquivos };
@@ -2508,6 +2916,7 @@ function createWindow() {
 }
 
 function shutdown() {
+  fecharMestresSsh();   // o mestre do ControlPersist nao fica pendurado depois do app
   for (const id of [...claudePanes.keys()]) claudeStop(id);
   for (const c of codexConns.values()) { if (c.proc) { try { c.proc.kill('SIGTERM'); } catch {} c.proc = null; c.ready = null; } }
 }
@@ -2560,7 +2969,8 @@ handle('dialog:pickFolder', async (_e, start) => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: pastaInicial(start), title: 'Pasta de trabalho deste painel' });
   return r.canceled ? null : r.filePaths[0];
 });
-handle('fs:list', (_e, d) => (ehRemoto(d) ? listDirRemoto(d) : listDir(d)));
+// so este desvio mudou: a arvore passou a usar a listagem NOVA (NUL + base64 + teto + sonda)
+handle('fs:list', (_e, d) => (ehRemoto(d) ? listDirRemotoV2(d) : listDir(d)));
 handle('fs:read', (_e, f) => {
   if (ehRemoto(f)) return lerArquivoRemoto(f);
   try {

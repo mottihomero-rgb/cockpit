@@ -151,6 +151,13 @@ const nomePasta = (p) => {
   if (p === HOME) return 'Pasta: Mac inteiro';
   return 'Pasta: ' + (p.split('/').pop() || p);
 };
+/* Um caminho citado por um painel que roda NA VPS mora na VPS, nao aqui. Sem esta cura, um
+   "/tmp/x.log" escrito pelo agente da VPS abria o /tmp/x.log DO MAC, calado — outro arquivo,
+   nenhum aviso. Caminho que ja vem com o prefixo, ou que nao e absoluto, passa intacto. */
+const caminhoDoPainel = (P, c) =>
+  (P && NA_VPS(P.cwd) && /^\//.test(String(c || '')) ? 'vps:' + c : c);
+// o visor le pelo cano certo: o do Mac ou o que vai por SSH
+const lerParaVisor = (c) => ((NA_VPS(c) && window.api.verArquivoVps) ? window.api.verArquivoVps(c) : window.api.verArquivo(c));
 
 /* ============ painel ============ */
 function piscar(P) {
@@ -966,7 +973,10 @@ async function restaurarAbasCorpo(salvas) {
     try {
       // manda tambem id e pasta: quando o caminho se perdeu (config antigo), o main
       // reconstroi sozinho a partir deles em vez de devolver conversa vazia
-      const msgs = await window.api.sessionHistory({ engine: P.engine, file: arquivo, id, cwd });
+      // conversa do Claude que rodou na VPS: o .jsonl esta LA, nao no disco daqui
+      const msgs = (P.engine === 'claude' && NA_VPS(cwd) && window.api.sessionHistoryRemoto)
+        ? await window.api.sessionHistoryRemoto({ id })
+        : await window.api.sessionHistory({ engine: P.engine, file: arquivo, id, cwd });
       const aviso = $('.note', P.chat); if (aviso) aviso.remove();
       for (const m of (msgs || [])) renderizarHistorico(P, m);
       $$('.tool-st.run', P.el).forEach(x => { x.className = 'tool-st ok'; x.innerHTML = ico('check'); });
@@ -2214,7 +2224,12 @@ function marcarLinksWeb(el) {
 }
 
 function linkarArquivos(P, el) {
-  const re = /(\/(?:Users|tmp|private|Volumes)\/[^\s"'<>)]+\.[A-Za-z0-9]{1,6})/g;
+  /* Painel da VPS fala de caminho de LINUX (/home, /opt, /var…), que aqui no Mac nem existe.
+     Por isso a peneira muda com o painel: raizes do Mac num painel local, raizes do Linux num
+     painel da VPS. Sem isso, ou o link nem aparecia, ou apontava para o arquivo errado. */
+  const re = NA_VPS(P.cwd)
+    ? /(\/(?:home|root|opt|srv|var|etc|usr|mnt|media|data|tmp)\/[^\s"'<>)]+\.[A-Za-z0-9]{1,6})/g
+    : /(\/(?:Users|tmp|private|Volumes)\/[^\s"'<>)]+\.[A-Za-z0-9]{1,6})/g;
   const andar = (no) => {
     for (const filho of [...no.childNodes]) {
       if (filho.nodeType === 3) {
@@ -2229,7 +2244,7 @@ function linkarArquivos(P, el) {
           const a = document.createElement('a');
           a.className = 'arquivo'; a.textContent = caminho; a.href = '#';
           a.title = 'abre aqui dentro';
-          a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); verArquivo(P, caminho); };
+          a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); verArquivo(P, caminhoDoPainel(P, caminho)); };
           frag.appendChild(a);
           ult = m.index + caminho.length;
         }
@@ -2365,7 +2380,7 @@ function cartaoDeDiff(P, ed) {
   $('.dif-nm', cab).textContent = (ed.novo ? 'criou ' : '') + nome;
   $('.dif-nm', cab).title = ed.arquivo || '';
   $('.dif-cnt', cab).innerHTML = '<b class="v">+' + mais + '</b> <b class="r">−' + menos + '</b>';
-  $('.dif-abrir', cab).onclick = (e) => { e.stopPropagation(); verArquivo(P, ed.arquivo); };
+  $('.dif-abrir', cab).onclick = (e) => { e.stopPropagation(); verArquivo(P, caminhoDoPainel(P, ed.arquivo)); };
   cab.addEventListener('click', () => cx.classList.toggle('fechado'));
   cx.appendChild(cab);
   for (const c of corpos) cx.appendChild(c);
@@ -2627,6 +2642,7 @@ function verImagemGrande(P, src) {
   $('.visor-x', v).onclick = fecharVisor;
   // este print nao e' um arquivo no disco: nao ha o que abrir no Mac
   const abrir = $('.visor-abrir', v);
+  abrir.classList.remove('hidden');   // ver um arquivo da VPS antes esconde este botao: repoe
   abrir.innerHTML = ico('image');
   abrir.onclick = null;
   abrir.title = 'Print do agente — não é um arquivo no Mac';
@@ -3244,7 +3260,7 @@ async function imagemGeradaCodex(P, ev) {
   const path = ev.path || ev.localPath || ev.filePath;
   const status = document.createElement('p'); status.textContent = 'Abrindo imagem…'; el.appendChild(status);
   try {
-    if (path) { const a = await window.api.verArquivo(path); if (a && a.tipo === 'imagem') src = a.dados; }
+    if (path) { const a = await lerParaVisor(caminhoDoPainel(P, path)); if (a && a.tipo === 'imagem') src = a.dados; }
     if (!/^(https?:\/\/|data:image\/(png|jpe?g|webp|gif);base64,)/i.test(src)) {
       status.textContent = path ? 'Imagem salva: ' + path.split('/').pop() : 'A imagem não está disponível para prévia.';
     } else {
@@ -3254,7 +3270,7 @@ async function imagemGeradaCodex(P, ev) {
       el.appendChild(img);
     }
     if (ev.prompt) { const p = document.createElement('p'); p.textContent = ev.prompt; el.appendChild(p); }
-    if (path) { const b = document.createElement('button'); b.type = 'button'; b.className = 'cx-acao'; b.textContent = 'Abrir imagem'; b.onclick = () => verArquivo(P, path); el.appendChild(b); }
+    if (path) { const b = document.createElement('button'); b.type = 'button'; b.className = 'cx-acao'; b.textContent = 'Abrir imagem'; b.onclick = () => verArquivo(P, caminhoDoPainel(P, path)); el.appendChild(b); }
   } catch { status.textContent = 'Não foi possível abrir a imagem.'; }
 }
 function encerrarPerguntaCodex(P, key, texto = 'Resposta enviada.') {
@@ -4101,6 +4117,9 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Painel', ic: 'folder-open', nome: 'Trocar a pasta deste painel', tag: nomePasta(P.cwd), act: () => $('.p-cwd', P.el).click() },
     { sec: 'Painel', ic: 'sliders-horizontal', nome: 'Configurar o Claude', desc: 'memória, agentes, hooks e permissões', act: () => janelaConfiguracao(P) },
     { sec: 'Painel', ic: 'terminal', nome: 'terminal', desc: 'rodar comandos aqui dentro, sem abrir o Terminal do Mac', act: () => janelaTerminal(P, 'cd ' + JSON.stringify(P.cwd) + ' 2>/dev/null; exec ${SHELL:-/bin/zsh} -l', 'Terminal — ' + nomePasta(P.cwd)) },
+    /* Item NOVO, ao lado do terminal de sempre (que continua abrindo aqui no Mac). So aparece
+       em painel da VPS. Quem monta a linha do ssh e o main: host e usuario nao saem de la. */
+    ...(NA_VPS(P.cwd) ? [{ sec: 'Painel', ic: 'terminal', nome: 'terminal na VPS', desc: 'shell de verdade lá dentro, na pasta deste painel', act: () => abrirTerminalVps(P) }] : []),
     { sec: 'Conectores', ic: 'plug', nome: 'conectores', desc: 'ver, reconectar ou adicionar um conector', act: () => janelaConectores(P) },
   ];
 
@@ -4279,6 +4298,15 @@ window.api.onTermEvent(({ id, kind, data, code }) => {
     t.term.write('\r\n\x1b[90m— terminou' + (code ? ' (código ' + code + ')' : ', tudo certo') + ' —\x1b[0m\r\n');
   }
 });
+
+/* Terminal embutido entrando na VPS. A linha do ssh e montada no MAIN (host e usuario moram
+   no SERVIDORES de la); aqui so se pede e se abre a mesma janelinha de sempre. */
+async function abrirTerminalVps(P) {
+  if (!window.api.termLinhaShell) return avisoTemp(P, 'Este app ainda não sabe abrir o terminal da VPS.');
+  const r = await window.api.termLinhaShell(P.cwd);
+  if (!r || r.error || !r.linha) return avisoTemp(P, 'Não consegui montar o terminal da VPS: ' + ((r && r.error) || 'sem resposta'));
+  janelaTerminal(P, r.linha, 'Terminal — ' + (r.titulo || 'VPS'));
+}
 
 function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
   const op = opcoes || {};
@@ -5244,9 +5272,13 @@ async function verArquivo(P, caminho) {
   $('.visor-abrir', v).onclick = () => window.api.openPath(caminho);
   // repoe o rotulo: ver um print do agente deixa aqui "nao e' um arquivo no Mac"
   $('.visor-abrir', v).title = 'Abrir no Mac';
+  /* Arquivo da VPS nao tem o que abrir no Finder. TOGGLE, nunca add: o visor e o MESMO
+     elemento para todos os arquivos daquele painel, e um "add" grudaria o botao escondido
+     para sempre no proximo arquivo local. */
+  $('.visor-abrir', v).classList.toggle('hidden', NA_VPS(caminho));
   corpo.innerHTML = '<div class="visor-vazio">abrindo…</div>';
 
-  const a = await window.api.verArquivo(caminho);
+  const a = await lerParaVisor(caminho);
   if (!a || a.erro) { recadoVisor(corpo, ['Não consegui abrir.', (a && a.erro) || '']); return; }
   $('.visor-nome', v).textContent = a.nome + '  ·  ' + tamanhoBonito(a.bytes);
   if (a.tipo === 'imagem') { corpo.innerHTML = ''; const i = document.createElement('img'); i.src = a.dados; corpo.appendChild(i); }
@@ -5256,6 +5288,40 @@ async function verArquivo(P, caminho) {
 
 /* ============ conversas recentes ============ */
 const histCache = { claude: null, codex: null };
+
+/* As conversas do Claude que rodaram DENTRO da VPS gravam o .jsonl lá, não aqui: elas chegam
+   por SSH e ficam num cache PRÓPRIO. Guardar tudo num cache só fazia a lista trocar de dono a
+   cada recarga — voltar para uma aba local mostrava "Nenhuma conversa nesta pasta". */
+const histCacheVps = { claude: null, codex: null };
+const juntarComVps = (engine, lista) => {
+  const vps = histCacheVps[engine];
+  if (!vps || !vps.length) return lista;
+  return [...lista, ...vps].sort((a, b) => (b.when || 0) - (a.when || 0));
+};
+/* Busca a lista da VPS por fora, sem segurar a pintura da lista local: se o servidor estiver
+   fora do ar, a coluna continua mostrando as conversas do Mac em vez de um erro.
+   TRAVA DE TEMPO, e ela é obrigatória: o loadHist roda ao FIM DE CADA RESPOSTA com a coluna
+   aberta, e esta busca custa caro — medido em 08/09/2026 contra a VPS dele: 1,5 s e 11 MB
+   (cabeça e cauda de 80 conversas). Sem a trava, cada resposta puxava 11 MB pela internet. */
+const VPS_ESPERA = 90000;
+const vpsBuscadoEm = { claude: 0, codex: 0 };
+let vpsBuscando = false;
+async function buscarConversasVps(engine, force) {
+  if (engine !== 'claude' || !window.api.sessionsClaudeRemoto) return;
+  // sem nenhuma aba na VPS não se gasta uma conexão SSH para nada
+  if (![...abas.values()].some(A => NA_VPS(A.cwd))) return;
+  if (vpsBuscando) return;
+  if (!force && Date.now() - vpsBuscadoEm[engine] < VPS_ESPERA) return;
+  vpsBuscadoEm[engine] = Date.now();
+  vpsBuscando = true;
+  let r = null;
+  try { r = await window.api.sessionsClaudeRemoto(!!cfg.verRobos); } catch { return; }
+  finally { vpsBuscando = false; }
+  if (!Array.isArray(r)) return;               // erro do servidor não apaga o que já está na tela
+  histCacheVps[engine] = r;
+  histCache[engine] = juntarComVps(engine, (histCache[engine] || []).filter(s => !s.remoto));
+  paintHist(engine, histCache[engine]);
+}
 
 function grupoDoTempo(ms) {
   if (!ms) return 'Sem data';
@@ -5303,8 +5369,11 @@ async function loadHist(engine, force) {
   else box.innerHTML = '<div class="hist-load">Carregando…</div>';
   const r = engine === 'claude' ? await window.api.sessionsClaude(!!cfg.verRobos) : await window.api.sessionsCodex(!!cfg.verRobos);
   if (r && r.error) { box.innerHTML = '<div class="hist-load">Não consegui ler: ' + r.error + '</div>'; return; }
-  histCache[engine] = r || [];
+  histCache[engine] = juntarComVps(engine, r || []);
   paintHist(engine, histCache[engine]);
+  /* de propósito SEM o `force`: o turn-end também chama loadHist(engine, true), então passar
+     o force adiante desligaria a trava justamente onde ela é necessária */
+  buscarConversasVps(engine);   // as da VPS entram depois, sem segurar esta pintura
 }
 
 const buscaAtual = { claude: '', codex: '' };
@@ -5627,7 +5696,11 @@ async function openSession(s, el) {
   setFocus(P); savePanes();
 
   note(P, 'Conversa: ' + s.title);
-  const msgs = await window.api.sessionHistory({ engine: s.engine, file: s.file });
+  /* Conversa que rodou na VPS mora no disco DELA: o arquivo daqui não existe, e sem este
+     desvio clicar nela abria um chat vazio. O caminho local segue exatamente como era. */
+  const msgs = s.remoto
+    ? await window.api.sessionHistoryRemoto({ id: s.id })
+    : await window.api.sessionHistory({ engine: s.engine, file: s.file });
   for (const m of (msgs || [])) renderizarHistorico(P, m);
   document.querySelectorAll('.tool-st').forEach(x => { if (x.classList.contains('run')) { x.className = 'tool-st ok'; x.innerHTML = ico('check'); } });
   note(P, '— daqui pra baixo é a conversa de agora —');

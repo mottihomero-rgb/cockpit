@@ -77,6 +77,11 @@
     quadroRascunhoGravar: (o) => chamar('quadro:rascunhoGravar', o),
     quadroRascunhoLer: () => chamar('quadro:rascunhoLer'),
     verArquivo: (f) => chamar('arquivo:ver', f),
+    // quem fala com a VPS e sempre o Mac: aqui e so o mesmo cano de pedido
+    verArquivoVps: (f) => chamar('arquivo:verVps', f),
+    sessionsClaudeRemoto: (r) => chamar('sessions:claudeRemoto', r),
+    sessionHistoryRemoto: (o) => chamar('sessions:historyRemoto', o),
+    termLinhaShell: (cwd) => chamar('term:linhaShell', cwd),
     contaLer: (e) => chamar('conta:ler', e),
     usoLer: (e) => chamar('uso:ler', e),
     mcpList: (e) => chamar('mcp:list', e),

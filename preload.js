@@ -40,6 +40,13 @@ contextBridge.exposeInMainWorld('api', {
   quadroRascunhoGravar: (o) => ipcRenderer.invoke('quadro:rascunhoGravar', o),
   quadroRascunhoLer: () => ipcRenderer.invoke('quadro:rascunhoLer'),
   verArquivo: (f) => ipcRenderer.invoke('arquivo:ver', f),
+  // arquivo que mora NA VPS: mesmo formato do verArquivo, mas o conteudo vem por SSH
+  verArquivoVps: (f) => ipcRenderer.invoke('arquivo:verVps', f),
+  // conversas do Claude que rodaram dentro da VPS (o .jsonl delas nao existe no Mac)
+  sessionsClaudeRemoto: (r) => ipcRenderer.invoke('sessions:claudeRemoto', r),
+  sessionHistoryRemoto: (o) => ipcRenderer.invoke('sessions:historyRemoto', o),
+  // linha de shell que entra na VPS (host e usuario sao montados no main, nunca na tela)
+  termLinhaShell: (cwd) => ipcRenderer.invoke('term:linhaShell', cwd),
   renomear: (o) => ipcRenderer.invoke('sessao:renomear', o),
   buscarConversas: (o) => ipcRenderer.invoke('sessions:buscar', o),
   auth: (o) => ipcRenderer.invoke('auth:acao', o),
