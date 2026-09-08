@@ -3648,6 +3648,16 @@ const MODOS = {
     { id: 'revisado',  ic: 'sparkles', nome: 'Revisado por IA',   desc: 'Um revisor automático aprova ou barra os pedidos arriscados, sem te interromper' },
     { id: 'bypass',    ic: 'unlock', nome: 'Sem pedir permissão',    desc: 'Faz tudo sem perguntar, inclusive o que é perigoso' },
   ],
+  /* leva 12.4 — no ACP o pedido de permissão chega pelo protocolo (session/request_permission)
+     e vira o MESMO cartão Permitir/Negar. Os modos são traduzidos para o vocabulário de cada
+     agente (default/autoEdit/plan/yolo no Gemini) quando ele os tem; "sem pedir permissão"
+     vale sempre, porque quem aprova ali é o próprio Cockpit. */
+  acp: [
+    { id: 'manual',    ic: 'hand', nome: 'Manual',                 desc: 'O agente pergunta antes de cada ação' },
+    { id: 'auto-edit', ic: 'code-xml', nome: 'Editar automaticamente', desc: 'Mexe nos arquivos sozinho e pergunta o resto (se o agente tiver esse modo)' },
+    { id: 'plan',      ic: 'clipboard-list', nome: 'Plano',                  desc: 'Só estuda e mostra o plano (se o agente tiver esse modo)' },
+    { id: 'bypass',    ic: 'unlock', nome: 'Sem pedir permissão',    desc: 'O Cockpit aprova todo pedido do agente sozinho' },
+  ],
 };
 const esforcoDe = (P) => P.effort;
 /* Plano no Codex é collaborationMode, separado da permissão. A troca de motor preserva
