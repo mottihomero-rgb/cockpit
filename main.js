@@ -4618,6 +4618,9 @@ handle('motores:disponiveis', () => ({
   // o comando do agente ACP e configuravel: "disponivel" = ha com que rodar o preset padrao
   // (gemini) ou com que baixar um adaptador (npx)
   acp: ['gemini', 'npx', 'opencode', 'qwen'].some((b) => temBin(b)),
+  // e QUAL deles existe: sem isto a tela ofereceria o Gemini numa maquina que so tem o npx,
+  // e o painel so falharia depois que ele ja tivesse escrito a mensagem
+  acpBins: { gemini: temBin('gemini'), npx: temBin('npx'), opencode: temBin('opencode'), qwen: temBin('qwen') },
 }));
 
 /* ---- 10.6: versao instalada x ultima publicada de cada motor ----

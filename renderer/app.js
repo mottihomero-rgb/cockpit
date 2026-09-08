@@ -150,6 +150,15 @@ const AGENTES_ACP = [
   { id: 'opencode acp', nome: 'OpenCode', desc: 'brew install sst/tap/opencode',
     efforts: ['medium'], padraoEffort: 'medium', bin: 'opencode' },
 ];
+/* Enquanto o radar não respondeu, tudo conta como instalado: dizer "não está instalado" sem
+   ter olhado seria pior do que não dizer nada. */
+const agenteAcpTem = (m) => !MOTORES_OK || !MOTORES_OK.acpBins || !!MOTORES_OK.acpBins[m.bin];
+// o primeiro agente que EXISTE nesta máquina; '' quando não há nenhum (ou o radar ainda não voltou)
+const melhorAgenteAcp = () => {
+  if (!MOTORES_OK || !MOTORES_OK.acpBins) return '';
+  const bom = AGENTES_ACP.find(agenteAcpTem);
+  return bom ? bom.id : '';
+};
 
 function modelosDe(P) {
   if (P.engine === 'acp') return AGENTES_ACP;
@@ -4137,7 +4146,9 @@ async function menuModelos(P) {
       ? 'Qual agente ACP este painel vai subir. Precisa estar instalado nesta máquina.'
       : 'Qual cérebro este painel vai usar, e quanto ele deve pensar.'));
     for (const mo of modelosDe(P)) {
-      m.appendChild(elItem({ nome: mo.nome, desc: mo.desc, on: mo.id === P.model }, async () => {
+      // leva 12.5: no ACP o menu diz o que está e o que NÃO está instalado nesta máquina
+      const faltando = P.engine === 'acp' && !agenteAcpTem(mo);
+      m.appendChild(elItem({ nome: mo.nome, desc: mo.desc + (faltando ? ' · não está instalado neste Mac' : ''), on: mo.id === P.model }, async () => {
         const vaiPorCreditos = modeloPorCreditos(mo.id);
         if (vaiPorCreditos) {
           const s = await carregarStatusAstra(true);
@@ -7136,8 +7147,13 @@ async function novaConversa(engine) {
   fillModels(P); paintEngine(P); setDot(P, 'off'); setFocus(P);
   /* leva 12.5: honestidade na hora certa. Sem nenhum agente ACP nesta máquina o painel nascia
      bonito e só falhava depois de ele escrever a primeira mensagem. R4: com `true`, aparece. */
-  if (engine === 'acp' && MOTORES_OK && MOTORES_OK.acp === false) {
-    note(P, 'Nenhum agente ACP está instalado neste Mac. Instale um (ex.: npm i -g @google/gemini-cli) e este painel passa a funcionar sem mais nada.', true);
+  if (engine === 'acp') {
+    // já nasce no agente que EXISTE aqui, em vez de no preset que falharia
+    const bom = melhorAgenteAcp();
+    if (bom && bom !== P.model) { P.model = bom; fillModels(P); }
+    if (MOTORES_OK && !MOTORES_OK.acp) {
+      note(P, 'Nenhum agente ACP está instalado neste Mac. Instale um (ex.: npm i -g @google/gemini-cli) e este painel passa a funcionar sem mais nada.', true);
+    }
   }
   marcarAbertas();          // a conversa que estava aqui deixou de estar aberta
   $('.p-input', P.el).focus();
