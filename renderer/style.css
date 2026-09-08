@@ -1511,6 +1511,16 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 /* botao "..." da linha da conversa */
 .hi-mais{width:20px;height:20px;border-radius:5px;color:var(--fg-dim);flex:none;opacity:0;
   display:grid;place-items:center}
+/* MEDIDO: com os dois botoes novos DENTRO da fila, o titulo da conversa caía de 84px para
+   30px numa coluna de 206px — virava "Res…". Fora do resultado de busca eles ficam SOBRE a
+   linha e só aparecem no passar do mouse, então o título continua com a largura de sempre. */
+.hist-item{position:relative}
+.hist-item:not(.com-trecho) .hi-grupo,
+.hist-item:not(.com-trecho) .hi-mais{position:absolute;top:3px}
+.hist-item:not(.com-trecho) .hi-mais{right:5px}
+.hist-item:not(.com-trecho) .hi-grupo{right:27px}
+.hist-item:not(.com-trecho) .hi-grupo.on{opacity:0}
+.hist-item:not(.com-trecho):hover .hi-grupo.on{opacity:1}
 .hist-item:hover .hi-mais{opacity:1}
 .hi-mais:hover{background:var(--hover3);color:var(--fg)}
 .hi-mais .ic{width:12px;height:12px}
@@ -1532,9 +1542,9 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .hist-item.com-trecho .hi-fav{right:75px}
 
 /* faixa de grupos, acima da lista de conversas */
-.grp-abas{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 6px}
+.grp-abas{display:flex;flex-wrap:wrap;gap:3px;padding:0 8px 6px}
 .grp-abas:empty{display:none}
-.aba-grupo{display:flex;align-items:center;gap:5px;max-width:130px;padding:2px 8px;
+.aba-grupo{display:flex;align-items:center;gap:4px;max-width:96px;padding:2px 7px;
   border-radius:20px;border:1px solid var(--line2);background:transparent;
   font-size:10.5px;color:var(--fg-dim);cursor:pointer}
 .aba-grupo:hover{background:var(--hover2);color:var(--fg)}

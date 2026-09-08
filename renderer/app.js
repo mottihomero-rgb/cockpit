@@ -308,7 +308,10 @@ function conversaDaPastaNova(P, pasta) {
   // para sempre. E o que estava na fila morreu junto com o processo.
   P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
   pararTrabalho(P); limparPassos(P); limparContinuar(P);
-  P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null; P.forkPendente = false;
+  P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null;
+  // leva 8.3: o fio mudou de conversa — a intenção de ramificar não pode ir junto, senão a
+  // próxima mensagem forkaria a conversa ERRADA, em silêncio
+  P.forkPendente = false;
   P.titulo = ''; P.nomeManual = false; P.hist = [];
   P.blocks.clear(); P.tools.clear();
   P.ultraAvisado = false;
@@ -1032,7 +1035,10 @@ async function trocarMotor(P, novo) {
   P.collaborationMode = estavaPlanejando ? 'plan' : 'default';
   if (novo === 'codex' && P.mode === 'plan') P.mode = 'manual';
   if (novo === 'claude' && estavaPlanejando) P.mode = 'plan';
-  P.sessaoId = null; P.resumeId = null; P.sessaoFile = ''; P.forkPendente = false;
+  P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
+  // leva 8.3: o fio mudou de conversa — a intenção de ramificar não pode ir junto, senão a
+  // próxima mensagem forkaria a conversa ERRADA, em silêncio
+  P.forkPendente = false;
   // o processo velho vai morrer: o chat deixa de estar ocupado e a fila morre com ele.
   // O texto que estava na fila volta para o campo, e a bolha dele sai da tela junto — senao
   // ele manda de novo e a mesma mensagem fica duas vezes na conversa.
@@ -3077,7 +3083,8 @@ function receberEventoPane(ev) {
     }
     // o Claude disse que essa conversa nao existe mais: agora sim o fio se solta
     case 'sessao-sumiu':
-      P.sessaoId = null; P.resumeId = null; P.fioSolto = Date.now(); P.forkPendente = false;
+      P.sessaoId = null; P.resumeId = null; P.fioSolto = Date.now();
+      P.forkPendente = false;   // leva 8.3: fio solto, a intencao de ramificar morre junto
       note(P, 'Esta conversa não existe mais no Claude. A próxima mensagem começa uma nova, levando junto o que já foi dito aqui.', true);
       savePanes();
       break;
@@ -4059,7 +4066,8 @@ async function menuModelos(P) {
         } else await desligarMotor(P);
         if (mudouOrigem) {
           if (P.hist.length) P.passarContexto = montarContexto(P, true, 'troca-de-cobranca');
-          P.sessaoId = null; P.resumeId = null; P.sessaoFile = ''; P.forkPendente = false;
+          P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
+          P.forkPendente = false;   // leva 8.3: conversa nova, sem ramo pendente
           note(P, vaiPorCreditos
             ? 'A próxima mensagem usa créditos da API dentro do limite escolhido.'
             : 'A próxima mensagem volta a usar o seu plano do Codex.');
@@ -6850,7 +6858,8 @@ async function novaConversa(engine) {
   escondePerm(P);
   // sessaoId TEM de zerar junto: se ficar o da conversa anterior, uma queda de conexao faria
   // o "religar" voltar para a conversa velha em vez desta nova
-  P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.hist = []; P.forkPendente = false;
+  P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.hist = [];
+  P.forkPendente = false;   // leva 8.3: conversa nova nunca e ramo de outra
   P.effort = EF_NOVO; P.ultraAvisado = false;   // conversa nova sempre volta ao Extra alto
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
   P.effectiveSettings = null; P.settingsPending = false;
