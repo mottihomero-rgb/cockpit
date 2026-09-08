@@ -9,7 +9,7 @@
   --puxador:#e9e9ec; --sobre-accent:#141414; --erro-fundo:#5a2b2b;
   --cod:#e6c07b; --borda-forte:#00000055;
   --sombra1:#00000060; --sombra2:#00000090; --veu:#00000066;
-  --codex:#6ea8fe; --claude:#d97757;
+  --codex:#6ea8fe; --claude:#d97757; --acp:#57c2a0;
   --green:#5aa469; --yellow:#d7ba7d; --red:#e05252;
   /* leva 11: fundo do bloco da rotina quebrada (o destaque da tela de Rotinas) */
   --rot-falha:#3a2222; --rot-falha-borda:#6d3434;
@@ -26,7 +26,7 @@ html[data-tema="claro"]{
   --puxador:#ffffff; --sobre-accent:#ffffff; --erro-fundo:#f6d6d6;
   --cod:#a4552a; --borda-forte:#00000022;
   --sombra1:#0000001a; --sombra2:#00000026; --veu:#00000033;
-  --codex:#1f6feb; --claude:#c2521f;
+  --codex:#1f6feb; --claude:#c2521f; --acp:#12866a;
   --green:#2f7d3a; --yellow:#9a6b00; --red:#c62828;
   --rot-falha:#fdeaea; --rot-falha-borda:#f0bcbc;
   --aba-barra:#d7d7dc; --aba-fundo:#ececed; --aba-alto:#f7f7f8; --aba-borda:#bfbfc6; --aba-brilho:#ffffff;
@@ -43,7 +43,7 @@ html[data-tema="jornal"]{
   --puxador:#fffbf0; --sobre-accent:#fdf6e3; --erro-fundo:#f4d9d3;
   --cod:#b58900; --borda-forte:#00000020;
   --sombra1:#586e7520; --sombra2:#586e7530; --veu:#586e7540;
-  --codex:#268bd2; --claude:#cb4b16;
+  --codex:#268bd2; --claude:#cb4b16; --acp:#2aa198;
   --green:#859900; --yellow:#b58900; --red:#dc322f;
   --rot-falha:#f7e3da; --rot-falha-borda:#e0b8a6;
   --aba-barra:#ded6bd; --aba-fundo:#f0e9d5; --aba-alto:#f8f2e2; --aba-borda:#c9c1a6; --aba-brilho:#fffdf6;
@@ -88,6 +88,7 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .act.active{opacity:1}
 .act.ic-claude{color:var(--claude)}
 .act.ic-codex{color:var(--codex)}
+.act.ic-acp{color:var(--acp)}
 /* a barrinha do selecionado usa a cor do proprio icone (Claude laranja, Codex azul).
    antes usava var(--accent), que so existe dentro do .pane: fora dele caia no azul do Codex,
    entao o Claude seleccionado aparecia marcado de azul. */
@@ -156,6 +157,11 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .pane.focus{background:var(--bg-foco)}
 .pane.eng-codex{--accent:var(--codex)}
 .pane.eng-claude{--accent:var(--claude)}
+/* leva 12.4: o terceiro motor. O interruptor da cabeceira tem DOIS lados (Claude e Codex);
+   num painel ACP nenhum dos dois e o motor de verdade, entao ele some por CSS em vez de
+   virar um terceiro lado — a saida do painel ACP e o "Trocar de motor" dentro do cerebro. */
+.pane.eng-acp{--accent:var(--acp)}
+.pane.eng-acp .p-chave{display:none}
 
 .pane-hd{height:34px;flex:none;display:flex;align-items:center;gap:7px;padding:0 8px;
   background:var(--bg3);border-bottom:1px solid var(--line);font-size:11.5px}
@@ -488,6 +494,7 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
    laranja = Claude, azul = Codex. Usa outline pra nao empurrar o texto do item. */
 .hist-item.aberta{outline:1.5px solid var(--claude);outline-offset:-1px}
 .hist-item.aberta.ab-codex{outline-color:var(--codex)}
+.hist-item.aberta.ab-acp{outline-color:var(--acp)}
 .hist-item.aberta.ab-claude{outline-color:var(--claude)}
 .hi-t{flex:1;min-width:0;font-size:11.5px;color:var(--fg-strong);overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
@@ -901,6 +908,7 @@ html[data-tema="claro"] .ef-thumb,html[data-tema="jornal"] .ef-thumb{background:
 html[data-tema="claro"] .co-pt.off,html[data-tema="jornal"] .co-pt.off{background:var(--fg-fraco)}
 html[data-tema="jornal"] .pane.eng-claude{--accent:#cb4b16}
 html[data-tema="jornal"] .pane.eng-codex{--accent:#268bd2}
+html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 
 /* escolha de tema nos ajustes */
 .temas{display:flex;gap:6px}
@@ -1278,6 +1286,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
    limite da conta Claude apareciam azuis. Cada lado da lateral passa a ter a sua cor. */
 .side-view[data-view="hclaude"]{--accent:var(--claude)}
 .side-view[data-view="hcodex"]{--accent:var(--codex)}
+.side-view[data-view="hacp"]{--accent:var(--acp)}
 .side-conta{flex:none;padding:6px 10px 7px;border-bottom:1px solid var(--line)}
 .sc-vazio{font-size:11.5px;color:var(--fg-dim);line-height:1.5}
 .sc-link{color:var(--accent);text-decoration:underline;font-size:11.5px}
@@ -1287,6 +1296,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .sc-av svg{width:100%;height:100%;fill:currentColor}
 .side-view[data-view="hclaude"] .sc-av{color:var(--claude)}
 .side-view[data-view="hcodex"] .sc-av{color:var(--codex)}
+.side-view[data-view="hacp"] .sc-av{color:var(--acp)}
 .sc-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
 .sc-n{font-size:11px;color:var(--fg-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-e{font-size:9.5px;color:var(--fg-fraco);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

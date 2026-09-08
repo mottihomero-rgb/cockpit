@@ -134,7 +134,25 @@ function itemAstraApi() {
   };
 }
 
+/* leva 12.4 — no painel ACP o "modelo" é o COMANDO que sobe o agente. Cada agente que fala o
+   protocolo entra por aqui: o Cockpit não precisa saber nada sobre ele além da linha de comando.
+   O `desc` diz como instalar, para o menu não oferecer um agente e o painel falhar depois. */
+/* leva 12.5: quais motores existem NESTA máquina (o main responde por motores:disponiveis).
+   Serve para avisar ANTES, em vez de deixar o painel falhar depois da primeira mensagem. */
+let MOTORES_OK = null;
+const AGENTES_ACP = [
+  { id: 'gemini --acp', nome: 'Gemini CLI', desc: 'npm i -g @google/gemini-cli',
+    efforts: ['medium'], padraoEffort: 'medium', padrao: true, bin: 'gemini' },
+  { id: 'npx -y @zed-industries/claude-code-acp', nome: 'Claude Code (adaptador do Zed)',
+    desc: 'o npx baixa sozinho na primeira vez', efforts: ['medium'], padraoEffort: 'medium', bin: 'npx' },
+  { id: 'qwen --acp', nome: 'Qwen Code', desc: 'npm i -g @qwen-code/qwen-code',
+    efforts: ['medium'], padraoEffort: 'medium', bin: 'qwen' },
+  { id: 'opencode acp', nome: 'OpenCode', desc: 'brew install sst/tap/opencode',
+    efforts: ['medium'], padraoEffort: 'medium', bin: 'opencode' },
+];
+
 function modelosDe(P) {
+  if (P.engine === 'acp') return AGENTES_ACP;
   if (P.engine === 'claude') return MODELOS_CLAUDE;
   // testar o TAMANHO, nao so se existe: quando o Codex esta fora do ar a chamada devolve lista
   // vazia, que e "verdadeira" em JS. Sem isto, ms[0] virava undefined e quebrava criar chat
@@ -1057,7 +1075,7 @@ async function trocarMotor(P, novo) {
   if (novo === P.engine || P.trocando) return;
   // trocar de motor reinicia o chat: o microfone não pode ficar ditando por cima da troca
   vozSoltar(P);
-  const antigo = P.engine === 'codex' ? 'Codex' : 'Claude';
+  const antigo = nomeDoMotor(P.engine);   // [EDITA 12.4] mesma coisa nos dois de sempre; o ACP deixa de virar "Claude"
   const velho = P.engine;
   const estavaPlanejando = velho === 'codex' ? P.collaborationMode === 'plan' : P.mode === 'plan';
   P.trocando = true;
@@ -1166,6 +1184,8 @@ function paintEngine(P) {
   posicionarChave(P);
   P.el.classList.toggle('eng-codex', P.engine === 'codex');
   P.el.classList.toggle('eng-claude', P.engine === 'claude');
+  // leva 12.4: a paleta do terceiro motor, e o interruptor de 2 lados some por CSS neste painel
+  P.el.classList.toggle('eng-acp', P.engine === 'acp');
   pintarControlesCodex(P);
 }
 function setFocus(P) {
@@ -1765,7 +1785,7 @@ function botBlock(P, key, semNome) {
   const d = document.createElement('div');
   d.className = 'msg bot' + (semNome ? ' emenda' : '');
   d.innerHTML = (semNome ? '' : '<div class="msg-role"><span class="av">' + svgMotor(P.engine) + '</span>'
-    + (P.engine === 'codex' ? 'Codex' : 'Claude') + '</div>') + '<div class="msg-body"></div>';
+    + nomeDoMotor(P.engine) + '</div>') + '<div class="msg-body"></div>';   // [EDITA 12.4] o ACP dizia "Claude"
   P.chat.appendChild(d);
   const b = { el: $('.msg-body', d), raw: '' };
   P.blocks.set(key, b); scroll(P);
@@ -2975,7 +2995,7 @@ async function send(P) {
   if (!P.started) {
     P.busy = true;
     setDot(P, 'busy');
-    note(P, P.engine === 'codex' ? 'Ligando o Codex…' : 'Ligando o Claude…');
+    note(P, 'Ligando o ' + nomeDoMotor(P.engine) + '…');   // [EDITA 12.4] no ACP dizia "Ligando o Claude…"
     try {
       /* O FIO da conversa (o id que vai no --resume) nao pode ser jogado fora enquanto o motor
          novo nao confirmar que abriu. Antes ele era zerado no instante em que o processo subia:
@@ -3246,6 +3266,18 @@ function receberEventoPane(ev) {
       break;
     }
     case 'approval': showApproval(P, ev); break;
+    /* ===== leva 12.4/12.5: os três recados que só o motor ACP manda ===== */
+    // o agente subiu e se apresentou: quem é, o que sabe fazer, e se retomou a conversa
+    case 'acp-info': {
+      P.acpInfo = ev;
+      const bt = $('.p-model', P.el);
+      if (bt && ev.agente) { bt.innerHTML = ico('brain') + '<span></span>'; $('span', bt).textContent = ev.agente + (ev.versao ? ' ' + ev.versao : ''); }
+      if (ev.modoAtual) P.acpModo = ev.modoAtual;
+      break;
+    }
+    // os comandos "/" que ESTE agente anunciou; o menu os lê pelo skills:list
+    case 'acp-comandos': P.acpComandos = ev.itens || []; break;
+    case 'acp-modo': P.acpModo = ev.modo || ''; break;
   }
 }
 window.api.onPaneEvent(receberEventoPane);
@@ -4098,8 +4130,12 @@ async function menuModelos(P) {
   const m = novoMenu(P);
   const pintar = () => {
     m.innerHTML = '';
-    m.appendChild(tituloPopup('Modelo'));
-    m.appendChild(subPopup('Qual cérebro este painel vai usar, e quanto ele deve pensar.'));
+    /* [EDITA leva 12.4, só o texto] no painel ACP este menu não escolhe cérebro: escolhe o
+       AGENTE, e o que vale é a linha de comando que sobe o processo. */
+    m.appendChild(tituloPopup(P.engine === 'acp' ? 'Agente' : 'Modelo'));
+    m.appendChild(subPopup(P.engine === 'acp'
+      ? 'Qual agente ACP este painel vai subir. Precisa estar instalado nesta máquina.'
+      : 'Qual cérebro este painel vai usar, e quanto ele deve pensar.'));
     for (const mo of modelosDe(P)) {
       m.appendChild(elItem({ nome: mo.nome, desc: mo.desc, on: mo.id === P.model }, async () => {
         const vaiPorCreditos = modeloPorCreditos(mo.id);
@@ -4135,7 +4171,7 @@ async function menuModelos(P) {
       }));
     }
     m.appendChild(elLinha());
-    m.appendChild(barraEsforco(P));
+    if (P.engine !== 'acp') m.appendChild(barraEsforco(P));   // no ACP quem decide o esforço é o agente
     secoesCodexNoCerebro(P, m, pintar);
   };
   pintar();
@@ -4296,7 +4332,7 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Modelo', ic: 'brain', nome: 'Trocar modelo…', tag: modeloAtual(P).nome, act: () => menuModelos(P) },
     { sec: 'Modelo', ic: 'sliders-horizontal', nome: 'Esforço', tag: EF_PT[P.effort] || P.effort, act: () => menuModelos(P) },
     { sec: 'Modelo', ic: 'lock', nome: 'Modos de permissão', tag: modoDe(P).nome, act: () => menuModos(P) },
-    { sec: 'Modelo', ic: 'arrow-left-right', nome: 'Trocar de motor', tag: P.engine === 'codex' ? 'Codex' : 'Claude', desc: 'continua a mesma conversa com o outro', act: () => trocarMotor(P, P.engine === 'codex' ? 'claude' : 'codex') },
+    { sec: 'Modelo', ic: 'arrow-left-right', nome: 'Trocar de motor', tag: nomeDoMotor(P.engine), desc: 'continua a mesma conversa com o outro', act: () => trocarMotor(P, P.engine === 'codex' ? 'claude' : 'codex') },
     // Eram cinco linhas aqui (trocar conta, entrar com codigo, logout, conta, ver conta) e as
     // cinco levavam ao mesmo lugar. Ficou UMA: a janela da conta ja tem todos esses botoes.
     { sec: 'Conta', ic: 'user', nome: 'conta', desc: 'quem está entrado, limite de uso, trocar ou sair' + (NA_VPS(P.cwd) ? ' · na VPS' : ''), act: () => janelaConta(P) },
@@ -4400,7 +4436,9 @@ async function menuSkills(P, filtroInicial, focar) {
   [skills, prompts] = await Promise.all([
     // { engine, cwd } em vez de só o motor: no Codex quem sabe as skills de verdade é o
     // app-server, e a resposta dele depende da PASTA deste painel
-    Promise.resolve(window.api.skills({ engine: P.engine, cwd: P.cwd })).then((s) => s || []).catch(() => []),
+    // leva 12.4: o `paneId` entrou junto — no ACP os comandos "/" são os que o agente DAQUELE
+    // painel anunciou; para o Claude e o Codex o campo a mais é ignorado
+    Promise.resolve(window.api.skills({ engine: P.engine, cwd: P.cwd, paneId: P.id })).then((s) => s || []).catch(() => []),
     window.api.promptsLer ? window.api.promptsLer().then((p) => p || []).catch(() => []) : [],
   ]);
   pintar(busca.value);
@@ -5372,6 +5410,15 @@ async function pintarContaLateral(engine, forcar) {
     contaCache[engine] = await window.api.contaLer(engine);
   }
   const c = contaCache[engine];
+  /* leva 12.5: o ACP não tem conta que o Cockpit leia — ela é do agente, resolvida no terminal
+     dele. Sem este ramo a coluna dizia "Sem conta do Claude neste Mac" num painel que não é
+     Claude, e ainda oferecia um botão "Entrar" que não entraria em lugar nenhum. */
+  if (engine === 'acp') {
+    cx.innerHTML = '<div class="sc-vazio"></div>';
+    $('.sc-vazio', cx).textContent = (c && c.motivo)
+      || 'A conta é a do próprio agente ACP, configurada no terminal dele.';
+    return;
+  }
   const motor = engine === 'codex' ? 'Codex' : 'Claude';
   if (!c || !c.entrou) {
     cx.innerHTML = '<div class="sc-vazio">Sem conta do ' + motor + ' neste Mac. <button class="sc-link">Entrar</button></div>';
@@ -6491,6 +6538,7 @@ function pintarAberta(d) {
   d.classList.toggle('aberta', !!eng);
   d.classList.toggle('ab-claude', eng === 'claude');
   d.classList.toggle('ab-codex', eng === 'codex');
+  d.classList.toggle('ab-acp', eng === 'acp');   // leva 12.4: a moldura da conversa aberta
 }
 function marcarAbertas() {
   document.querySelectorAll('.hist-item[data-sid]').forEach(pintarAberta);
@@ -7086,6 +7134,11 @@ async function novaConversa(engine) {
   P.effectiveSettings = null; P.settingsPending = false;
   P.blocks.clear(); P.tools.clear(); voltarVazio(P); pintarNome(P);
   fillModels(P); paintEngine(P); setDot(P, 'off'); setFocus(P);
+  /* leva 12.5: honestidade na hora certa. Sem nenhum agente ACP nesta máquina o painel nascia
+     bonito e só falhava depois de ele escrever a primeira mensagem. R4: com `true`, aparece. */
+  if (engine === 'acp' && MOTORES_OK && MOTORES_OK.acp === false) {
+    note(P, 'Nenhum agente ACP está instalado neste Mac. Instale um (ex.: npm i -g @google/gemini-cli) e este painel passa a funcionar sem mais nada.', true);
+  }
   marcarAbertas();          // a conversa que estava aqui deixou de estar aberta
   $('.p-input', P.el).focus();
 }
@@ -7523,6 +7576,7 @@ $('#chkRobos').addEventListener('change', async (e) => {
   const aberta = $$('.side-view').find(v => !v.classList.contains('hidden'));
   if (aberta && aberta.dataset.view === 'hclaude') loadHist('claude', true);
   if (aberta && aberta.dataset.view === 'hcodex') loadHist('codex', true);
+  if (aberta && aberta.dataset.view === 'hacp') loadHist('acp', true);
 });
 
 /* A foto e mostrada num circulo de 20 a 30 pixels, mas era guardada no tamanho original: a
@@ -8119,6 +8173,8 @@ async function checarVersoesDosMotores() {
 function abrirVistaLateral(v) {
   if (v === 'hclaude') { loadHist('claude'); pintarContaLateral('claude', true); }
   if (v === 'hcodex') { loadHist('codex'); pintarContaLateral('codex', true); }
+  // leva 12.4: a coluna do terceiro motor. Linha NOVA; as duas de cima ficaram intactas.
+  if (v === 'hacp') { loadHist('acp'); pintarContaLateral('acp', true); }
   // leva 10.2: a torre é sempre desenhada na hora — mostrar o estado de 4 segundos atrás
   // seria pior do que não mostrar nada
   if (v === 'torre') pintarTorre(true);
@@ -8160,6 +8216,7 @@ function toggleSidebar() {
     // sem forcar: abrir pelo atalho nao pode disparar um "claude auth status" novo toda vez
     if (v && v.dataset.view === 'hclaude') { loadHist('claude'); pintarContaLateral('claude'); }
     if (v && v.dataset.view === 'hcodex') { loadHist('codex'); pintarContaLateral('codex'); }
+    if (v && v.dataset.view === 'hacp') { loadHist('acp'); pintarContaLateral('acp'); }
     // leva 10.2: abrindo a coluna pelo atalho, a torre também precisa nascer atualizada
     if (v && v.dataset.view === 'torre') pintarTorre(true);
   }
@@ -8537,6 +8594,8 @@ document.addEventListener('keydown', (e) => {
 (async function boot() {
   $('#svgClaude').innerHTML = '<path d="' + LOGO.claude + '"/>';
   $('#svgCodex').innerHTML = '<path d="' + LOGO.codex + '"/>';
+  // leva 12.4: o plugue do ACP na barrinha da esquerda (guardado: o HTML antigo não o tem)
+  if ($('#svgAcp')) $('#svgAcp').innerHTML = '<path d="' + LOGO.acp + '"/>';
   HOME = await window.api.home();
   cfg = await window.api.getConfig();
   cfg.defCwd = cfg.defCwd || HOME;
@@ -8596,6 +8655,8 @@ document.addEventListener('keydown', (e) => {
   repintarAvatares();
   const noTelefone = !!window.SEM_ELECTRON;
   carregarStatusAstra(true);
+  // leva 12.5: o radar de motores instalados, sem segurar o boot e sem derrubar nada se falhar
+  if (window.api.motoresDisponiveis) window.api.motoresDisponiveis().then(m => { MOTORES_OK = m || null; }).catch(() => {});
   if (!noTelefone) window.api.codexModels().then(ms => {
     if (ms && ms.length) { MODELOS_CODEX = ms; for (const P of panes.values()) if (P.engine === 'codex') fillModels(P); }
     pintarAstra();

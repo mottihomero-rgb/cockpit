@@ -38,6 +38,11 @@
     <button class="act ic-codex" data-view="hcodex" title="Conversas do Codex">
       <svg viewBox="0 0 24 24" class="logo-motor" id="svgCodex"></svg>
     </button>
+    <!-- leva 12.4: o terceiro motor. Qualquer agente que fale o Agent Client Protocol
+         (Gemini CLI, Qwen, OpenCode, os adaptadores do Zed) entra por este mesmo cano. -->
+    <button class="act ic-acp" data-view="hacp" title="Conversas do ACP (agentes genéricos)">
+      <svg viewBox="0 0 24 24" class="logo-motor" id="svgAcp"></svg>
+    </button>
     <!-- leva 10.2: torre de controle — todas as sessões, aqui e fora do Cockpit -->
     <button class="act" data-view="torre" title="Torre de controle: todos os chats, aqui e fora do Cockpit">
       <svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M5 22 12 8l7 14"/><circle cx="12" cy="4.5" r="2"/></svg>
@@ -73,6 +78,19 @@
       <div class="grp-abas" data-grupos="codex"></div>
       <button class="new-chat" data-new="codex"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
       <div class="hist" id="histCodex"></div>
+    </div>
+    <!-- leva 12.4: a coluna do motor ACP, cópia da do Codex (mesmo filtro de pasta, mesma
+         busca, mesma faixa de grupos, mesmo "Nova conversa") -->
+    <div class="side-view hidden" data-view="hacp">
+      <div class="side-head"><span>Conversas do ACP</span><button class="mini" data-reload="acp"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /></svg></button></div>
+      <div class="side-conta" data-conta="acp"></div>
+      <button class="side-filtro" data-filtro="acp"><span class="sf-txt">Mac inteiro</span><span class="sf-seta"></span></button>
+      <div class="side-pastas hidden" data-pastas="acp"></div>
+      <input class="side-busca" data-busca="acp" placeholder="Buscar conversa…">
+      <!-- faixa de grupos de conversa (leva 8): desenhada por pintarAbasGrupo -->
+      <div class="grp-abas" data-grupos="acp"></div>
+      <button class="new-chat" data-new="acp"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
+      <div class="hist" id="histAcp"></div>
     </div>
     <!-- leva 10.2: a torre é desenhada por pintarTorre() -->
     <div class="side-view hidden" data-view="torre">
