@@ -7370,9 +7370,305 @@ document.querySelectorAll('.act').forEach(b => b.addEventListener('click', () =>
   encostarAbas();
 }));
 
+/* ===================== LEVA 10.2 — TORRE DE CONTROLE =====================
+   Uma vista lateral com TODOS os chats de TODAS as abas (o que cada um está fazendo, há
+   quanto tempo, se parou esperando você) mais as sessões do Claude que rodam FORA do Cockpit
+   nesta máquina (VS Code, Terminal, robô agendado). Antes só havia uma bolinha por aba: com 4
+   chats em 3 abas, saber qual estava travado esperando permissão exigia abrir uma por uma. */
+let torreAgentes = { quando: 0, itens: [], erro: '', velha: false };
+let torreGen = 0;   // repaint em voo: o mais novo ganha, o antigo não monta por cima
+function torreVisivel() {
+  const v = $('.side-view[data-view="torre"]'), lat = $('#sidebar');
+  return !!v && !v.classList.contains('hidden') && !!lat && !lat.classList.contains('hidden');
+}
+const nomeMotor = (e) => (e === 'codex' ? 'Codex' : 'Claude');
+
+/* O estado sai do MESMO lugar que a tela usa, para os dois nunca discordarem: a tarja de
+   permissão (`.pane-perm` sem `hidden`), as perguntas do Codex (`P.questions`), o `P.busy` e a
+   legenda em `P.trabOque`. Nada de raspar o DOM: o `pintaTrab` daqui já escreve
+   "1min 3s · pensando", e ler dali repetiria o tempo duas vezes na mesma linha. */
+function estadoDoPainel(P) {
+  const perm = P.el && $('.pane-perm', P.el);
+  if (perm && !perm.classList.contains('hidden')) return { txt: 'esperando você autorizar', cls: 'espera' };
+  if (P.questions) for (const q of P.questions.values()) {
+    if (q && !q.done && q.el && q.el.isConnected) return { txt: 'esperando sua resposta', cls: 'espera' };
+  }
+  if (P.busy) {
+    const desde = P.trabT0 || P.t0 || Date.now();
+    return { txt: 'trabalhando há ' + duracaoCurta(Date.now() - desde) + (P.trabOque ? ' · ' + P.trabOque : ''), cls: 'ocupado' };
+  }
+  if (P.queued || (P.filaMsgs && P.filaMsgs.length)) return { txt: 'com mensagem na fila', cls: 'parado' };
+  if (P.started) return { txt: 'parado, motor ligado', cls: 'parado' };
+  if (P.hist && P.hist.length) return { txt: 'parado', cls: 'parado' };
+  return { txt: 'vazio', cls: 'vazio' };
+}
+// leva até o chat: troca de aba se precisar, põe o foco nele e pisca para ele achar na tela
+function irAoChat(P) {
+  if (!P || !panes.has(P.id)) return;
+  setFocus(P);
+  piscar(P);
+  const inp = $('.p-input', P.el); if (inp) inp.focus();
+}
+function linhaDaTorre({ titulo, motor, estado, aoClicar, acoes }) {
+  const d = document.createElement('div');
+  d.className = 'torre-item ' + (estado.cls || '');
+  d.innerHTML = '<span class="ti-pt"></span><span class="ti-txt"><span class="ti-tit"></span><span class="ti-est"></span></span>';
+  // textContent, nunca innerHTML: título de conversa e caminho de pasta vêm de fora
+  $('.ti-tit', d).textContent = titulo + '  ·  ' + motor;
+  $('.ti-est', d).textContent = estado.txt;
+  if (aoClicar) { d.title = 'Ir até o chat'; d.addEventListener('click', aoClicar); } else d.classList.add('fora');
+  for (const ac of (acoes || [])) {
+    const b = document.createElement('button');
+    b.className = 'ti-acao';
+    b.textContent = ac.rotulo;
+    b.title = ac.dica || '';
+    b.addEventListener('click', (e) => { e.stopPropagation(); ac.aoClicar(b); });
+    d.appendChild(b);
+  }
+  return d;
+}
+async function pintarTorre(forcarAgentes) {
+  const box = $('#torre');
+  if (!box) return;
+  const gen = ++torreGen;
+  // conversas que já estão abertas AQUI não entram na lista de "fora do Cockpit"
+  const sessoesDaqui = new Set();
+  for (const P of panes.values()) for (const s of [P.sessaoId, P.resumeId]) if (s) sessoesDaqui.add(s);
+
+  const blocos = [];
+  let total = 0, ocupados = 0, esperando = 0;
+  for (const A of abas.values()) {
+    const daAba = A.ordem.map((id) => panes.get(id)).filter(Boolean);
+    if (!daAba.length) continue;
+    const sec = document.createElement('div');
+    sec.className = 'torre-aba';
+    sec.innerHTML = '<span class="torre-cor"></span><span class="torre-nome"></span><span class="torre-conta"></span>';
+    $('.torre-cor', sec).style.background = NA_VPS(A.cwd) ? 'var(--green)' : 'var(--accent)';
+    $('.torre-nome', sec).textContent = nomeProjeto(A.cwd) + (NA_VPS(A.cwd) ? ' · VPS' : '');
+    sec.title = shortPath(A.cwd);
+    $('.torre-conta', sec).textContent = daAba.length + (daAba.length === 1 ? ' chat' : ' chats');
+    blocos.push(sec);
+    for (const P of daAba) {
+      const e = estadoDoPainel(P);
+      total++; if (e.cls === 'ocupado') ocupados++; if (e.cls === 'espera') esperando++;
+      blocos.push(linhaDaTorre({
+        titulo: P.titulo || 'sem título', motor: nomeMotor(P.engine), estado: e, aoClicar: () => irAoChat(P),
+      }));
+    }
+  }
+  const resumo = document.createElement('div');
+  resumo.className = 'torre-resumo';
+  resumo.textContent = total
+    ? total + (total === 1 ? ' chat' : ' chats') + ' · ' + ocupados + ' trabalhando' + (esperando ? ' · ' + esperando + ' esperando você' : '')
+    : 'Nenhum chat aberto.';
+  box.innerHTML = '';
+  box.appendChild(resumo);
+  for (const b of blocos) box.appendChild(b);
+
+  /* As sessões de FORA vêm pelo processo principal (`claude agents --json`), que já tem cache
+     de 15s. Aqui o cache é de 30s e o desenho de cima já foi pintado: a lista de fora entra
+     quando chegar, sem segurar o resto da tela. */
+  if (forcarAgentes || Date.now() - torreAgentes.quando > 30000) {
+    torreAgentes.quando = Date.now();
+    try {
+      const r = await window.api.agentesClaude();
+      torreAgentes.itens = (r && Array.isArray(r.itens)) ? r.itens : [];
+      torreAgentes.erro = (r && r.error) || '';
+      torreAgentes.velha = !!(r && r.velho);
+    } catch (e) { torreAgentes.erro = String((e && e.message) || e); }
+    // outro repaint passou na frente enquanto a resposta vinha: refaz já com a lista que chegou
+    if (gen !== torreGen) { if (torreVisivel()) pintarTorre(false); return; }
+    if (!torreVisivel()) return;
+  }
+  const secFora = document.createElement('div');
+  secFora.className = 'torre-aba torre-fora';
+  secFora.innerHTML = '<span class="torre-nome"></span><span class="torre-conta"></span>';
+  $('.torre-nome', secFora).textContent = 'Claude fora do Cockpit';
+  const vistos = new Set();
+  const fora = torreAgentes.itens.filter((a) => {
+    // o mesmo número aparece duas vezes quando há subprocesso
+    if (!a || !a.sessionId || sessoesDaqui.has(a.sessionId) || vistos.has(a.sessionId)) return false;
+    vistos.add(a.sessionId); return true;
+  });
+  $('.torre-conta', secFora).textContent = fora.length
+    ? fora.length + (fora.length === 1 ? ' sessão' : ' sessões') + (torreAgentes.velha ? ' (lista antiga: não consegui atualizar)' : '')
+    : (torreAgentes.erro ? 'não consegui listar' : 'nenhuma');
+  box.appendChild(secFora);
+  const COMO = { interactive: 'terminal / VS Code', background: 'segundo plano', subagent: 'subagente', sdk: 'via SDK', headless: 'sem tela' };
+  for (const a of fora) {
+    const ha = a.startedAt ? duracaoCurta(Date.now() - a.startedAt) : '';
+    box.appendChild(linhaDaTorre({
+      titulo: a.name || (String(a.cwd || '').split('/').filter(Boolean).pop()) || a.sessionId.slice(0, 8),
+      motor: COMO[a.kind] || 'Claude',
+      estado: { txt: shortPath(a.cwd) + (ha ? ' · há ' + ha : ''), cls: 'fora' },
+      acoes: [
+        /* "command claude" de propósito: no shell dele `claude` é APELIDO de ssh para a VPS
+           (~/.zshrc), então o comando copiado sem isso abriria a VPS em vez de continuar a
+           conversa daqui. O `command` pula o apelido e chama o programa de verdade. */
+        { rotulo: 'copiar comando', dica: 'copia o "cd" + "claude --resume" para continuar essa conversa num terminal',
+          aoClicar: (bt) => copiarTexto('cd "' + a.cwd + '" && command claude --resume ' + a.sessionId, bt) },
+        ...(window.SEM_ELECTRON ? [] : [{ rotulo: 'abrir a pasta', aoClicar: () => window.api.openPath(a.cwd) }]),
+      ],
+    }));
+  }
+}
+/* Repinta sozinha enquanto estiver aberta. Com o mouse em cima não repinta: trocar o HTML
+   embaixo do cursor cancelaria o clique que ele já começou a dar. */
+setInterval(() => {
+  const b = $('#torre');
+  if (torreVisivel() && !(b && b.matches(':hover'))) pintarTorre(false);
+}, 4000);
+
+/* ===================== LEVA 10.4 — CHIP DO GIT NO CABEÇALHO =====================
+   Mostra a branch da pasta deste chat e quantos arquivos estão mexidos. Clicar abre a lista,
+   e cada arquivo abre o diff. Some sozinho fora de repositório e em chat da VPS (o git roda
+   aqui no Mac; apontar para "vps:/..." mostraria a branch errada em silêncio). */
+async function atualizarGit(P) {
+  if (!P || !P.el) return;
+  const chip = $('.p-git', P.el);
+  if (!chip) return;
+  if (NA_VPS(P.cwd)) { chip.classList.add('hidden'); return; }
+  // no worktree o chip mostra a branch isolada (a pasta só nasce na 1ª mensagem)
+  const pastaGit = pastaDoWorktree(P);
+  let g = null;
+  try { g = await window.api.gitStatus({ cwd: pastaGit }); } catch {}
+  if (!g || !g.branch) {
+    if (P.worktree) {
+      chip.classList.remove('hidden');
+      chip.textContent = '⎇ ' + P.worktree + ' (a criar)';
+      chip.title = 'O worktree nasce na primeira mensagem deste chat';
+      chip.onclick = null;
+    } else chip.classList.add('hidden');
+    return;
+  }
+  chip.classList.remove('hidden');
+  const n = (g.arquivos || []).length;
+  chip.textContent = g.branch + (n ? '  ±' + n : '');
+  chip.title = n ? n + ' arquivo(s) alterado(s) — clique para ver' : 'Nada alterado nesta pasta';
+  chip.onclick = (e) => {
+    e.stopPropagation();
+    if (!n) return;
+    const pop = abrirPopGlobal(chip);
+    for (const arq of g.arquivos.slice(0, 40)) {
+      const nome = String(arq.nome || '');
+      const it = popItem({ nome: (arq.estado || '?') + '  ' + (nome.split('/').pop() || nome) }, async () => {
+        let texto = '';
+        try { texto = await window.api.gitDiff({ cwd: pastaGit, arquivo: nome }); } catch {}
+        mostrarDiffGit(P, nome, texto);
+      });
+      it.title = nome;                 // o caminho inteiro fica no balão do mouse
+      pop.appendChild(it);
+    }
+  };
+}
+/* Reusa a janelinha larga da leva 2 (que já desfaz a marca do .modal-cx na saída — R9) e as
+   MESMAS classes de linha do diff que o resto do app usa (.dl mais/menos/pula). */
+function mostrarDiffGit(P, nome, texto) {
+  const corpo = abrirJanelaLarga(P, nome);
+  if (!texto || !texto.trim()) { corpo.innerHTML = '<div class="mo-carregando">Sem alterações para mostrar.</div>'; return; }
+  const box = document.createElement('div');
+  box.className = 'dif dif-git';
+  for (const linha of String(texto).split('\n').slice(0, 4000)) {
+    const l = document.createElement('div');
+    const t = linha.startsWith('+') && !linha.startsWith('+++') ? 'mais'
+      : linha.startsWith('-') && !linha.startsWith('---') ? 'menos'
+      : (linha.startsWith('@@') || linha.startsWith('diff --git')) ? 'pula' : 'igual';
+    l.className = 'dl ' + t;
+    l.textContent = linha;
+    box.appendChild(l);
+  }
+  corpo.appendChild(box);
+}
+
+/* ===================== LEVA 10.5 — CHAT EM WORKTREE =====================
+   Fork de CÓDIGO, completando o de conversa: o chat passa a trabalhar numa branch isolada que
+   o próprio Claude cria em .claude/worktrees/<nome>, dentro da pasta do chat. Gostou? faz o
+   merge da branch. Não gostou? apaga a pasta e a principal nunca foi tocada. */
+// a pasta onde o trabalho realmente acontece (a principal, ou a do worktree)
+const pastaDoWorktree = (P) =>
+  (P && P.worktree && !NA_VPS(P.cwd) ? String(P.cwd).replace(/\/+$/, '') + '/.claude/worktrees/' + P.worktree : (P ? P.cwd : ''));
+// o rótulo do botão de pasta: o "⎇ nome" só aparece quando o chat está num worktree
+const rotuloPasta = (P) => nomePasta(P.cwd) + (P && P.worktree ? '  ⎇ ' + P.worktree : '');
+function mostrarPastaNoPainel(P) {
+  if (!P || !P.el) return;
+  const bt = $('.p-cwd', P.el);
+  if (bt) bt.textContent = rotuloPasta(P);
+}
+async function alternarWorktree(P) {
+  if (P.worktree) { await aplicarWorktree(P, ''); return; }   // sair sempre pode, em qualquer motor
+  if (P.engine !== 'claude') { note(P, 'Worktree por aqui só no Claude: a flag -w é dele. Troque o motor deste chat para o Claude.', true); return; }
+  if (NA_VPS(P.cwd)) { note(P, 'Worktree não vale em chat da VPS: a branch isolada seria criada no disco de lá, e quem confere o repositório é o Mac.', true); return; }
+  const sugestao = 'exp-' + new Date().toISOString().slice(5, 10).replace('-', '');
+  const nome = await perguntarTexto(P, 'Abrir em worktree',
+    'Nome da branch isolada (letras, números, - e _). O Claude cria .claude/worktrees/<nome> dentro da pasta deste chat e trabalha lá; a pasta principal fica como está.', sugestao);
+  if (nome == null) return;
+  const limpo = String(nome).trim().replace(/[^A-Za-z0-9._-]/g, '-').replace(/^[-._]+/, '')
+    .replace(/\.{2,}/g, '.').replace(/\.lock$/i, '').replace(/[.]+$/, '').slice(0, 40);
+  if (!limpo) return;
+  await aplicarWorktree(P, limpo);
+}
+async function aplicarWorktree(P, nome) {
+  try { await window.api.paneStop({ paneId: P.id, engine: P.engine }); } catch {}
+  if (!panes.has(P.id)) return;                 // fechou o chat enquanto o motor parava
+  P.worktree = nome || '';
+  /* Worktree é outra árvore de arquivos: conversa nova, como na troca de pasta. Sem isso o
+     --resume tentaria reabrir, dentro da branch nova, uma conversa que nasceu na antiga. */
+  P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
+  pararTrabalho(P); limparPassos(P); limparContinuar(P);
+  P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null; P.forkPendente = false;
+  P.titulo = ''; P.nomeManual = false; P.hist = [];
+  P.blocks.clear(); P.tools.clear();
+  P.started = false; setDot(P, 'off');
+  voltarVazio(P);
+  pintarNome(P);
+  mostrarPastaNoPainel(P);
+  atualizarGit(P);
+  savePanes();
+  avisoTemp(P, nome
+    ? 'Worktree "' + nome + '": a próxima mensagem cria .claude/worktrees/' + nome + ' (branch worktree-' + nome + ') e trabalha lá. Gostou? faça o merge da branch. Não gostou? "git worktree remove --force .claude/worktrees/' + nome + '".'
+    : 'Saiu do worktree: volta a trabalhar na pasta principal deste chat (conversa nova).');
+}
+
+/* ===================== LEVA 10.6 — RADAR DE VERSÃO DOS MOTORES =====================
+   Confere uma vez por abertura se o motor instalado ficou para trás. Foi assim que se
+   descobriu o Claude 13 versões atrás sem ninguém saber. */
+const versaoMaisNova = (a, b) => {
+  const pa = String(a || '').split('.').map(Number), pb = String(b || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pb[i] || 0) > (pa[i] || 0)) return true;
+    if ((pb[i] || 0) < (pa[i] || 0)) return false;
+  }
+  return false;
+};
+/* No Mac o Cockpit NÃO executa o Claude que o `claude update` atualiza: ele roda uma cópia
+   congelada em ~/.cockpit/bin/claude, refeita só no arranque do app (é o que faz o macOS
+   parar de pedir permissão de disco a cada versão nova). Por isso o recado daqui é diferente
+   do fork de origem: atualizar sem fechar e abrir o Cockpit não muda nada na tela. */
+const COMO_ATUALIZAR = {
+  claude: 'rode "claude update" no Terminal e depois FECHE E ABRA o Cockpit (ele usa uma cópia do Claude que só é refeita ao abrir)',
+  codex: 'rode "npm i -g @openai/codex" no Terminal',
+};
+async function checarVersoesDosMotores() {
+  if (window.SEM_ELECTRON) return;              // no telefone não há o que atualizar
+  // o boot pode terminar com zero chats (tela de "Nova aba"): sem painel não há onde escrever
+  if (!focusPane) { setTimeout(checarVersoesDosMotores, 30000); return; }
+  let vs = null;
+  try { vs = await window.api.motoresVersoes(); } catch { return; }
+  if (!vs || typeof vs !== 'object') return;
+  for (const eng of Object.keys(vs)) {
+    const v = vs[eng];
+    if (!v || !v.instalada || !v.ultima || !versaoMaisNova(v.instalada, v.ultima)) continue;
+    const P = focusPane; if (!P) return;
+    note(P, nomeMotor(eng) + ' tem versão nova: ' + v.instalada + ' → ' + v.ultima + '. Para atualizar, ' + (COMO_ATUALIZAR[eng] || '') + '.', true);
+  }
+}
+
 function abrirVistaLateral(v) {
   if (v === 'hclaude') { loadHist('claude'); pintarContaLateral('claude', true); }
   if (v === 'hcodex') { loadHist('codex'); pintarContaLateral('codex', true); }
+  // leva 10.2: a torre é sempre desenhada na hora — mostrar o estado de 4 segundos atrás
+  // seria pior do que não mostrar nada
+  if (v === 'torre') pintarTorre(true);
 }
 
 /* ⌘P: abre a coluna das conversas do motor do chat em foco e ja poe o cursor na busca.
@@ -7409,6 +7705,8 @@ function toggleSidebar() {
     // sem forcar: abrir pelo atalho nao pode disparar um "claude auth status" novo toda vez
     if (v && v.dataset.view === 'hclaude') { loadHist('claude'); pintarContaLateral('claude'); }
     if (v && v.dataset.view === 'hcodex') { loadHist('codex'); pintarContaLateral('codex'); }
+    // leva 10.2: abrindo a coluna pelo atalho, a torre também precisa nascer atualizada
+    if (v && v.dataset.view === 'torre') pintarTorre(true);
   }
   encostarAbas();
 }
