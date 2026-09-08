@@ -8367,7 +8367,20 @@ document.addEventListener('keydown', (e) => {
      R2: guardado por `if`, porque no telefone estas duas são faz-de-conta. */
   if (window.api.onInbox) {
     window.api.onInbox((m) => chegouNaInbox(m));
-    if (window.api.inboxOuvindo) window.api.inboxOuvindo().catch(() => {});
+    if (window.api.inboxOuvindo) {
+      const avisarQueOuco = () => window.api.inboxOuvindo().catch(() => {});
+      avisarQueOuco();
+      /* E um SINAL DE VIDA, não um interruptor de uma vez só — e isso conserta um jeito de a
+         caixa de entrada morrer calada. Do lado do Mac a bandeira cai a cada `did-start-loading`,
+         e esse evento dispara também em navegação que o app CANCELA de propósito (o
+         `will-navigate` do main devolve preventDefault em tudo — é o que impede a janela de
+         "sumir" quando um arquivo é solto fora do campo de escrever). Medido aqui: depois de uma
+         navegação cancelada a bandeira ficava em falso PARA SEMPRE e nenhum recado do celular
+         aparecia mais, sem erro nenhum na tela. Quem sabe se esta tela está mesmo ouvindo é esta
+         tela; então ela repete que está viva, e a bandeira se conserta sozinha em até 10s.
+         Nada se perde no meio: com a bandeira em falso o Mac nem marca o arquivo como visto. */
+      setInterval(avisarQueOuco, 10000);
+    }
   }
   /* leva 10.6: radar de versão. Atrasado de propósito: a consulta ao npm leva segundos e o
      boot não pode esperar por ela. Se ainda não houver chat nenhum, ele mesmo se reagenda. */
