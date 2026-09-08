@@ -3139,7 +3139,23 @@ handle('web:ligar', async (_e, ligar) => {
   return { ligado: !!web, endereco: web ? web.endereco : '', senha: senhaDoTelefone() };
 });
 
+/* Todo print colado no chat vira arquivo em userData/colados e ficava la para sempre: 107
+   arquivos e 30 MB em 20 dias, sem ninguem olhar. Depois de mandado, o print ja foi lido —
+   o que passou de 7 dias sai na abertura do app. SO esta pasta: userData/quadros guarda
+   desenho salvo e o rascunho.json, e nao pode ser varrida. */
+function limparColadosAntigos() {
+  try {
+    const dir = path.join(app.getPath('userData'), 'colados');
+    const limite = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const f of fs.readdirSync(dir)) {
+      const p = path.join(dir, f);
+      try { if (fs.statSync(p).mtimeMs < limite) fs.unlinkSync(p); } catch {}
+    }
+  } catch {}
+}
+
 app.whenReady().then(() => { anota('app iniciou'); usarClaudeDeCaminhoFixo(); menu(); createWindow(); montarIndiceDeFundo();
+  limparColadosAntigos();
   try {
     const cfgInicial = loadConfig();
     // Quem já usava o iPhone não precisa caçar um novo botão após atualizar.

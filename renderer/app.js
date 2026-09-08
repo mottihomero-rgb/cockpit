@@ -636,6 +636,35 @@ function newPane(opts = {}) {
       if (c) { e.preventDefault(); c.scrollTop += (e.key === 'PageDown' ? 1 : -1) * c.clientHeight * 0.9; }
     }
   });
+  /* Seta pra cima traz de volta o que voce ja mandou, como no terminal. Ouvinte SEPARADO de
+     proposito: o de cima trata Enter, Tab e PageUp e nao pode ser mexido — e o Esc continua
+     sendo do documento, que sobe a escada na ordem certa. */
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const lista = historicoPrompts();
+      if (!lista.length) return;
+      const naPrimeiraLinha = inp.selectionStart === 0 && inp.selectionEnd === 0;
+      const vazio = !inp.value.trim();
+      // depois de trazer um prompt o cursor vai pro FIM, entao 'naPrimeiraLinha' virava false
+      // e o proximo Up era barrado: dava pra ver so o ultimo prompt
+      if (e.key === 'ArrowUp' && !(vazio || naPrimeiraLinha || P.navHist !== undefined)) return;
+      if (e.key === 'ArrowDown' && P.navHist === undefined) return;
+      e.preventDefault();
+      if (P.navHist === undefined) { P.rascunhoAntes = inp.value; P.navHist = lista.length; }
+      P.navHist += (e.key === 'ArrowUp' ? -1 : 1);
+      if (P.navHist < 0) P.navHist = 0;
+      if (P.navHist >= lista.length) { P.navHist = undefined; inp.value = P.rascunhoAntes || ''; }
+      else inp.value = lista[P.navHist];
+      grow();
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+    } else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Dead' || e.key === 'Process'
+               || ((e.key || '').length === 1 && !e.ctrlKey && !e.metaKey)) {
+      // so sai do modo historico ao MEXER no texto: antes Home, End e as setas laterais ja
+      // descartavam o rascunho guardado. O (e.key || '') e por causa do teclado de acento e
+      // do teclado japones, onde e.key pode vir indefinido e a linha estourava
+      P.navHist = undefined;
+    }
+  });
   // barra no comeco da linha abre o menu de acoes, e vai filtrando conforme digita
   inp.addEventListener('input', () => {
     const v = inp.value;
@@ -786,6 +815,21 @@ function igualarChats(voltarProPrimeiro) {
     if (voltarProPrimeiro) A.corpoEl.scrollLeft = 0;
   });
   savePanes();
+}
+
+/* O que voce ja mandou, pra trazer de volta com a seta pra cima (as 50 ultimas).
+   No iPhone o setConfig e um faz-de-conta de proposito: la o historico e lido, mas o
+   telefone nao grava por cima do config do Mac. */
+function historicoPrompts() { return Array.isArray(cfg.prompts) ? cfg.prompts : []; }
+function guardarPrompt(txt) {
+  const t = String(txt || '').trim();
+  if (!t) return;
+  if (!Array.isArray(cfg.prompts)) cfg.prompts = [];
+  const i = cfg.prompts.indexOf(t);
+  if (i >= 0) cfg.prompts.splice(i, 1);   // repetido sobe pro fim em vez de duplicar
+  cfg.prompts.push(t);
+  while (cfg.prompts.length > 50) cfg.prompts.shift();
+  window.api.setConfig(cfg);
 }
 
 let restaurando = false;
@@ -1772,6 +1816,12 @@ function vozFantasma(P) {
 function vozPintar(P) {
   const f = vozFantasma(P);
   const inp = $('.p-input', P.el);
+  /* Digitou no campo no meio do ditado? O campo deixou de ser o que escrevemos por ultimo.
+     Sem isto a legenda seguinte reescrevia tudo por cima e comia o que ele acabou de teclar.
+     O que estiver escrito agora vira a nova base, e a fala continua a partir dali. */
+  if (VIVO.ultimoEscrito != null && inp.value !== VIVO.ultimoEscrito) {
+    VIVO.base = inp.value; VIVO.firme = ''; VIVO.parcial = '';
+  }
   const firme = (VIVO.base ? VIVO.base.replace(/\s*$/, ' ') : '') + VIVO.firme;
   $('.pf-firme', f).textContent = firme;
   $('.pf-parcial', f).textContent = (firme && VIVO.parcial ? ' ' : '') + VIVO.parcial;
@@ -1779,6 +1829,7 @@ function vozPintar(P) {
   // a caixa de verdade fica invisivel por baixo, para o cursor e a altura continuarem certos
   inp.classList.add('mudo');
   inp.value = firme + (VIVO.parcial ? (firme ? ' ' : '') + VIVO.parcial : '');
+  VIVO.ultimoEscrito = inp.value;   // o que ficar diferente disto foi ele que digitou
   inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 190) + 'px';
   // fala longa passa da altura maxima: as duas camadas tem de rolar juntas, senao o que ele ve
   // (a de cima) congela no comeco enquanto a de baixo ja esta no fim
@@ -1842,6 +1893,9 @@ async function alternarDitado(P) {
   if (DITADO.rec) { pararDitado(); return; }
   if (window.api.vozVivo) {
     VIVO.P = P; VIVO.base = $('.p-input', P.el).value || ''; VIVO.firme = ''; VIVO.parcial = '';
+    // ditado novo comeca sem lembranca do que foi escrito no anterior, senao a guarda de
+    // "digitou por fora" dispara logo na primeira legenda e come o primeiro pedaco da fala
+    VIVO.ultimoEscrito = null;
     const r = await window.api.vozVivo({ paneId: P.id, silencio: 1.8, teto: 180 });
     if (r && r.ok) { avisoTemp(P, 'Pode falar. Ele escreve enquanto você fala e para sozinho quando você parar.'); return; }
     VIVO.P = null;   // sem o programinha (Windows, Mac antigo): segue no modo antigo
@@ -1854,13 +1908,24 @@ async function ditadoWhisper(P) {
   if (DITADO.rec) pararDitado();
   let fluxo;
   try {
-    fluxo = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // supressao de ruido agressiva come voz baixa e a transcricao volta vazia; ja o ganho
+    // automatico ajuda quem fala longe do microfone
+    fluxo = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: true } });
   } catch (e) {
     avisoEnvio(P, 'Não consegui usar o microfone. Libere em Ajustes do Sistema › Privacidade › Microfone.');
     return;
   }
   DITADO.pedacos = []; DITADO.P = P;
-  DITADO.rec = new MediaRecorder(fluxo);
+  /* Daqui pra frente o microfone JA ESTA ABERTO. Se o gravador nao nascer, a trilha tem de
+     fechar aqui: senao a captura fica ligada sem botao aceso e sem jeito de desligar a nao
+     ser fechando o app — e a luzinha do microfone fica acesa no Mac. */
+  try { DITADO.rec = new MediaRecorder(fluxo); }
+  catch (e) {
+    try { fluxo.getTracks().forEach(t => t.stop()); } catch {}
+    DITADO.rec = null; DITADO.pedacos = []; DITADO.P = null;
+    avisoEnvio(P, 'Não consegui gravar o áudio: ' + ((e && e.message) || 'erro'));
+    return;
+  }
   DITADO.rec.ondataavailable = (e) => { if (e.data && e.data.size) DITADO.pedacos.push(e.data); };
   DITADO.rec.onstop = async () => {
     fluxo.getTracks().forEach(t => t.stop());
@@ -1882,7 +1947,13 @@ async function ditadoWhisper(P) {
     inp.dispatchEvent(new Event('input'));
     inp.focus();
   };
-  DITADO.rec.start();
+  try { DITADO.rec.start(); }
+  catch (e) {
+    try { fluxo.getTracks().forEach(t => t.stop()); } catch {}
+    DITADO.rec = null; DITADO.pedacos = []; DITADO.P = null;
+    avisoEnvio(P, 'Não consegui começar a gravar: ' + ((e && e.message) || 'erro'));
+    return;
+  }
   const bt = $('.p-mic', P.el);
   if (bt) bt.classList.add('gravando');
   avisoEnvio(P, 'Gravando. Clique no microfone de novo (ou ⌘⇧D) quando terminar de falar.');
@@ -1955,6 +2026,27 @@ function botoesDeCopia(b) {
   }
 }
 
+/* ===================== RECIBO DO TURNO (so o visual) =====================
+   Quando a resposta termina com um titulo so "Recibo" (ou "Recibo do turno"), esse fecho
+   vira um cartao destacado no fim da fala em vez de mais um titulo perdido no texto.
+   Fica inerte enquanto ninguem pedir esse fecho ao agente: sem o titulo, nao faz nada. */
+function marcarRecibo(el) {
+  if (!el || el.querySelector('.recibo')) return;
+  const cabs = [...el.querySelectorAll('h1,h2,h3,h4')];
+  // titulo SO "Recibo" (ou "Recibo do turno"): "Recibo de pagamento" e assunto, nao fecho
+  const cab = cabs.find((h) => /^\s*recibo(\s+do\s+turno)?\s*:?\s*$/i.test(h.textContent || ''));
+  if (!cab || cab.parentNode !== el) return;   // so no nivel de cima da fala
+  const nivel = (h) => Number(h.tagName[1]) || 9;
+  // tem outra secao do mesmo nivel (ou acima) depois dele: nao e o fecho, nao engole o resto
+  if (cabs.slice(cabs.indexOf(cab) + 1).some((h) => nivel(h) <= nivel(cab))) return;
+  const cx = document.createElement('div');
+  cx.className = 'recibo';
+  el.insertBefore(cx, cab);
+  let n = cab;
+  while (n) { const prox = n.nextSibling; cx.appendChild(n); n = prox; }
+  cab.classList.add('recibo-tit');
+}
+
 function marcarLinksWeb(el) {
   for (const a of el.querySelectorAll('a[href^="http"]')) {
     a.classList.add('link-web');
@@ -2002,7 +2094,7 @@ function textFinal(P, key, text) {
   }
   b.raw = text; b.el.innerHTML = marked.parse(text);
   legendarTrabalho(P, text);
-  linkarArquivos(P, b.el); marcarLinksWeb(b.el); botoesDeCopia(b);
+  linkarArquivos(P, b.el); marcarLinksWeb(b.el); botoesDeCopia(b); marcarRecibo(b.el);
   if (P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
   const quem = P.engine === 'codex' ? 'Codex' : 'Claude';
@@ -2285,6 +2377,8 @@ async function send(P) {
     const anx = P.anexos.slice(); P.anexos = []; pintarAnexos(P);
     P.quadroColado = null;
     inp.value = ''; inp.style.height = 'auto';
+    guardarPrompt(text);            // pra trazer de volta com a seta pra cima
+    P.navHist = undefined;
     const bolha = userMsg(P, text, anx);
     const pacote = envioComAnexos(P, text, anx);
     // ja havia uma esperando? Junta em vez de trocar: o `P.queued = envio` de antes apagava a
@@ -2310,6 +2404,8 @@ async function send(P) {
   const anexos = P.anexos.slice();
   P.anexos = []; pintarAnexos(P);
   inp.value = ''; inp.style.height = 'auto';
+  guardarPrompt(text);              // pra trazer de volta com a seta pra cima
+  P.navHist = undefined;
   const bolha = userMsg(P, text, anexos);
   if (!P.titulo) { P.titulo = nomeDaConversa(P, text, anexos); pintarNome(P); }
   P.quadroColado = null;
@@ -2870,7 +2966,7 @@ function renderizarHistorico(P, m) {
   const role = m.role || m.kind || m.type;
   if (role === 'user') userMsg(P, m.text || '', m.attachments || m.anexos);
   else if (['bot', 'assistant'].includes(role)) {
-    const b = botBlock(P, m.id || 'h' + Math.random()); b.raw = m.text || ''; b.el.innerHTML = marked.parse(b.raw); botoesDeCopia(b);
+    const b = botBlock(P, m.id || 'h' + Math.random()); b.raw = m.text || ''; b.el.innerHTML = marked.parse(b.raw); botoesDeCopia(b); marcarRecibo(b.el);
     P.hist.push({ quem: P.engine === 'codex' ? 'Codex' : 'Claude', texto: b.raw });
   } else if (role === 'tool') {
     const id = m.id || 'h' + Math.random(); toolStart(P, id, m.name, m.arg, { edicao: m.edicao, tarefas: m.tarefas });
@@ -4662,7 +4758,11 @@ async function anexar(P, caminhos) {
   pintarAnexos(P);
 }
 
-function fichaAnexo(a, comX, aoTirar, P) {
+function fichaAnexo(a, comX, aoTirar, P, Pvisor) {
+  /* O 5o parametro liga SO o visor (clique na ficha abre o arquivo). Quem usa o 4o e o dono
+     da ficha, e e nele que vao pendurar os extras futuros (o botao de OCR do Hugo, por
+     exemplo): a barra de escrever pede so o visor, entao passa null no 4o e o painel no 5o. */
+  P = P || Pvisor;
   const d = document.createElement('div');
   d.className = 'anx' + (P && a.path ? ' clicavel' : '');
   if (P && a.path) d.onclick = (e) => { if (!e.target.closest('.anx-x')) verArquivo(P, a.path); };
@@ -4687,7 +4787,7 @@ function pintarAnexos(P) {
     barra.appendChild(fichaAnexo(a, true, (x) => {
       P.anexos = P.anexos.filter(y => y.path !== x.path);
       pintarAnexos(P);
-    }));
+    }, null, P));   // 5o parametro: clique na fichinha abre o arquivo no visor, e so isso
   }
 }
 
@@ -4714,6 +4814,21 @@ window.abrirQuadroTexto = (P, txt, resumo) => {
 /* ============ visualizador de arquivo ============ */
 function fecharVisor() { $$('.p-visor').forEach(v => { v.classList.add('hidden'); $('.visor-corpo', v).innerHTML = ''; }); }
 
+/* O recado do visor entra como TEXTO, nunca como HTML: o "a.erro" carrega nome de arquivo
+   vindo do statSync, e nome de arquivo pode ter < e > — no innerHTML isso some da tela ou
+   vira marcacao. Cada item da lista vira uma linha. */
+function recadoVisor(corpo, linhas) {
+  corpo.innerHTML = '';
+  const d = document.createElement('div');
+  d.className = 'visor-vazio';
+  linhas.filter(Boolean).forEach((t, i) => {
+    if (i) d.appendChild(document.createElement('br'));
+    d.appendChild(document.createTextNode(t));
+  });
+  corpo.appendChild(d);
+  return d;
+}
+
 async function verArquivo(P, caminho) {
   const v = $('.p-visor', P.el);
   const corpo = $('.visor-corpo', v);
@@ -4727,11 +4842,11 @@ async function verArquivo(P, caminho) {
   corpo.innerHTML = '<div class="visor-vazio">abrindo…</div>';
 
   const a = await window.api.verArquivo(caminho);
-  if (!a || a.erro) { corpo.innerHTML = '<div class="visor-vazio">Não consegui abrir.<br>' + ((a && a.erro) || '') + '</div>'; return; }
+  if (!a || a.erro) { recadoVisor(corpo, ['Não consegui abrir.', (a && a.erro) || '']); return; }
   $('.visor-nome', v).textContent = a.nome + '  ·  ' + tamanhoBonito(a.bytes);
   if (a.tipo === 'imagem') { corpo.innerHTML = ''; const i = document.createElement('img'); i.src = a.dados; corpo.appendChild(i); }
   else if (a.tipo === 'texto') { corpo.innerHTML = '<pre></pre>'; $('pre', corpo).textContent = a.dados; }
-  else corpo.innerHTML = '<div class="visor-vazio">Este tipo não abre aqui dentro.<br>Use o botão do canto para abrir no Mac.</div>';
+  else recadoVisor(corpo, ['Este tipo não abre aqui dentro.', 'Use o botão do canto para abrir no Mac.']);
 }
 
 /* ============ conversas recentes ============ */
@@ -5748,6 +5863,7 @@ const ATALHOS = [
     ['⌘Z / ⌘⇧Z', 'Desfazer / refazer (⌘Y também refaz)'],
     ['⌘⇧D', 'Ditar: falar em vez de digitar'],
     ['Esc', 'Fecha o que estiver aberto; sem nada aberto, para a IA deste chat'],
+    ['↑ / ↓', 'Com o campo vazio, traz de volta o que você já mandou (as 50 últimas)'],
     ['letra solta', 'Digitar fora do campo joga o texto no campo deste chat'],
   ]],
   ['Ler e copiar', [

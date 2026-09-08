@@ -1439,3 +1439,6 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .at-k{flex:none;min-width:126px;font:12px/1.5 var(--mono);color:var(--fg-strong)}
 .at-d{flex:1;min-width:0;font-size:12.5px;color:var(--fg-dim)}
 .at-pe{font-size:11px;color:var(--fg-fraco);text-align:center;margin-top:6px}
+/* recibo do turno: o fecho "## Recibo" vira cartao no fim da fala */
+.recibo{margin:12px 0 4px;padding:8px 12px;border-left:3px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--bg2));border-radius:6px}
+.recibo .recibo-tit{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-dim);margin:0 0 6px}
