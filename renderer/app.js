@@ -25,6 +25,7 @@ const LOGO = {
 // leva 12: plugue do ACP (protocolo aberto, sem marca de ninguém): dois pinos, corpo e cabo
 LOGO.acp = 'M9 2h2v5h2V2h2v5h2a1 1 0 0 1 1 1v3a6 6 0 0 1-5 5.92V22h-2v-5.08A6 6 0 0 1 6 11V8a1 1 0 0 1 1-1h2V2z';
 
+Object.assign(LOGO, { gemini: 'M12 1C11 8 8 11 1 12c7 1 10 4 11 11 1-7 4-10 11-11C16 11 13 8 12 1z', grok: 'M5 3h4l10 18h-4L5 3zm12 0h3L7 21H4L17 3z' });
 const ICONES = {"hand": "<path d=\"M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2\" /> <path d=\"M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2\" /> <path d=\"M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8\" /> <path d=\"M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15\" />", "code-xml": "<path d=\"m18 16 4-4-4-4\" /> <path d=\"m6 8-4 4 4 4\" /> <path d=\"m14.5 4-5 16\" />", "clipboard-list": "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /> <path d=\"M12 11h4\" /> <path d=\"M12 16h4\" /> <path d=\"M8 11h.01\" /> <path d=\"M8 16h.01\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "unlock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 9.9-1\" />", "upload": "<path d=\"M12 3v12\" /> <path d=\"m17 8-5-5-5 5\" /> <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "folder": "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "eraser": "<path d=\"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21\" /> <path d=\"m5.082 11.09 8.828 8.828\" />", "sparkles": "<path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\" /> <path d=\"M20 2v4\" /> <path d=\"M22 4h-4\" /> <circle cx=\"4\" cy=\"20\" r=\"2\" />", "brain": "<path d=\"M12 18V5\" /> <path d=\"M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4\" /> <path d=\"M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5\" /> <path d=\"M17.997 5.125a4 4 0 0 1 2.526 5.77\" /> <path d=\"M18 18a4 4 0 0 0 2-7.464\" /> <path d=\"M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517\" /> <path d=\"M6 18a4 4 0 0 1-2-7.464\" /> <path d=\"M6.003 5.125a4 4 0 0 0-2.526 5.77\" />", "sliders-horizontal": "<path d=\"M10 5H3\" /> <path d=\"M12 19H3\" /> <path d=\"M14 3v4\" /> <path d=\"M16 17v4\" /> <path d=\"M21 12h-9\" /> <path d=\"M21 19h-5\" /> <path d=\"M21 5h-7\" /> <path d=\"M8 10v4\" /> <path d=\"M8 12H3\" />", "lock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />", "arrow-left-right": "<path d=\"M8 3 4 7l4 4\" /> <path d=\"M4 7h16\" /> <path d=\"m16 21 4-4-4-4\" /> <path d=\"M20 17H4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "plug": "<path d=\"M12 22v-5\" /> <path d=\"M15 8V2\" /> <path d=\"M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z\" /> <path d=\"M9 8V2\" />", "key-round": "<path d=\"M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z\" /> <circle cx=\"16.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "log-out": "<path d=\"m16 17 5-5-5-5\" /> <path d=\"M21 12H9\" /> <path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "file-code": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 12.5 8 15l2 2.5\" /> <path d=\"m14 12.5 2 2.5-2 2.5\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "braces": "<path d=\"M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1\" /> <path d=\"M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1\" />", "terminal": "<path d=\"M12 19h8\" /> <path d=\"m4 17 6-6-6-6\" />", "file": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" />", "refresh-cw": "<path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" /> <path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\" /> <path d=\"M8 16H3v5\" />", "circle-help": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\" /> <path d=\"M12 17h.01\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "panel-left": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" /> <path d=\"M9 3v18\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "arrow-up": "<path d=\"m5 12 7-7 7 7\" /> <path d=\"M12 19V5\" />", "square": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" />", "rotate-cw": "<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" />", "circle": "<circle cx=\"12\" cy=\"12\" r=\"10\" />", "minus": "<path d=\"M5 12h14\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "search": "<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />", "server": "<rect width=\"20\" height=\"8\" x=\"2\" y=\"2\" rx=\"2\" /> <rect width=\"20\" height=\"8\" x=\"2\" y=\"14\" rx=\"2\" /> <path d=\"M6 6h.01\" /> <path d=\"M6 18h.01\" />", "star": "<path d=\"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z\" />"};
 /* icones que faltavam para as coisas novas (copiar, ditar, mandar nos dois, guardar no vault) */
 Object.assign(ICONES, {
@@ -53,10 +54,10 @@ const svgMotor = (eng) => '<svg viewBox="0 0 24 24" class="logo-motor"><path d="
 /* leva 12.4: um lugar só para o nome e para a caixa lateral de cada motor. Antes cada ponto
    escrevia à mão `engine === 'claude' ? '#histClaude' : '#histCodex'` — ou seja, QUALQUER motor
    que não fosse o Claude escrevia na coluna do Codex, e o ACP APAGARIA a lista do Codex. */
-const NOME_MOTOR = { claude: 'Claude', codex: 'Codex', acp: 'ACP' };
+const NOME_MOTOR = { claude: 'Claude', codex: 'Codex', acp: 'ACP', gemini: 'Gemini', grok: 'Grok' };
 const nomeDoMotor = (eng) => NOME_MOTOR[eng] || 'Claude';
-const MOTORES = ['claude', 'codex', 'acp'];
-const CAIXA_MOTOR = { claude: 'Claude', codex: 'Codex', acp: 'Acp' };
+const MOTORES = ['claude', 'codex', 'acp', 'gemini', 'grok'];
+const CAIXA_MOTOR = { claude: 'Claude', codex: 'Codex', acp: 'Acp', gemini: 'Gemini', grok: 'Grok' };
 const caixaHist = (eng) => document.getElementById('hist' + (CAIXA_MOTOR[eng] || 'Claude'));
 /* estado guardado por motor: nascendo com os três, um "++" numa chave que não existe deixa de
    virar NaN — que é o que faria a lista do ACP nunca pintar */
@@ -160,7 +161,11 @@ const melhorAgenteAcp = () => {
   return bom ? bom.id : '';
 };
 
+const MODELOS_GEMINI = [{ id: '', nome: 'Padrão do Gemini', desc: 'Usa o modelo configurado no Gemini CLI', efforts: [], padrao: true }];
+const MODELOS_GROK = [{ id: '', nome: 'Padrão do Grok', desc: 'Usa o modelo configurado no Grok', efforts: [], padrao: true }];
 function modelosDe(P) {
+  if (P.engine === 'gemini') return MODELOS_GEMINI;
+  if (P.engine === 'grok') return MODELOS_GROK;
   if (P.engine === 'acp') return AGENTES_ACP;
   if (P.engine === 'claude') return MODELOS_CLAUDE;
   // testar o TAMANHO, nao so se existe: quando o Codex esta fora do ar a chamada devolve lista
@@ -1181,7 +1186,7 @@ function fillModels(P) {
   const listaReal = P.engine !== 'codex' || !!(MODELOS_CODEX && MODELOS_CODEX.length);
   if (listaReal && !ms.find(m => m.id === P.model)) P.model = (ms.find(m => m.padrao) || ms[0]).id;
   const ef = esforcosDe(P);
-  if (listaReal && !ef.find(e => e.id === P.effort)) P.effort = modeloAtual(P).padraoEffort || ef[Math.min(2, ef.length - 1)].id;
+  if (listaReal && ef.length && !ef.find(e => e.id === P.effort)) P.effort = modeloAtual(P).padraoEffort || ef[Math.min(2, ef.length - 1)].id;
   $('.p-model', P.el).innerHTML = ico('brain') + '<span>' + modeloAtual(P).nome + '</span>';
   pintarControlesCodex(P);
 }
@@ -1195,6 +1200,7 @@ function paintEngine(P) {
   P.el.classList.toggle('eng-claude', P.engine === 'claude');
   // leva 12.4: a paleta do terceiro motor, e o interruptor de 2 lados some por CSS neste painel
   P.el.classList.toggle('eng-acp', P.engine === 'acp');
+  for (const e of ['gemini', 'grok']) P.el.classList.toggle('eng-' + e, P.engine === e);
   pintarControlesCodex(P);
 }
 function setFocus(P) {
@@ -1206,7 +1212,7 @@ function setFocus(P) {
   for (const q of panes.values()) q.el.classList.toggle('focus', q === P);
   loadTree(P.cwd);
   atualizarGit(P);   // leva 10.4: o chip do git segue o chat que está em foco
-  $('#tbTitle').textContent = shortPath(P.cwd) + '  ·  ' + (P.engine === 'codex' ? 'Codex' : 'Claude');
+  $('#tbTitle').textContent = shortPath(P.cwd) + '  ·  ' + nomeDoMotor(P.engine);
   const pn = $('#projName'); if (pn) pn.textContent = nomePasta(P.cwd);
 }
 /* Fechar um chat que esta TRABALHANDO joga a resposta fora e mata o comando no meio. Com o
@@ -1233,7 +1239,7 @@ async function closePane(id, semPerguntar) {
   if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto()) { try { window.Quadro.fechar(); } catch (_) {} }
   if (P.busy && !semPerguntar) {
     const nome = (P.titulo || '').trim().slice(0, 40) || 'este chat';
-    if (!confirm('O ' + (P.engine === 'codex' ? 'Codex' : 'Claude') + ' está trabalhando em “' + nome + '”.\n\nFechar agora joga fora o que ele está fazendo. Fechar mesmo assim?')) return;
+    if (!confirm('O ' + nomeDoMotor(P.engine) + ' está trabalhando em “' + nome + '”.\n\nFechar agora joga fora o que ele está fazendo. Fechar mesmo assim?')) return;
   }
   // fechar o chat tem de apagar a luz do microfone: o processo do ditado é dele
   vozSoltar(P, { guardarTexto: true });
@@ -1987,7 +1993,7 @@ async function salvarConversaNoVault(P) {
   const r = await window.api.salvarNoVault({
     titulo: (P.titulo || 'Conversa do Cockpit').trim(),
     cwd: P.cwd,
-    motor: P.engine === 'codex' ? 'Codex' : 'Claude',
+    motor: nomeDoMotor(P.engine),
     texto: linhas.join('\n\n'),
   });
   if (!r || r.error) { avisoEnvio(P, 'Não deu para salvar: ' + ((r && r.error) || 'erro')); return; }
@@ -2321,7 +2327,7 @@ function avisarQueTerminou(P) {
   const onde = (P.titulo || nomePasta(P.cwd) || 'Cockpit').slice(0, 50);
   window.api.avisarPronto({
     paneId: P.id,
-    titulo: (P.engine === 'codex' ? 'Codex' : 'Claude') + ' terminou · ' + onde,
+    titulo: nomeDoMotor(P.engine) + ' terminou · ' + onde,
     texto: resposta || 'A resposta está pronta.',
   });
 }
@@ -2447,7 +2453,7 @@ function textFinal(P, key, text) {
   linkarArquivos(P, b.el); marcarLinksWeb(b.el); botoesDeCopia(b); marcarRecibo(b.el);
   if (P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
-  const quem = P.engine === 'codex' ? 'Codex' : 'Claude';
+  const quem = nomeDoMotor(P.engine);
   const ult = P.hist[P.hist.length - 1];
   if (ult && ult.quem === quem) ult.texto = text; else P.hist.push({ quem, texto: text });
 }
@@ -3597,7 +3603,7 @@ function renderizarHistorico(P, m) {
   if (role === 'user') userMsg(P, m.text || '', m.attachments || m.anexos);
   else if (['bot', 'assistant'].includes(role)) {
     const b = botBlock(P, m.id || 'h' + Math.random()); b.raw = m.text || ''; b.el.innerHTML = marked.parse(b.raw); botoesDeCopia(b); marcarRecibo(b.el);
-    P.hist.push({ quem: P.engine === 'codex' ? 'Codex' : 'Claude', texto: b.raw });
+    P.hist.push({ quem: nomeDoMotor(P.engine), texto: b.raw });
   } else if (role === 'tool') {
     const id = m.id || 'h' + Math.random(); toolStart(P, id, m.name, m.arg, { edicao: m.edicao, tarefas: m.tarefas });
     if (m.output) toolOutput(P, id, typeof m.output === 'string' ? m.output : JSON.stringify(m.output));
@@ -3700,6 +3706,13 @@ const MODOS = {
     { id: 'bypass',    ic: 'unlock', nome: 'Sem pedir permissão',    desc: 'O Cockpit aprova todo pedido do agente sozinho' },
   ],
 };
+MODOS.gemini = [
+  { id: 'manual', ic: 'hand', nome: 'Manual', desc: 'Ferramentas que exigem confirmação são recusadas. Para aprovar na tela, use Gemini pelo ACP.' },
+  { id: 'auto', ic: 'code-xml', nome: 'Editar automaticamente', desc: 'Permite editar arquivos; outras ações seguem as regras do Gemini' },
+  { id: 'plan', ic: 'clipboard-list', nome: 'Plano', desc: 'Pede o modo de planejamento do Gemini' },
+  { id: 'bypass', ic: 'unlock', nome: 'Sem pedir permissão', desc: 'Libera as ferramentas do Gemini automaticamente' },
+];
+MODOS.grok = [MODOS.acp[0], MODOS.acp[3]];
 const esforcoDe = (P) => P.effort;
 /* Plano no Codex é collaborationMode, separado da permissão. A troca de motor preserva
    essa intenção; aqui a permissão equivalente continua Manual, nunca a opção mais solta. */
@@ -4164,7 +4177,7 @@ async function menuModelos(P) {
         const mudouOrigem = modeloPorCreditos(P.model) !== vaiPorCreditos;
         P.model = mo.id;
         const ef = esforcosDe(P);
-        if (!ef.find(e => e.id === P.effort)) P.effort = mo.padraoEffort || ef[0].id;
+        if (ef.length && !ef.find(e => e.id === P.effort)) P.effort = mo.padraoEffort || ef[0].id;
         fillModels(P);
         lembrarEscolhaDaPasta(P);        // esta pasta passa a nascer com este cérebro
         if (P.engine === 'codex' && !mudouOrigem && !vaiPorCreditos) {
@@ -4182,7 +4195,7 @@ async function menuModelos(P) {
       }));
     }
     m.appendChild(elLinha());
-    if (P.engine !== 'acp') m.appendChild(barraEsforco(P));   // no ACP quem decide o esforço é o agente
+    if (P.engine === 'claude' || P.engine === 'codex') m.appendChild(barraEsforco(P));   // no ACP quem decide o esforço é o agente
     secoesCodexNoCerebro(P, m, pintar);
   };
   pintar();
@@ -4648,7 +4661,7 @@ async function janelaConectores(P) {
   modal.onclick = (e) => { if (e.target === modal) fecharModal(P); };
   cx.onclick = (e) => e.stopPropagation();
 
-  const motor = P.engine === 'codex' ? 'Codex' : 'Claude';
+  const motor = nomeDoMotor(P.engine);
   const cabeca = () =>
     '<div class="mo-top"><span class="mo-tit">Conectores</span><button class="mo-x">' + ico('x') + '</button></div>'
     + '<div class="mo-sub">Serviços ligados ao ' + motor + ' neste Mac.</div>';
@@ -4802,7 +4815,7 @@ function encaixarAppsDoChatGpt(cx, appsR) {
 
 function formConector(P) {
   const cx = $('.p-modal .modal-cx', P.el);
-  const motor = P.engine === 'codex' ? 'Codex' : 'Claude';
+  const motor = nomeDoMotor(P.engine);
   cx.innerHTML =
     '<div class="mo-top"><span class="mo-tit">Adicionar conector</span><button class="mo-x">' + ico('x') + '</button></div>'
     + '<div class="mo-sub">Cole o endereço que o serviço te deu. Se for um programa que roda aqui no Mac, use o campo de baixo.</div>'
@@ -5398,7 +5411,7 @@ function agDesenhar() {
 
 
 /* ============ conta e limite fixos na barra lateral ============ */
-const contaCache = { claude: null, codex: null, acp: null };
+const contaCache = { claude: null, codex: null, acp: null, gemini: null, grok: null };
 
 /* O "Entrar" do cartao da coluna chamava contaAcao(focusPane) — o motor do CHAT EM FOCO,
    nao o da coluna. Com um chat do Codex em foco, clicar em "Entrar" no cartao do Claude
@@ -5409,7 +5422,7 @@ function entrarNaConta(engine) {
     ? focusPane
     : [...panes.values()].find((q) => q.engine === engine);
   if (P) { setFocus(P); contaAcao(P, 'login', engine); return; }
-  const recado = 'Abra um chat do ' + (engine === 'codex' ? 'Codex' : 'Claude') + ' para entrar na conta dele.';
+  const recado = 'Abra um chat do ' + nomeDoMotor(engine) + ' para entrar na conta dele.';
   if (focusPane) note(focusPane, recado, true);
 }
 
@@ -5424,7 +5437,7 @@ async function pintarContaLateral(engine, forcar) {
   /* leva 12.5: o ACP não tem conta que o Cockpit leia — ela é do agente, resolvida no terminal
      dele. Sem este ramo a coluna dizia "Sem conta do Claude neste Mac" num painel que não é
      Claude, e ainda oferecia um botão "Entrar" que não entraria em lugar nenhum. */
-  if (engine === 'acp') {
+  if (['acp', 'gemini', 'grok'].includes(engine)) {
     cx.innerHTML = '<div class="sc-vazio"></div>';
     $('.sc-vazio', cx).textContent = (c && c.motivo)
       || 'A conta é a do próprio agente ACP, configurada no terminal dele.';
@@ -5659,14 +5672,14 @@ const USO_AVISO_SESSAO = 90;
 const USO_AVISO_SEMANA = 50;
 const USO_DENOVO = 5;
 const USO_INTERVALO = 300000;      // relê no maximo de 5 em 5 minutos
-const USO = { claude: null, codex: null, acp: null };
+const USO = { claude: null, codex: null, acp: null, gemini: null, grok: null };
 /* O "ja fechei este aviso" mora aqui, por MOTOR — antes ficava em cada chat, entao com 3 chats
    abertos apareciam 3 tarjas iguais e ele tinha de fechar uma por uma. E quando a leitura do
    limite falhava (rede, 429, token), o codigo antigo APAGAVA o "fechado" e a tarja renascia
    sozinha na leitura seguinte. Agora falha de leitura so esconde; nao esquece. */
-const USO_FECHADO = { claude: null, codex: null, acp: null };
-const USO_QUANDO = { claude: 0, codex: 0, acp: 0 };
-const USO_LENDO = { claude: false, codex: false, acp: false };
+const USO_FECHADO = { claude: null, codex: null, acp: null, gemini: null, grok: null };
+const USO_QUANDO = { claude: 0, codex: 0, acp: 0, gemini: 0, grok: 0 };
+const USO_LENDO = { claude: false, codex: false, acp: false, gemini: false, grok: false };
 
 const codexGlobais = { contaTimer: null, conectoresTimer: null, lendoConta: false, lendoConectores: false, vistos: new Map() };
 function receberEventoGlobalCodex(ev) {
@@ -5728,7 +5741,7 @@ if (window.api.onCodexEvent) window.api.onCodexEvent(receberEventoGlobalCodex);
 
 async function lerUso(engine, forcar) {
   // leva 12.4: o ACP não tem cota que dê para ler daqui — a conta é a do agente, no terminal dele
-  if (engine === 'acp') return;
+  if (['acp', 'gemini', 'grok'].includes(engine)) return;
   if (!window.api || !window.api.usoLer) return;
   if (USO_LENDO[engine]) return;
   if (!forcar && Date.now() - (USO_QUANDO[engine] || 0) < USO_INTERVALO) return;
@@ -5783,7 +5796,7 @@ function pintarUso(P) {
     + (zera && zera.reseta ? '<span class="uso-pt">·</span><span class="uso-zera">zera ' + quandoFuturo(zera.reseta) + '</span>' : '')
     + '<span class="uso-gap"></span>'
     + '<button class="uso-x" title="Fechar este aviso">✕</button>';
-  faixa.title = 'Plano do ' + (P.engine === 'codex' ? 'Codex' : 'Claude') + ': '
+  faixa.title = 'Plano do ' + nomeDoMotor(P.engine) + ': '
     + 'sessão ' + (ps === null ? 'sem dado' : ps + '%') + ', semana ' + (pw === null ? 'sem dado' : pw + '%') + '.';
   $('.uso-x', faixa).onclick = (e) => { e.stopPropagation(); fecharUso(P); };
 }
@@ -6300,12 +6313,12 @@ async function verArquivo(P, caminho) {
 }
 
 /* ============ conversas recentes ============ */
-const histCache = { claude: null, codex: null, acp: null };
+const histCache = { claude: null, codex: null, acp: null, gemini: null, grok: null };
 
 /* As conversas do Claude que rodaram DENTRO da VPS gravam o .jsonl lá, não aqui: elas chegam
    por SSH e ficam num cache PRÓPRIO. Guardar tudo num cache só fazia a lista trocar de dono a
    cada recarga — voltar para uma aba local mostrava "Nenhuma conversa nesta pasta". */
-const histCacheVps = { claude: null, codex: null, acp: null };
+const histCacheVps = { claude: null, codex: null, acp: null, gemini: null, grok: null };
 const juntarComVps = (engine, lista) => {
   const vps = histCacheVps[engine];
   if (!vps || !vps.length) return lista;
@@ -6317,7 +6330,7 @@ const juntarComVps = (engine, lista) => {
    aberta, e esta busca custa caro — medido em 08/09/2026 contra a VPS dele: 1,5 s e 11 MB
    (cabeça e cauda de 80 conversas). Sem a trava, cada resposta puxava 11 MB pela internet. */
 const VPS_ESPERA = 90000;
-const vpsBuscadoEm = { claude: 0, codex: 0, acp: 0 };
+const vpsBuscadoEm = { claude: 0, codex: 0, acp: 0, gemini: 0, grok: 0 };
 let vpsBuscando = false;
 let vpsUltimoErro = '';
 async function buscarConversasVps(engine, force) {
@@ -6402,7 +6415,8 @@ async function loadHist(engine, force) {
   else box.innerHTML = '<div class="hist-load">Carregando…</div>';
   /* [EDITA leva 12.4] uma alternativa NOVA na frente das duas de sempre, que ficaram intactas:
      as conversas do ACP são as que o próprio Cockpit anota, num JSONL por sessão. */
-  const r = engine === 'acp' ? await window.api.sessionsAcp()
+  const r = ['gemini', 'grok'].includes(engine) ? await window.api.sessionsCli(engine)
+    : engine === 'acp' ? await window.api.sessionsAcp()
     : engine === 'claude' ? await window.api.sessionsClaude(!!cfg.verRobos) : await window.api.sessionsCodex(!!cfg.verRobos);
   if (r && r.error) { box.innerHTML = '<div class="hist-load">Não consegui ler: ' + r.error + '</div>'; return; }
   histCache[engine] = juntarComVps(engine, r || []);
@@ -6412,9 +6426,9 @@ async function loadHist(engine, force) {
   buscarConversasVps(engine);   // as da VPS entram depois, sem segurar esta pintura
 }
 
-const buscaAtual = { claude: '', codex: '', acp: '' };
+const buscaAtual = { claude: '', codex: '', acp: '', gemini: '', grok: '' };
 // filtro de pasta da lista lateral: '' = Mac inteiro, 'ABA' = acompanha a aba, ou o caminho de um cliente
-const filtroPasta = { claude: 'ABA', codex: 'ABA', acp: 'ABA' };
+const filtroPasta = { claude: 'ABA', codex: 'ABA', acp: 'ABA', gemini: 'ABA', grok: 'ABA' };
 
 // cada pasta dentro daqui e um cliente (funcao porque o HOME so chega no boot)
 const PROJETOS = () => HOME + '/Desktop/Projetos-claude';
@@ -6549,6 +6563,7 @@ function pintarAberta(d) {
   d.classList.toggle('aberta', !!eng);
   d.classList.toggle('ab-claude', eng === 'claude');
   d.classList.toggle('ab-codex', eng === 'codex');
+  for (const e of ['gemini', 'grok']) d.classList.toggle('ab-' + e, eng === e);
   d.classList.toggle('ab-acp', eng === 'acp');   // leva 12.4: a moldura da conversa aberta
 }
 function marcarAbertas() {
@@ -6701,7 +6716,7 @@ function menuDaConversa(bt, s, d) {
    R10: a chave TEM de ser cfg.gruposConversa — o savePanes() faz `delete cfg.grupos` a cada
    salvamento, então um grupo guardado em cfg.grupos sumiria sozinho no salvamento seguinte. */
 const GRUPO_CORES = ['#6ea8fe', '#d97757', '#5aa469', '#d7ba7d', '#e05252', '#b083f0', '#f0839f', '#4fd1c5'];
-const filtroGrupo = { claude: null, codex: null, acp: null };   // não é salvo: volta a "Todos" a cada abertura
+const filtroGrupo = { claude: null, codex: null, acp: null, gemini: null, grok: null };   // não é salvo: volta a "Todos" a cada abertura
 // a cor entra em style: se o config foi editado na mão, só passa o que é cor de verdade
 const corSegura = (c) => (/^#[0-9a-fA-F]{3,8}$/.test(String(c || '')) ? String(c) : GRUPO_CORES[0]);
 
@@ -6977,7 +6992,7 @@ function linhaConversa(s, termo, trecho) {
    dava tempo de outro desenho comecar (mais uma letra digitada, troca de aba, fim de resposta):
    quando o antigo acordava, despejava os resultados VELHOS por cima do desenho novo e a lista
    aparecia duplicada e misturada. Agora o desenho velho percebe que ficou para tras e desiste. */
-const pintaVez = { claude: 0, codex: 0, acp: 0 };
+const pintaVez = { claude: 0, codex: 0, acp: 0, gemini: 0, grok: 0 };
 
 async function paintHist(engine, listaCrua) {
   const minhaVez = ++pintaVez[engine];
@@ -7154,6 +7169,9 @@ async function novaConversa(engine) {
     if (MOTORES_OK && !MOTORES_OK.acp) {
       note(P, 'Nenhum agente ACP está instalado neste Mac. Instale um (ex.: npm i -g @google/gemini-cli) e este painel passa a funcionar sem mais nada.', true);
     }
+  }
+  if (['gemini', 'grok'].includes(engine) && MOTORES_OK && !MOTORES_OK[engine]) {
+    note(P, nomeDoMotor(engine) + ' ainda não está instalado neste Mac. Instale o programa e entre na conta pelo terminal para usar este chat.', true);
   }
   marcarAbertas();          // a conversa que estava aqui deixou de estar aberta
   $('.p-input', P.el).focus();
@@ -7593,6 +7611,7 @@ $('#chkRobos').addEventListener('change', async (e) => {
   if (aberta && aberta.dataset.view === 'hclaude') loadHist('claude', true);
   if (aberta && aberta.dataset.view === 'hcodex') loadHist('codex', true);
   if (aberta && aberta.dataset.view === 'hacp') loadHist('acp', true);
+  if (aberta && ['hgemini', 'hgrok'].includes(aberta.dataset.view)) loadHist(aberta.dataset.view.slice(1), true);
 });
 
 /* A foto e mostrada num circulo de 20 a 30 pixels, mas era guardada no tamanho original: a
@@ -8191,6 +8210,7 @@ function abrirVistaLateral(v) {
   if (v === 'hcodex') { loadHist('codex'); pintarContaLateral('codex', true); }
   // leva 12.4: a coluna do terceiro motor. Linha NOVA; as duas de cima ficaram intactas.
   if (v === 'hacp') { loadHist('acp'); pintarContaLateral('acp', true); }
+  if (v === 'hgemini' || v === 'hgrok') { loadHist(v.slice(1)); pintarContaLateral(v.slice(1), true); }
   // leva 10.2: a torre é sempre desenhada na hora — mostrar o estado de 4 segundos atrás
   // seria pior do que não mostrar nada
   if (v === 'torre') pintarTorre(true);
@@ -8233,6 +8253,7 @@ function toggleSidebar() {
     if (v && v.dataset.view === 'hclaude') { loadHist('claude'); pintarContaLateral('claude'); }
     if (v && v.dataset.view === 'hcodex') { loadHist('codex'); pintarContaLateral('codex'); }
     if (v && v.dataset.view === 'hacp') { loadHist('acp'); pintarContaLateral('acp'); }
+    if (v && ['hgemini', 'hgrok'].includes(v.dataset.view)) { loadHist(v.dataset.view.slice(1)); pintarContaLateral(v.dataset.view.slice(1)); }
     // leva 10.2: abrindo a coluna pelo atalho, a torre também precisa nascer atualizada
     if (v && v.dataset.view === 'torre') pintarTorre(true);
   }
@@ -8611,6 +8632,7 @@ document.addEventListener('keydown', (e) => {
   $('#svgClaude').innerHTML = '<path d="' + LOGO.claude + '"/>';
   $('#svgCodex').innerHTML = '<path d="' + LOGO.codex + '"/>';
   // leva 12.4: o plugue do ACP na barrinha da esquerda (guardado: o HTML antigo não o tem)
+  for (const e of ['gemini', 'grok']) { const svg = document.getElementById('svg' + CAIXA_MOTOR[e]); if (svg) svg.innerHTML = '<path d="' + LOGO[e] + '"/>'; }
   if ($('#svgAcp')) $('#svgAcp').innerHTML = '<path d="' + LOGO.acp + '"/>';
   HOME = await window.api.home();
   cfg = await window.api.getConfig();

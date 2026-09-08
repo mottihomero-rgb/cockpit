@@ -62,6 +62,7 @@
     sessionsCodex: (r) => chamar('sessions:codex', r),
     /* R2: o app.js e o MESMO arquivo nos dois. Sem estas duas linhas, abrir a coluna do
        ACP no iPhone morria num TypeError e derrubava o boot da tela inteira. */
+    sessionsCli: (engine) => chamar('sessions:cli', engine),
     sessionsAcp: () => chamar('sessions:acp'),
     acpConfig: (o) => chamar('acp:config', o),
     sessionHistory: (o) => chamar('sessions:history', o),

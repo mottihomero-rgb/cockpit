@@ -31,6 +31,7 @@
     "files": [
       "main.js",
       "acp.js",
+      "cli-motors.js",
       "codex-*.js",
       "preload.js",
       "preload-recorte.js",

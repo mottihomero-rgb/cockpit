@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('api', {
   sessionsClaude: (r) => ipcRenderer.invoke('sessions:claude', r),
   sessionsCodex: (r) => ipcRenderer.invoke('sessions:codex', r),
   // leva 12: as conversas do motor ACP (o JSONL que o proprio Cockpit anota por sessao)
+  sessionsCli: (engine) => ipcRenderer.invoke('sessions:cli', engine),
   sessionsAcp: () => ipcRenderer.invoke('sessions:acp'),
   acpConfig: (o) => ipcRenderer.invoke('acp:config', o),
   sessionHistory: (o) => ipcRenderer.invoke('sessions:history', o),

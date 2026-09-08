@@ -2168,11 +2168,12 @@ function acharConversaClaude(id, cwd) {
 
 handle('sessions:history', async (_e, { engine, file, id, cwd }) => {
   let alvo = file && fs.existsSync(file) ? file : '';
+  if (engine === 'gemini') return cortarHistorico(cli.historico(alvo), 600, 250);
   /* leva 12.5 — o ACP: o corte é o mesmo dos outros dois motores (600 falas / 250 passos),
      e NÃO o corte de 60 do acp.js, que é o default de quem chama sem dizer nada. Com 60 a
      conversa voltava só com o fim, que é exatamente o bug que a leva do histórico consertou.
      Se o arquivo veio de outra máquina (caminho de lá), o id acha o arquivo daqui. */
-  if (engine === 'acp') {
+  if (motorAcp(engine)) {
     try {
       const f = alvo || acp.arquivoDe(id);
       if (!f || !fs.existsSync(f)) return [];
@@ -2487,13 +2488,14 @@ handle('skills:list', (_e, engine) => {
     const ped = engine;
     engine = ped.engine;
     // painel ACP: os comandos "/" são os que o agente DAQUELE painel anunciou, não skills de disco
-    if (engine === 'acp') return acp.comandos(ped.paneId) || [];
+    if (motorAcp(engine)) return acp.comandos(ped.paneId) || [];
     if (engine === 'codex') return skillsNativasDoCodex(ped.cwd).then((n) => juntarSkills(n, skillsDoDisco('codex')));
   }
   /* forma antiga (só a string do motor, que é a que o iPhone manda): sem o painel não dá para
      saber de qual agente são os comandos. Sem esta linha o ACP caía no "senão" lá embaixo e
      listava as skills do Codex, que ele não tem como usar. */
-  if (engine === 'acp') return [];
+  if (motorAcp(engine)) return [];
+  if (engine === 'gemini') return cli.comandos();
   if (skillCache[engine]) return skillCache[engine];
   let dirs;
   if (engine === 'claude') {
@@ -2719,7 +2721,7 @@ function alvoDoTransporte(t) {
 
 handle('mcp:list', async (_e, engine) => {
   // resposta honesta: o Cockpit não configura os conectores de um agente que ele só conversa
-  if (engine === 'acp') return { error: 'Os conectores do agente ACP se configuram no próprio agente, pelo terminal dele (ex.: "gemini mcp").' };
+  if (motorAcp(engine) || engine === 'gemini') return { error: 'Os conectores do agente ACP se configuram no próprio agente, pelo terminal dele (ex.: "gemini mcp").' };
   if (engine === 'codex') {
     const r = await rodar('codex', ['mcp', 'list', '--json'], 45000);
     try {
@@ -2752,7 +2754,7 @@ handle('mcp:list', async (_e, engine) => {
 });
 
 handle('mcp:acao', async (_e, { engine, acao, nome, url, comando }) => {
-  if (engine === 'acp') return { error: 'Adicione pelo terminal do próprio agente ACP.' };
+  if (motorAcp(engine) || engine === 'gemini') return { error: 'Adicione pelo terminal do próprio agente ACP.' };
   const bin = engine === 'claude' ? CLAUDE_BIN : 'codex';
   const cru = engine === 'claude' ? CLAUDE_BIN : acharBin('codex');
   // Esta linha vai para o /bin/sh. O JSON.stringify() de antes so poe aspas DUPLAS, e dentro
@@ -2815,10 +2817,11 @@ async function usoDoClaude(segundaTentativa) {
 }
 
 handle('conta:ler', async (_e, engine) => {
+  if (engine === 'gemini' || engine === 'grok') return { entrou: null, motivo: 'A conta do ' + engine + ' é configurada no terminal. O Cockpit não consulta a cota dela.' };
   /* resposta HONESTA em vez de "não consegui ler": a conta é a do próprio agente, configurada
      no terminal dele. O Cockpit não tem como conferir daqui — se ele pedir login, aparece no
      painel, com o recado que o acp.js monta a partir dos authMethods anunciados. */
-  if (engine === 'acp') {
+  if (motorAcp(engine)) {
     return { entrou: null, email: '', nome: 'Agente ACP', plano: '', via: '', sessao: null, semana: null, extra: null,
       motivo: 'A conta é a do próprio agente ACP, configurada no terminal dele; o Cockpit não confere daqui. Se ele pedir login, aparece no painel.' };
   }
@@ -2886,8 +2889,9 @@ handle('conta:ler', async (_e, engine) => {
 /* so os percentuais do plano, para a faixa em cima da caixa de texto.
    Diferente do conta:ler, nao chama o CLI: e leve o bastante para repetir de minuto em minuto. */
 handle('uso:ler', async (_e, engine) => {
+  if (engine === 'gemini' || engine === 'grok') return null;
   // o ACP não tem cota que o Cockpit possa ler: sem esta linha ele subia o Codex à toa
-  if (engine === 'acp') return null;
+  if (motorAcp(engine)) return null;
   if (engine === 'claude') {
     const u = await usoDoClaude();
     if (!u) return null;
@@ -2909,7 +2913,8 @@ handle('uso:ler', async (_e, engine) => {
 });
 
 handle('auth:acao', async (_e, { engine, acao, cwd }) => {
-  if (engine === 'acp') return { error: 'A conta do agente ACP se resolve no terminal: rode o comando dele e entre por lá.' };
+  if (engine === 'gemini') return { error: 'Entre na conta pelo terminal do Gemini.' };
+  if (motorAcp(engine)) return { error: 'A conta do agente ACP se resolve no terminal: rode o comando dele e entre por lá.' };
   const ehClaude = engine === 'claude';
   const naVps = ehRemoto(cwd);
   const alvo = naVps ? (ehClaude ? 'claude' : 'codex') : (ehClaude ? CLAUDE_BIN : acharBin('codex'));
@@ -3030,7 +3035,7 @@ function arqCred(engine) {
    (listar, salvar, trocar, esquecer): sem barrar tambem o "trocar", um clique solto criaria o
    arquivo do Claude com o token de outra conta. */
 function contaSemArquivo(engine) {
-  if (engine === 'acp') return 'Este painel usa a conta do próprio agente ACP.';
+  if (motorAcp(engine)) return 'Este painel usa a conta do próprio agente ACP.';
   const caminhos = CAMINHOS_CRED[engine];
   if (!caminhos) return 'Não conheço as contas deste motor.';
   if (!EH_WIN && engine === 'claude') return 'No Mac a conta do Claude fica no Chaveiro, não num arquivo. Use “Trocar de conta” na janela da Conta.';
@@ -3697,6 +3702,7 @@ function createWindow() {
 }
 
 function shutdown() {
+  cli.fechar(); acp.fechar();
   fecharMestresSsh();   // o mestre do ControlPersist nao fica pendurado depois do app
   for (const id of [...claudePanes.keys()]) claudeStop(id);
   for (const c of codexConns.values()) { if (c.proc) { try { c.proc.kill('SIGTERM'); } catch {} c.proc = null; c.ready = null; } }
@@ -4099,6 +4105,20 @@ function attachCodexThread(paneId, threadId, response, settings) {
    AVISO HONESTO: nesta máquina não há nenhum agente ACP instalado hoje (nem gemini, nem qwen,
    nem opencode). O motor entra pronto; quando um deles for instalado, ele roda sem mais nada. */
 const acpMod = require('./acp.js');
+function motorAcp(engine) { return engine === 'acp' || engine === 'grok'; }
+function matarGrupoExtra(proc) {
+  if (!proc) return;
+  if (!EH_WIN && Number.isInteger(proc.pid) && proc.pid > 1) {
+    try { process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill('SIGTERM'); } catch {} }
+    const timer = setTimeout(() => { try { process.kill(-proc.pid, 'SIGKILL'); } catch {} }, 1500);
+    if (timer.unref) timer.unref();
+  } else matarProcesso(proc);
+}
+const cli = require('./cli-motors').criarCli({ HOME, emit, spawnBin, acharBin, temBin, buildEnv,
+  pastaDados: () => app.getPath('userData'), matarGrupo: matarGrupoExtra });
+handle('sessions:cli', (_e, engine) => engine === 'gemini' ? cli.sessoes()
+  : engine === 'grok' ? acp.sessoes().filter(s => /(?:^|[\\/])grok(?:\s|$)/.test(s.comando)).map(s => ({ ...s, engine: 'grok', title: tituloAcp(s) })) : []);
+
 
 /* Pedido de permissão do ACP que não vale mais: responde ao agente (senão ele fica esperando
    para sempre) e some da lista. Filtra por kind==='acp' DE PROPÓSITO — uma varredura cega
@@ -4150,7 +4170,7 @@ function emitAcp(paneId, kind, data) {
 }
 
 const acp = acpMod.criarAcp({
-  emit: emitAcp, spawnBin, buildEnv, matarProcesso, HOME,
+  emit: emitAcp, spawnBin: (bin, args, opts) => spawnBin(acharBin(bin), args, { ...opts, detached: !EH_WIN }), buildEnv, matarProcesso: matarGrupoExtra, HOME,
   pastaDados: () => app.getPath('userData'),
   // autoLiberada de propósito omitida: o default é ()=>false, e o "sempre permitir" desta
   // tela é do Claude/Codex. Sem isto seria um segundo sistema de liberação, invisível.
@@ -4208,15 +4228,19 @@ handle('sessions:acp', () => {
 
 handle('pane:start', async (_e, data) => {
   const { paneId, engine, cwd, model, approval, resumeId, effort, billing } = data;
+  if (engine === 'gemini') {
+    try { return cli.start(paneId, { cwd, model, approval, resumeId }); }
+    catch (e) { emit(paneId, 'note', { text: e.message, error: true }); return false; }
+  }
   /* leva 12.3 — painel ACP. Ramo NOVO na frente de tudo: sem engine==='acp' nada muda.
      Aqui o "model" é o COMANDO do agente (gemini --acp, npx …claude-code-acp…). */
-  if (engine === 'acp') {
+  if (motorAcp(engine)) {
     if (ehRemoto(cwd)) { emit(paneId, 'note', { text: 'O agente ACP roda no Mac, não na VPS. Escolha uma pasta local neste chat.', error: true }); return false; }
     // cartão pendurado é do agente ANTERIOR deste painel
     descartarPermissoesAcp(paneId);
     /* quem limpa um start que falhou é o próprio acp.js, por identidade: um acp.parar(paneId)
        aqui derrubaria o SEGUNDO start (dois Enter durante o "Ligando…"). */
-    try { return await acp.start(paneId, { comando: model, cwd, approval, resumeId }); }
+    try { return await acp.start(paneId, { comando: engine === 'grok' ? 'grok --no-auto-update agent stdio' : model, cwd, approval, resumeId, authMethod: engine === 'grok' ? 'cached_token' : undefined }); }
     catch (e) {
       emit(paneId, 'note', { text: 'Não consegui ligar o agente ACP: ' + String(e && e.message || e).slice(0, 300), error: true });
       return false;
@@ -4286,7 +4310,7 @@ async function codexApplySettings(paneId, changes) {
     ...(pending ? { requestedSettings: settings, message: 'A escolha será aplicada no próximo envio.' } : {}) };
 }
 handle('pane:settings', async (_e, data) => {
-  if (data.engine === 'acp') return { ok: false, error: 'Estes ajustes pertencem ao Codex.' };
+  if (motorAcp(data.engine) || data.engine === 'gemini') return { ok: false, error: 'Estes ajustes pertencem ao Codex.' };
   if (data.engine === 'claude') return { ok: false, error: 'Estes ajustes pertencem ao Codex.' };
   try { return await codexApplySettings(data.paneId, data); }
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
@@ -4294,10 +4318,11 @@ handle('pane:settings', async (_e, data) => {
 
 handle('pane:send', async (_e, data) => {
   const { paneId, engine, text, attachments = data.anexos || [] } = data;
+  if (engine === 'gemini') return cli.enviar(paneId, text, attachments);
   /* leva 12.3 — o acp.enviar espera uma lista de CAMINHOS (string); aqui o anexo é objeto.
      A imagem vai como bloco do protocolo quando o agente anuncia que aceita; o resto vira
      lista de caminhos no fim do texto, feito pelo próprio acp.js. */
-  if (engine === 'acp') return acp.enviar(paneId, text, (attachments || []).map(a => a && a.path).filter(Boolean));
+  if (motorAcp(engine)) return acp.enviar(paneId, text, (attachments || []).map(a => a && a.path).filter(Boolean));
   if (engine === 'claude') {
     // A interface Claude continua usando o texto com a lista de caminhos.
     const content = claudeAttachmentText(text, attachments);
@@ -4340,7 +4365,8 @@ handle('pane:send', async (_e, data) => {
 });
 
 handle('pane:compactar', async (_e, { paneId, engine }) => {
-  if (engine === 'acp') return { error: 'O agente ACP não tem "compactar" por aqui. Comece uma conversa nova quando ela ficar longa.' };
+  if (engine === 'gemini') return { error: 'Comece uma conversa nova no Gemini quando ela ficar longa.' };
+  if (motorAcp(engine)) return { error: 'O agente ACP não tem "compactar" por aqui. Comece uma conversa nova quando ela ficar longa.' };
   if (engine === 'claude') {
     if (!escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/compact' }] } })) return { error: 'sessão fora do ar' };
     return { ok: true };
@@ -4353,7 +4379,8 @@ handle('pane:compactar', async (_e, { paneId, engine }) => {
 
 handle('pane:steer', async (_e, data) => {
   const { paneId, engine, text, attachments = data.anexos || [] } = data;
-  if (engine === 'acp') return { error: 'Neste motor não dá para falar no meio do trabalho. Espere terminar ou clique em parar.' };
+  if (engine === 'gemini') return { error: 'Espere o Gemini terminar ou clique em parar.' };
+  if (motorAcp(engine)) return { error: 'Neste motor não dá para falar no meio do trabalho. Espere terminar ou clique em parar.' };
   if (engine === 'claude') {
     const content = claudeAttachmentText(text, attachments);
     if (!escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: content }] } })) return { error: 'sessão fora do ar' };
@@ -4370,8 +4397,9 @@ handle('pane:steer', async (_e, data) => {
 });
 
 handle('pane:interrupt', async (_e, { paneId, engine }) => {
+  if (engine === 'gemini') { cli.parar(paneId, true); return true; }
   // o ACP tem cancelamento de verdade (session/cancel): o turno termina com stopReason
-  if (engine === 'acp') { acp.interromper(paneId); return true; }
+  if (motorAcp(engine)) { acp.interromper(paneId); return true; }
   if (engine === 'claude') {
     escreverClaude(paneId, { type: 'control_request', request_id: 'i' + Date.now(), request: { subtype: 'interrupt' } });
     return true;
@@ -4383,8 +4411,9 @@ handle('pane:interrupt', async (_e, { paneId, engine }) => {
 });
 
 handle('pane:stop', async (_e, { paneId, engine }) => {
+  if (engine === 'gemini') { cli.parar(paneId); return true; }
   // ramo NOVO na frente: mata o processo do agente e devolve o "cancelled" a quem esperava
-  if (engine === 'acp') { descartarPermissoesAcp(paneId); acp.parar(paneId); return true; }
+  if (motorAcp(engine)) { descartarPermissoesAcp(paneId); acp.parar(paneId); return true; }
   if (engine === 'claude') claudeStop(paneId);
   else {
     const tid = codex.paneToThread.get(paneId);
@@ -4644,6 +4673,7 @@ handle('git:diff', async (_e, o) => {
 handle('motores:disponiveis', () => ({
   claude: fs.existsSync(CLAUDE_BIN) || temBin('claude'),
   codex: temBin('codex'),
+  gemini: temBin('gemini'), grok: temBin('grok'),
   // o comando do agente ACP e configuravel: "disponivel" = ha com que rodar o preset padrao
   // (gemini) ou com que baixar um adaptador (npx)
   acp: ['gemini', 'npx', 'opencode', 'qwen'].some((b) => temBin(b)),

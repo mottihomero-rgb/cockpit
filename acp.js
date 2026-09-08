@@ -638,6 +638,12 @@ function criarAcp(dep) {
     st.caps = (init && init.agentCapabilities) || {};
     st.info = (init && init.agentInfo) || {};
     const metodosAuth = (init && Array.isArray(init.authMethods)) ? init.authMethods : [];
+    // Grok exige autenticar explicitamente mesmo quando o login já está salvo.
+    // Só o método solicitado pelo painel, sem migrar para chave paga automaticamente.
+    if (opts.authMethod) {
+      if (!metodosAuth.some(m => m.id === opts.authMethod)) throw new Error('Entre no Grok com "grok login" pelo terminal antes de abrir este chat.');
+      await mandar(st, 'authenticate', { methodId: opts.authMethod, _meta: { headless: true } }, 60000);
+    }
     const queria = opts.resumeId ? String(opts.resumeId) : '';
 
     const abrirSessao = async () => {
@@ -841,6 +847,7 @@ function criarAcp(dep) {
 
   return {
     start, enviar, interromper, parar, responderPermissao, setModelo, comandos,
+    fechar: () => { for (const id of [...paineis.keys()]) parar(id); },
     sessoes: () => listarSessoes(pastaDados),
     historico: (id, file, max) => historicoDaSessao(file && fs.existsSync(file) ? file : arquivoDaSessao(pastaDados, id), max || 60),
     arquivoDe: (id) => arquivoDaSessao(pastaDados, id),

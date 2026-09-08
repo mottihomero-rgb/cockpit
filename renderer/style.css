@@ -1722,3 +1722,16 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 /* disparando…, e as da lista-negra (o próprio Cockpit, a ponte do WhatsApp): à vista, mas mortas */
 .ri-acao:disabled{opacity:.5}
 .ri-acao:disabled:hover{color:var(--fg-dim);border-color:var(--line2)}
+
+/* Motores adicionais, mantendo os mesmos tamanhos e componentes do Cockpit. */
+:root { --gemini:#87a9fa; --grok:#bcbac8; }
+html[data-tema="claro"] { --gemini:#3168c9; --grok:#565069; }
+html[data-tema="jornal"] { --gemini:#268bd2; --grok:#586e75; }
+.act.ic-gemini{color:var(--gemini)}
+.pane.eng-gemini,.side-view[data-view="hgemini"]{--accent:var(--gemini)}
+.pane.eng-gemini .p-chave{display:none}
+.hist-item.aberta.ab-gemini{outline-color:var(--gemini)}
+.act.ic-grok{color:var(--grok)}
+.pane.eng-grok,.side-view[data-view="hgrok"]{--accent:var(--grok)}
+.pane.eng-grok .p-chave{display:none}
+.hist-item.aberta.ab-grok{outline-color:var(--grok)}
