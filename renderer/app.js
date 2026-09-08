@@ -7662,8 +7662,11 @@ async function alternarWorktree(P) {
   const nome = await perguntarTexto(P, 'Abrir em worktree',
     'Nome da branch isolada (letras, números, - e _). O Claude cria .claude/worktrees/<nome> dentro da pasta deste chat e trabalha lá; a pasta principal fica como está.', sugestao);
   if (nome == null) return;
+  /* O corte em 40 letras vem ANTES das duas ultimas limpezas de proposito: cortando por ultimo,
+     um nome comprido podia terminar em "." ou ".lock" DEPOIS do corte — e o git recusa esses
+     dois. O chat ficaria achando que esta na branch isolada e estaria escrevendo na de verdade. */
   const limpo = String(nome).trim().replace(/[^A-Za-z0-9._-]/g, '-').replace(/^[-._]+/, '')
-    .replace(/\.{2,}/g, '.').replace(/\.lock$/i, '').replace(/[.]+$/, '').slice(0, 40);
+    .replace(/\.{2,}/g, '.').slice(0, 40).replace(/\.lock$/i, '').replace(/[.]+$/, '');
   if (!limpo) return;
   await aplicarWorktree(P, limpo);
 }

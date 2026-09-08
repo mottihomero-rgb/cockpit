@@ -852,6 +852,14 @@ function claudeStart(paneId, opts) {
     emit(paneId, 'note', { text: 'A pasta deste chat não é um repositório git, e o worktree "' + nomeWt + '" só funciona dentro de um. Use "Sair do worktree" no menu / do chat, ou troque a pasta.', error: true });
     return false;
   }
+  /* Nome que o git recusa (ponto no fim, ".lock", ".." no meio) nao vira -w nenhum. Sem este
+     aviso o Claude subiria CALADO na pasta principal enquanto o chip e o rotulo ⎇ continuariam
+     dizendo que ele esta na branch isolada — exatamente o acidente que o worktree existe para
+     evitar. Melhor recusar o turno e falar em vermelho. */
+  if (nomeWt && !nomeDeWorktree(nomeWt)) {
+    emit(paneId, 'note', { text: 'O nome de worktree "' + nomeWt + '" não é aceito pelo git (não pode terminar em ponto nem em ".lock", nem ter ".." no meio). Use "Sair do worktree" no menu / do chat e entre de novo com outro nome.', error: true });
+    return false;
+  }
   if (nomeWt && nomeDeWorktree(nomeWt)) args.push('-w', nomeDeWorktree(nomeWt));
   /* com -w o CLI entra em .claude/worktrees/<nome> ANTES de resolver a sessao: o .jsonl nasce
      na pasta do worktree, e o caminho que emitimos tem de ser esse (senao a conversa nao volta).
@@ -4377,6 +4385,16 @@ handle('agentes:claude', async () => {
 /* ---- 10.3: branch e arquivos mexidos da pasta do chat ----
    R7: pasta na VPS sai NULO. O git roda no Mac; apontar o -C para "vps:/opt/..." abriria um
    caminho que nao existe aqui e o chip mostraria a branch errada (ou nenhuma) sem avisar. */
+/* O git CITA o caminho (formato do C, igual ao do JSON) sempre que ele tem espaco, aspas ou
+   barra invertida — e o core.quotePath=false so resolve ACENTO, nao espaco. Sem desfazer as
+   aspas aqui o nome sai com aspas na lista e o "git diff -- '\"a b.txt\"'" devolve VAZIO: o
+   arquivo nunca abriria. Devolve '' quando NAO e um caminho citado inteiro, para o chamador
+   conseguir distinguir "R antigo -> novo" de um nome que por acaso tem " -> " dentro. */
+const gitCitado = (s) => {
+  const t = String(s || '');
+  if (t.length < 2 || t[0] !== '"' || t[t.length - 1] !== '"') return '';
+  try { const v = JSON.parse(t); return typeof v === 'string' ? v : ''; } catch { return ''; }
+};
 handle('git:status', async (_e, o) => {
   const cwd = o && o.cwd;
   if (!cwd || ehRemoto(cwd)) return null;
@@ -4388,12 +4406,19 @@ handle('git:status', async (_e, o) => {
   let branch = '';
   const arquivos = [];
   for (const l of linhas) {
+    // repositorio recem-criado responde "## No commits yet on main": sem esta linha o chip
+    // do cabecalho escreveria "No" no lugar do nome da branch
+    if (l.startsWith('## No commits yet on ')) { branch = l.slice(21).split('...')[0].split(' ')[0]; continue; }
     if (l.startsWith('## ')) { branch = l.slice(3).split('...')[0].split(' ')[0]; continue; }
     const estado = l.slice(0, 2).trim();
     let nome = l.slice(3).trim();
+    // caminho unico entre aspas (inclusive um chamado literalmente "a -> b.txt")
+    const inteiro = gitCitado(nome);
     // arquivo renomeado vem como "antigo -> novo": quem interessa e o novo
     const seta = nome.indexOf(' -> ');
     if (seta > 0) nome = nome.slice(seta + 4);
+    // tira as aspas do git: o nome inteiro citado ganha da seta; senao, tira do lado que sobrou
+    nome = inteiro || gitCitado(nome) || nome;
     if (nome) arquivos.push({ estado, nome });
   }
   return { branch, arquivos };
