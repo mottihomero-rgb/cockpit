@@ -1593,7 +1593,10 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .torre-cor{width:8px;height:8px;border-radius:50%;flex:none}
 .torre-nome{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .torre-conta{margin-left:auto;text-transform:none;letter-spacing:0;flex:none}
-.torre-item{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer}
+/* flex-wrap: a fila de botões (.ti-acoes) desce para a linha de baixo. Lado a lado com o
+   texto, dois botões comiam a coluna inteira e o título ficava com zero pixel. */
+.torre-item{display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px 8px;padding:6px 8px;border-radius:7px;cursor:pointer}
+.ti-acoes{flex:1 0 100%;display:flex;flex-wrap:wrap;gap:5px}
 .torre-item:hover{background:var(--hover)}
 .torre-item.fora{cursor:default}
 .ti-pt{width:7px;height:7px;border-radius:50%;flex:none;margin-top:5px;background:var(--fg-fraco)}

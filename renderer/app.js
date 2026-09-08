@@ -7462,13 +7462,21 @@ function linhaDaTorre({ titulo, motor, estado, aoClicar, acoes }) {
   $('.ti-tit', d).textContent = titulo + '  ·  ' + motor;
   $('.ti-est', d).textContent = estado.txt;
   if (aoClicar) { d.title = 'Ir até o chat'; d.addEventListener('click', aoClicar); } else d.classList.add('fora');
-  for (const ac of (acoes || [])) {
-    const b = document.createElement('button');
-    b.className = 'ti-acao';
-    b.textContent = ac.rotulo;
-    b.title = ac.dica || '';
-    b.addEventListener('click', (e) => { e.stopPropagation(); ac.aoClicar(b); });
-    d.appendChild(b);
+  /* Os botões vão numa LINHA PRÓPRIA, embaixo. Ao lado do texto eles comiam a largura inteira
+     da coluna (medido: 206px de coluna, dois botões de ~170px) e o título ficava com zero
+     pixel — a linha aparecia só com os botões, sem dizer de qual sessão era. */
+  if ((acoes || []).length) {
+    const fila = document.createElement('div');
+    fila.className = 'ti-acoes';
+    for (const ac of acoes) {
+      const b = document.createElement('button');
+      b.className = 'ti-acao';
+      b.textContent = ac.rotulo;
+      b.title = ac.dica || '';
+      b.addEventListener('click', (e) => { e.stopPropagation(); ac.aoClicar(b); });
+      fila.appendChild(b);
+    }
+    d.appendChild(fila);
   }
   return d;
 }
@@ -7528,7 +7536,8 @@ async function pintarTorre(forcarAgentes) {
   const secFora = document.createElement('div');
   secFora.className = 'torre-aba torre-fora';
   secFora.innerHTML = '<span class="torre-nome"></span><span class="torre-conta"></span>';
-  $('.torre-nome', secFora).textContent = 'Claude fora do Cockpit';
+  $('.torre-nome', secFora).textContent = 'Fora do Cockpit';
+  secFora.title = 'Sessões do Claude rodando nesta máquina por fora daqui (Terminal, VS Code, robô agendado)';
   const vistos = new Set();
   const fora = torreAgentes.itens.filter((a) => {
     // o mesmo número aparece duas vezes quando há subprocesso
@@ -7552,7 +7561,7 @@ async function pintarTorre(forcarAgentes) {
            conversa daqui. O `command` pula o apelido e chama o programa de verdade. */
         { rotulo: 'copiar comando', dica: 'copia o "cd" + "claude --resume" para continuar essa conversa num terminal',
           aoClicar: (bt) => copiarTexto('cd "' + a.cwd + '" && command claude --resume ' + a.sessionId, bt) },
-        ...(window.SEM_ELECTRON ? [] : [{ rotulo: 'abrir a pasta', aoClicar: () => window.api.openPath(a.cwd) }]),
+        ...(window.SEM_ELECTRON ? [] : [{ rotulo: 'abrir pasta', dica: 'abre ' + shortPath(a.cwd) + ' no Finder', aoClicar: () => window.api.openPath(a.cwd) }]),
       ],
     }));
   }
@@ -7643,6 +7652,12 @@ async function alternarWorktree(P) {
   if (P.worktree) { await aplicarWorktree(P, ''); return; }   // sair sempre pode, em qualquer motor
   if (P.engine !== 'claude') { note(P, 'Worktree por aqui só no Claude: a flag -w é dele. Troque o motor deste chat para o Claude.', true); return; }
   if (NA_VPS(P.cwd)) { note(P, 'Worktree não vale em chat da VPS: a branch isolada seria criada no disco de lá, e quem confere o repositório é o Mac.', true); return; }
+  /* Confere o repositório ANTES de perguntar o nome. O processo principal também confere (e
+     recusa), mas lá a recusa só chega na PRIMEIRA mensagem: ele digitaria o pedido inteiro
+     para depois descobrir que a pasta não é um repositório. */
+  let repo = null;
+  try { repo = await window.api.gitStatus({ cwd: P.cwd }); } catch {}
+  if (!repo || !repo.branch) { note(P, 'A pasta deste chat não é um repositório git, e o worktree só funciona dentro de um. Troque a pasta do chat para uma que tenha git.', true); return; }
   const sugestao = 'exp-' + new Date().toISOString().slice(5, 10).replace('-', '');
   const nome = await perguntarTexto(P, 'Abrir em worktree',
     'Nome da branch isolada (letras, números, - e _). O Claude cria .claude/worktrees/<nome> dentro da pasta deste chat e trabalha lá; a pasta principal fica como está.', sugestao);
