@@ -219,6 +219,12 @@ function pintarTodasAbas() { for (const A of abas.values()) pintarAba(A); }
 
 function ativarAbaProjeto(A) {
   if (!A) return;
+  /* O chat que estava ditando some da tela agora: soltar o microfone antes, senão a captura
+     seguia ligada atrás de uma aba escondida — sem botão aceso e sem jeito de desligar.
+     `guardarTexto`: o que ele falou já está escrito no campo e continua lá, e assim ninguém
+     rouba o foco no meio da troca de aba. */
+  if (VIVO.P && abaDe(VIVO.P) !== A) vozSoltar(VIVO.P, { guardarTexto: true });
+  if (DITADO.P && abaDe(DITADO.P) !== A) vozSoltar(DITADO.P, { guardarTexto: true });
   // ultimo instante em que a aba que sai ainda tem altura: e agora ou nunca pra anotar
   // onde cada conversa dela estava sendo lida (escondida, a medida vale 0)
   if (abaAtiva && abaAtiva !== A) for (const pid of abaAtiva.ordem) guardarRolagem(panes.get(pid));
@@ -263,6 +269,7 @@ async function fecharAba(A) {
   for (const pid of [...A.ordem]) {
     const P = panes.get(pid);
     if (!P) continue;
+    vozSoltar(P, { guardarTexto: true });   // a aba inteira sai: nenhum microfone dela pode ficar aceso
     paraParar.push({ pid, engine: P.engine });
     P.el.remove(); panes.delete(pid);
   }
@@ -975,6 +982,8 @@ async function trocarMotor(P, novo) {
   // P.trocando trava o clique repetido: sem ele, clicar rapido nos dois lados fazia o segundo
   // clique ser engolido em silencio, e uma mensagem enviada nesse meio-tempo subia o motor errado.
   if (novo === P.engine || P.trocando) return;
+  // trocar de motor reinicia o chat: o microfone não pode ficar ditando por cima da troca
+  vozSoltar(P);
   const antigo = P.engine === 'codex' ? 'Codex' : 'Claude';
   const velho = P.engine;
   const estavaPlanejando = velho === 'codex' ? P.collaborationMode === 'plan' : P.mode === 'plan';
@@ -1117,6 +1126,8 @@ async function closePane(id, semPerguntar) {
     const nome = (P.titulo || '').trim().slice(0, 40) || 'este chat';
     if (!confirm('O ' + (P.engine === 'codex' ? 'Codex' : 'Claude') + ' está trabalhando em “' + nome + '”.\n\nFechar agora joga fora o que ele está fazendo. Fechar mesmo assim?')) return;
   }
+  // fechar o chat tem de apagar a luz do microfone: o processo do ditado é dele
+  vozSoltar(P, { guardarTexto: true });
   const A = abaDe(P);
   // ANTES de tirar o painel do DOM: no instante em que ele sai, os que sobram ja alargam
   // e o texto reflui. Anotar depois disso seria anotar o estrago e devolve-lo fielmente.
@@ -1857,13 +1868,18 @@ const vozVazio = (t) => !String(t || '').replace(/[\s.,;:!?…]/g, '');
 // chega do motor: parcial (cinza), final (firma), status, erro
 function vozEvento(P, ev) {
   if (VIVO.P !== P) return;
+  // nível do microfone: enche a barrinha do botão e, no fim, explica por que não saiu texto
+  if (ev.type === 'nivel') { vozNivel(P, ev); return; }
   if (ev.type === 'partial') {
     if (vozVazio(ev.text)) return;
     VIVO.parcial = ev.text || ''; vozPintar(P); return;
   }
   if (ev.type === 'final') {
     if (vozVazio(ev.text)) { VIVO.parcial = ''; return; }
+    // a frase que fechou, quando é SÓ um comando ("manda", "cancela"), não vira texto: vira ação
+    if (vozComando(P, ev.text)) return;
     VIVO.firme = (VIVO.firme ? VIVO.firme.replace(/\s*$/, ' ') : '') + String(ev.text || '').trim();
+    VIVO.ultimo = String(ev.text || '').trim();   // o "apaga isso" precisa saber qual foi a última
     VIVO.parcial = ''; vozPintar(P); return;
   }
   if (ev.type === 'error') {
@@ -1871,7 +1887,10 @@ function vozEvento(P, ev) {
     vozEncerrarTela(P, (VIVO.base ? VIVO.base.replace(/\s*$/, ' ') : '') + VIVO.firme);
     VIVO.P = null;
     // motor de fala indisponivel (Mac antigo, idioma nao instalado): cai no ditado antigo
+    vozTirarNivel(P);
     if (/macOS 26|idioma nao instalado|sem formato|conversor/.test(msg)) { ditadoWhisper(P); return; }
+    // recado que ele consegue agir: onde fica a chave, e não o texto cru do programinha
+    if (/permiss/i.test(msg)) { avisoEnvio(P, 'O Mac não deixou usar o microfone. Libere em Ajustes do Sistema › Privacidade e Segurança › Microfone.'); return; }
     avisoEnvio(P, 'Não consegui ouvir: ' + msg);
     return;
   }
@@ -1881,11 +1900,18 @@ function vozEvento(P, ev) {
     const bt = $('.p-mic', P.el); if (bt) { bt.classList.remove('gravando'); bt.classList.add('pensando'); }
     return;
   }
+  if (ev.msg === 'nao ouvi nada') VIVO.jaAvisou = true;   // já falamos com ele: o 'fim' não repete
   if (ev.msg === 'nao ouvi nada') { avisoTemp(P, 'Não ouvi nada. Clique no microfone e fale.'); return; }
   if (ev.msg === 'fim') {
     const texto = ((VIVO.base ? VIVO.base.replace(/\s*$/, ' ') : '') + VIVO.firme + (VIVO.parcial ? ' ' + VIVO.parcial : '')).trim();
+    // nada saiu: dizer POR QUE (mudo, baixo demais, ou não entendi) em vez de deixar no vácuo.
+    // Medido ANTES de zerar o VIVO, que é de onde vem o pico do microfone.
+    const porque = (!VIVO.firme.trim() && !VIVO.parcial.trim()) ? vozDiagnostico(!!VIVO.jaAvisou) : '';
     vozEncerrarTela(P, texto);
     VIVO.P = null; VIVO.base = ''; VIVO.firme = ''; VIVO.parcial = '';
+    VIVO.ultimo = ''; VIVO.nivel = 0; VIVO.picoGeral = 0; VIVO.jaAvisou = false;
+    vozTirarNivel(P);
+    if (porque) avisoTemp(P, porque);
   }
 }
 async function alternarDitado(P) {
@@ -1898,6 +1924,9 @@ async function alternarDitado(P) {
     // ditado novo comeca sem lembranca do que foi escrito no anterior, senao a guarda de
     // "digitou por fora" dispara logo na primeira legenda e come o primeiro pedaco da fala
     VIVO.ultimoEscrito = null;
+    // ditado novo começa com o medidor no zero, senão o pico do anterior mentiria no diagnóstico
+    VIVO.ultimo = ''; VIVO.nivel = 0; VIVO.picoGeral = 0; VIVO.jaAvisou = false;
+    vozTirarNivel(P);
     const r = await window.api.vozVivo({ paneId: P.id, silencio: 1.8, teto: 180 });
     if (r && r.ok) { avisoTemp(P, 'Pode falar. Ele escreve enquanto você fala e para sozinho quando você parar.'); return; }
     VIVO.P = null;   // sem o programinha (Windows, Mac antigo): segue no modo antigo
@@ -1962,6 +1991,127 @@ async function ditadoWhisper(P) {
 }
 function pararDitado() {
   if (DITADO.rec && DITADO.rec.state !== 'inactive') DITADO.rec.stop();
+}
+
+/* ============ nível do microfone ============
+   O botão do microfone acende, mas nada na tela dizia se o Mac estava OUVINDO de verdade —
+   e era esse o susto de "o microfone não funciona". Agora uma barrinha dentro do botão enche
+   conforme a voz. O número vem do programinha Swift, do laço de 150ms (nunca da thread de
+   áudio, que travaria a captura). As duas faixas abaixo são ancoradas no MESMO limiar que o
+   Swift usa para chamar uma coisa de fala. */
+const VOZ_LIMIAR = 0.010;   // igual ao `rms > 0.010` do ditado-vivo.swift: daqui pra cima é fala
+const VOZ_MUDO = 0.002;     // abaixo disto é linha morta: não chegou som nenhum
+
+// a barrinha nasce na hora em que o primeiro nível chega (o botão é montado sem ela)
+function vozBarra(bt) {
+  let n = $('.mic-nivel', bt);
+  if (!n) { n = document.createElement('span'); n.className = 'mic-nivel'; bt.appendChild(n); }
+  return n;
+}
+function vozNivel(P, ev) {
+  const rms = Number(ev.rms) || 0;
+  VIVO.nivel = rms;
+  // o pico da sessão inteira é quem sabe dizer, no fim, POR QUE não saiu texto
+  VIVO.picoGeral = Math.max(VIVO.picoGeral || 0, rms, Number(ev.pico) || 0);
+  const bt = $('.p-mic', P.el);
+  if (!bt) return;
+  vozBarra(bt);
+  // `com-nivel` só no caminho AO VIVO: no ditado de reserva (whisper) não chega nível nenhum,
+  // e a barra ficaria eternamente vazia dentro de um botão aceso
+  bt.classList.add('com-nivel');
+  bt.style.setProperty('--nivel', Math.min(1, rms / (VOZ_LIMIAR * 2.5)).toFixed(2));
+}
+function vozTirarNivel(P) {
+  const bt = P && P.el && $('.p-mic', P.el);
+  if (!bt) return;
+  bt.classList.remove('com-nivel');
+  bt.style.removeProperty('--nivel');
+}
+/* Por que não saiu texto. "Não entendi" não ajuda quem está com o microfone mudo ou baixo
+   demais — e é justamente esse o caso que mais acontece. */
+function vozDiagnostico(jaAvisou) {
+  const p = VIVO.picoGeral || 0;
+  if (p < VOZ_MUDO) return 'Não captei som nenhum. Veja em Ajustes do Sistema › Som › Entrada se o microfone certo está escolhido, e em Privacidade e Segurança › Microfone se o Cockpit está liberado.';
+  if (p < VOZ_LIMIAR) return 'O microfone captou muito baixo. Aumente o volume de entrada em Ajustes do Sistema › Som, ou fale mais perto.';
+  return jaAvisou ? '' : 'Não entendi o que foi falado. Tente falar um pouco mais devagar.';
+}
+
+/* ============ soltar o microfone ============
+   Qualquer coisa que tire o chat da frente — fechar o chat, fechar a aba, trocar de aba,
+   trocar de motor, enviar a mensagem — tem de APAGAR a luz do microfone. Sem isto a captura
+   seguia ligada sem botão aceso e sem jeito de desligar a não ser fechando o app.
+   `guardarTexto`: o que ele ditou já está escrito no campo e vai junto com o envio; aí é só
+   tirar a camada de cima, sem reescrever nada e sem roubar o foco. */
+const vozTextoAgora = () => ((VIVO.base ? VIVO.base.replace(/\s*$/, ' ') : '') + VIVO.firme
+  + (VIVO.parcial ? ' ' + VIVO.parcial : '')).trim();
+function vozZerar() {
+  VIVO.P = null; VIVO.base = ''; VIVO.firme = ''; VIVO.parcial = '';
+  VIVO.ultimo = ''; VIVO.ultimoEscrito = null;
+  VIVO.nivel = 0; VIVO.picoGeral = 0; VIVO.jaAvisou = false;
+}
+function vozSoltar(P, opts) {
+  const o = opts || {};
+  if (VIVO.P && (!P || VIVO.P === P)) {
+    const Q = VIVO.P;
+    const texto = o.texto != null ? o.texto : vozTextoAgora();
+    /* Zerar o VIVO ANTES de mandar parar: o processo morre e o 'fim' chega logo atrás. Com o
+       VIVO já limpo, o `if (VIVO.P !== P) return;` do vozEvento joga esse 'fim' fora — senão
+       ele reescreveria no campo a mensagem que acabou de ser enviada. */
+    vozZerar();
+    try { window.api.vozParar({ paneId: Q.id, cancelar: true }); } catch (_) {}
+    vozTirarNivel(Q);
+    vozEncerrarTela(Q, o.guardarTexto ? null : texto);
+  }
+  if (DITADO.P && (!P || DITADO.P === P)) { try { pararDitado(); } catch (_) {} }
+}
+
+/* ============ comandos falados ============
+   A frase que acabou de fechar, quando é SÓ um comando, não vira texto: vira ação. Sem modelo
+   extra — a frase normalizada contra meia dúzia de padrões. Roda ANTES de o texto entrar no
+   campo, então a palavra "manda" nunca aparece escrita. */
+function normalizarFala(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function vozComando(P, texto) {
+  const t = normalizarFala(texto);
+  if (!t || t.split(' ').length > 4) return false;
+
+  if (/^(manda|mandar|envia|enviar)( isso| agora| ai)?$/.test(t)) {
+    vozSoltar(P, { texto: vozTextoAgora() });
+    const inp = $('.p-input', P.el);
+    if (!inp || !(inp.value.trim() || (P.anexos || []).length || P.quadroColado)) return true;
+    // um respiro: o campo acabou de receber o texto firmado e o 'fim' do processo ainda vem
+    setTimeout(() => { if (panes.get(P.id) === P) send(P); }, 60);
+    return true;
+  }
+  if (/^(cancela|cancelar)( isso| tudo| o ditado)?$/.test(t)) {
+    vozSoltar(P, { texto: (VIVO.base || '').replace(/\s*$/, '') });
+    return true;
+  }
+  if (/^(apaga|apagar|remove|remover) (isso|essa|essa frase|a ultima|a ultima frase|o ultimo)$/.test(t)) {
+    // some só a última frase FECHADA; o ditado continua ligado e ele segue falando
+    if (VIVO.ultimo) {
+      const i = VIVO.firme.lastIndexOf(VIVO.ultimo);
+      if (i >= 0) VIVO.firme = VIVO.firme.slice(0, i).replace(/\s*$/, '');
+      VIVO.ultimo = '';
+    }
+    VIVO.parcial = '';
+    vozPintar(P);
+    return true;
+  }
+  if (/^proximo painel$/.test(t)) {
+    vozSoltar(P, { texto: vozTextoAgora() });
+    // não existe `irParaPainel` aqui: quem manda no foco é a aba (abaDe) mais o setFocus
+    const A = abaDe(P);
+    if (A && A.ordem.length > 1) {
+      const i = A.ordem.indexOf(P.id);
+      const alvo = panes.get(A.ordem[(i + 1) % A.ordem.length]);
+      if (alvo) { setFocus(alvo); const c = $('.p-input', alvo.el); if (c) c.focus(); }
+    }
+    return true;
+  }
+  return false;
 }
 
 /* ---- avisar quando a resposta fica pronta ----
@@ -2603,6 +2753,10 @@ async function send(P) {
      mandado. Agora o anexo (ou o desenho do quadro) ja basta; so o campo totalmente vazio,
      sem nada anexado, e que nao envia. */
   if (!text && !(P.anexos || []).length && !P.quadroColado) return;
+  /* A mensagem VAI sair: soltar o microfone. Fica DEPOIS da saída acima de propósito — Enter
+     no campo vazio no meio do ditado é falha de captação, e ali o ditado tem de continuar.
+     `guardarTexto`: o texto já foi lido para `text` e o campo é limpo logo abaixo. */
+  vozSoltar(P, { guardarTexto: true });
 
   if (P.busy) {
     const anx = P.anexos.slice(); P.anexos = []; pintarAnexos(P);

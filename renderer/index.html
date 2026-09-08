@@ -103,6 +103,11 @@
         <label>Pasta padrão dos painéis novos</label>
         <div class="path-box" id="defCwd">—</div>
         <button class="btn-wide" id="btnDefCwd">Escolher</button>
+        <label>Voz</label>
+        <label class="chave"><input type="checkbox" id="chkAtalhosGlobais"><span>Atalho global de ditar (vale com o Cockpit atrás): <span class="mono">⌃⌥Espaço</span></span></label>
+        <p class="hint">Desligado por padrão: um atalho global toma a combinação de todos os outros programas enquanto o Cockpit estiver aberto. Ligado, aperte de onde estiver que a janela vem para a frente e o microfone liga no chat em foco. Comandos falados durante o ditado: “manda”, “cancela”, “apaga isso”, “próximo painel”.</p>
+        <p class="hint hidden" id="atalhosAviso"></p>
+
         <label>Lista de conversas</label>
         <label class="chave"><input type="checkbox" id="chkRobos"><span>Mostrar também as conversas dos robôs</span></label>
         <p class="hint">Desligado, a lista traz só o que você conversou aqui ou no VSCode. Ligado, entram também as do robô do WhatsApp e dos agendados.</p>

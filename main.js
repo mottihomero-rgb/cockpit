@@ -2692,6 +2692,39 @@ handle('voz:parar', (_e, { paneId, cancelar }) => {
   else { try { p.stdin.write('stop\n'); } catch { vozMatar(paneId); } }
   return { ok: true };
 });
+/* Fechar o app no meio do ditado deixava o programinha do microfone vivo — e a luz laranja
+   acesa no Mac, sem nada na tela para desligar. Ouvinte proprio, alem dos que ja existem. */
+app.on('before-quit', () => { for (const id of [...vozAtiva.keys()]) vozMatar(id); });
+
+/* ---------- atalho global de voz ----------
+   Ditar sem ir ate o Cockpit: aperta a tecla de onde estiver, a janela vem para a frente e o
+   microfone liga no chat em foco. DESLIGADO por padrao: um atalho global ganha de TODO
+   programa enquanto o Cockpit estiver aberto, e isso tem de ser escolha dele.
+   So o atalho de DITAR: o par de recorte de tela do outro fork nao existe aqui.
+   ⌃⌥Espaco esta livre neste Mac (conferido nos atalhos do sistema).
+   R1: registrado com ipcMain.handle DIRETO, nunca com handle() — senao o iPhone ligaria e
+   desligaria pelo Wi-Fi um atalho do teclado do Mac. */
+const { globalShortcut } = require('electron');
+const TECLA_DITAR = 'Control+Alt+Space';
+const atalhosFalhos = [];
+function ligarAtalhosGlobais(ligado) {
+  try { globalShortcut.unregisterAll(); } catch {}
+  atalhosFalhos.length = 0;
+  if (!ligado) return;
+  // se outro programa ja tem a tecla, o register devolve false: fica so o caminho pelo menu
+  try {
+    const ok = globalShortcut.register(TECLA_DITAR, () => {
+      if (!win || win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.show(); win.focus();
+      win.webContents.send('menu', 'ditar');
+    });
+    if (!ok) atalhosFalhos.push(TECLA_DITAR);
+  } catch { atalhosFalhos.push(TECLA_DITAR); }
+}
+ipcMain.handle('atalhos:estado', () => ({ falhos: atalhosFalhos.slice() }));
+ipcMain.handle('atalhos:ligar', (_e, o) => { ligarAtalhosGlobais(!!(o && o.ligado)); return { falhos: atalhosFalhos.slice() }; });
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} });
 
 let prontosParados = 0;
 handle('aviso:pronto', (_e, { paneId, titulo, texto }) => {
@@ -3255,6 +3288,8 @@ function limparColadosAntigos() {
 
 app.whenReady().then(() => { anota('app iniciou'); usarClaudeDeCaminhoFixo(); menu(); createWindow(); montarIndiceDeFundo();
   limparColadosAntigos();
+  // atalho global de ditar, se ele tiver ligado nos Ajustes (desligado por padrao)
+  try { ligarAtalhosGlobais(!!loadConfig().atalhosGlobais); } catch { ligarAtalhosGlobais(false); }
   try {
     const cfgInicial = loadConfig();
     // Quem já usava o iPhone não precisa caçar um novo botão após atualizar.

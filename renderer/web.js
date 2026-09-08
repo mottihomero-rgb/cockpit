@@ -91,6 +91,10 @@
     // quem mostra aviso do sistema e' o Mac. Responder aqui na hora evita o TypeError que
     // derruba o boot do telefone (o app.js e' o MESMO arquivo nos dois).
     avisarAgente: () => Promise.resolve({ ok: false }),
+    // atalho global é do teclado do MAC: o telefone não liga nem desliga isso. Responder aqui
+    // na hora evita o TypeError que derrubaria o boot (o app.js é o MESMO arquivo nos dois).
+    atalhosEstado: () => Promise.resolve({ falhos: [] }),
+    atalhosLigar: () => Promise.resolve({ falhos: [] }),
     // no telefone nao faz sentido mexer no servidor nem abrir janela do Mac
     webEstado: () => Promise.resolve({ ligado: true, endereco: location.origin, senha: '' }),
     webLigar: () => Promise.resolve({ ligado: true, endereco: location.origin, senha: '' }),

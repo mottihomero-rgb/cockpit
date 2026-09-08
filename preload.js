@@ -61,6 +61,9 @@ contextBridge.exposeInMainWorld('api', {
   // ditado ao vivo: o texto volta pelo mesmo cano dos outros avisos do painel (pane:event)
   vozVivo: (o) => ipcRenderer.invoke('voz:vivo', o),
   vozParar: (o) => ipcRenderer.invoke('voz:parar', o),
+  // atalho global de ditar (⌃⌥Espaço): vale com o Cockpit atrás
+  atalhosEstado: () => ipcRenderer.invoke('atalhos:estado'),
+  atalhosLigar: (o) => ipcRenderer.invoke('atalhos:ligar', o),
 
   termRun: (o) => ipcRenderer.invoke('term:run', o),
   termInput: (o) => ipcRenderer.invoke('term:input', o),

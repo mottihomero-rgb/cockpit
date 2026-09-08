@@ -404,6 +404,15 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 .p-mic.pensando{color:var(--accent);animation:mic-gira 1s linear infinite}
 @keyframes mic-pulsa{0%,100%{opacity:1}50%{opacity:.45}}
 @keyframes mic-gira{to{transform:rotate(360deg)}}
+/* barrinha de nível dentro do botão do microfone: enche conforme a voz. Sem ela não dá pra
+   saber se o Mac está ouvindo, e era esse o susto de "o microfone não funciona".
+   Branca sobre o botão, e não var(--red): enquanto grava, o botão INTEIRO já é vermelho. */
+.cb.p-mic{position:relative}
+.p-mic .mic-nivel{position:absolute;left:3px;right:3px;bottom:2px;height:2px;border-radius:2px;
+  background:#ffffff3d;opacity:0;transition:opacity .15s;pointer-events:none}
+.p-mic.gravando.com-nivel .mic-nivel{opacity:1}
+.p-mic.gravando.com-nivel .mic-nivel::after{content:"";position:absolute;left:0;top:0;bottom:0;
+  border-radius:2px;background:#fff;width:calc(var(--nivel,0) * 100%);transition:width .08s linear}
 .modo-btn{display:flex;align-items:center;gap:6px;padding:3px 9px;border-radius:7px;
   font-size:11.5px;color:var(--fg-dim);border:1px solid transparent;white-space:nowrap}
 .modo-btn:hover{background:var(--hover2);color:var(--fg);border-color:var(--line2)}

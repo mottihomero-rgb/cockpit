@@ -28,6 +28,13 @@ final class Estado: @unchecked Sendable {
     private var ultimaVoz = Date()
     private var parou = false
     private var jaFalou = false
+    /* Nivel do som, so GUARDADO aqui. Quem escreve e a thread de audio (tempo real): ela nao
+       pode emitir nada, porque o emit faz print+fflush sob lock e travaria a captura no meio
+       do buffer. Ela deixa o numero aqui; quem manda para a tela e o laco de 150ms la embaixo. */
+    private var rms: Float = 0
+    private var pico: Float = 0
+    func porRms(_ v: Float) { lk.lock(); rms = v; if v > pico { pico = v }; lk.unlock() }
+    var nivel: (Float, Float) { lk.lock(); defer { lk.unlock() }; return (rms, pico) }
     func ouviVoz() { lk.lock(); ultimaVoz = Date(); jaFalou = true; lk.unlock() }
     var caladoHa: Double { lk.lock(); defer { lk.unlock() }; return Date().timeIntervalSince(ultimaVoz) }
     var parado: Bool { lk.lock(); defer { lk.unlock() }; return parou }
@@ -90,6 +97,7 @@ func ditar(idioma: String, silencio: Double, teto: Double, carencia: Double) asy
             rms = (s / Float(max(n, 1))).squareRoot()
         }
         if rms > 0.010 { est.ouviVoz() }              // limiar de voz; subir se o ambiente for barulhento
+        est.porRms(rms)                               // so guarda (lock e atribuicao); quem emite e o laco
         let cap = AVAudioFrameCount(Double(buf.frameLength) * razao + 1024)
         guard let saida = AVAudioPCMBuffer(pcmFormat: alvo, frameCapacity: cap) else { return }
         var err: NSError?; var deu = false
@@ -110,6 +118,12 @@ func ditar(idioma: String, silencio: Double, teto: Double, carencia: Double) asy
        vale a carencia: espera longa, e so entao desiste. */
     while !est.parado {
         try? await Task.sleep(nanoseconds: 150_000_000)
+        /* Nivel do microfone para a barrinha do botao. Sai daqui, do laco, e nunca de dentro do
+           installTap: la e thread de audio em tempo real e um print travaria a captura. */
+        let (nRms, nPico) = est.nivel
+        emit(["type": "nivel",
+              "rms": (Double(nRms) * 10000).rounded() / 10000,
+              "pico": (Double(nPico) * 10000).rounded() / 10000])
         if est.comecou {
             if est.caladoHa > silencio { emit(["type": "status", "msg": "silencio"]); break }
         } else if Date().timeIntervalSince(T0) > carencia {
