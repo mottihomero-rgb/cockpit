@@ -5446,6 +5446,9 @@ async function menuArquivos(P, termo) {
     if (meuGen !== buscaArqGen) return;                  // outra tecla ja pediu uma busca mais nova
     if (!P.el || !P.el.isConnected) return;
     if (janelinhaOcupada(P)) return;                     // enquanto o SSH voltava, a janelinha virou outra coisa
+    // ele fechou o "procurando…" (Esc, clique fora): a resposta que chega depois nao pode
+    // reabrir o menu sozinha
+    if (remoto && !menuDeArquivosNaTela(P)) return;
     if (!arrobaAindaNoCampo(P, termo)) { if (menuDeArquivosNaTela(P)) fecharMenus(); return; }
     // rede fora aparece como MOTIVO no lugar da lista; fechar calado parecia travamento
     if (erro) { recadoDeArquivos(P, erro, true); return; }
