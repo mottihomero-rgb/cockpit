@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const codexProtocol = require('./codex-protocol');
 
 const plataforma = require('./plataforma');
-const { EH_WIN, acharBin, spawnBin, abrirPty } = plataforma;
+const { EH_WIN, acharBin, spawnBin, abrirPty, temBin, matarProcesso } = plataforma;
 
 const HOME = os.homedir();
 // no Mac o Claude mora sempre no mesmo lugar; no Windows a gente procura

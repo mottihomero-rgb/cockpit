@@ -63,6 +63,7 @@ function loadMain() {
   };
   const platform = {
     EH_WIN: false, acharBin: value => value, spawnBin: fakeSpawn,
+    temBin: () => true, matarProcesso: p => { try { p.kill(); } catch {} },
     abrirPty: forbidden('PTY'), buildEnv: () => ({}), tokenClaude: () => '',
   };
   const processStub = {

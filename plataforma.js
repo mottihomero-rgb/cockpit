@@ -10,7 +10,7 @@
  *   3. como se abre um terminal de verdade (pty): no Mac é o ptybridge.py,
  *      no Windows é o ConPTY, via node-pty (binário pronto, não compila nada).
  */
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -103,6 +103,55 @@ function spawnBin(bin, args, opts = {}) {
   return spawn(alvo, args, opts);
 }
 
+/* Encerra um processo filho.
+   No Windows um bin instalado pelo npm e' um .cmd, entao spawnBin sobe cmd.exe e
+   o programa de verdade e' neto -- da' pra achar que matar o pai deixaria o neto
+   vivo. Medido nesta maquina com o codex app-server: nao deixa. O kill derruba a
+   dupla e o evento 'close' chega em ~55ms, com zero processo orfao.
+   Ja tentei reforcar com "taskkill /T /F" e foi pior: o /T so' enxerga os filhos
+   enquanto o pai esta' vivo, entao disparado depois do kill ele nao acha ninguem
+   -- e, se o Windows tiver reaproveitado aquele numero de processo, mata a arvore
+   de um programa inocente. Kill puro e' o certo aqui. */
+function matarProcesso(p) {
+  if (!p || p.exitCode !== null || p.signalCode !== null) return;
+  /* No Windows um bin instalado pelo npm e' um .cmd: o que seguramos e' o
+     cmd.exe, e o programa de verdade e' neto. Com o Codex isso nao aparecia --
+     e' um servidor so' e vive o app inteiro. Com Gemini/Grok e' UM PROCESSO POR
+     MENSAGEM, entao cada "parar" deixaria um node vivo queimando cota.
+     O taskkill precisa rodar com o pai AINDA VIVO: e' assim que ele enxerga a
+     arvore. Por isso vem antes do kill, e nao depois. */
+  if (EH_WIN && p.pid) {
+    /* SINCRONO de proposito. Disparado por "spawn", o taskkill so' rodava uns
+       50ms depois -- com o cmd.exe ja morto pelo kill de baixo, e ai o "/T" nao
+       encontra mais os filhos ("processo nao encontrado"). Medido: assincrono o
+       neto sobrevive; sincrono ele morre. */
+    try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); }
+    catch {}
+  }
+  try { p.kill(); } catch {}
+}
+
+/* "acharBin" devolve o nome cru quando nao encontra (pra deixar o sistema
+   tentar pelo PATH). Isso faz o try/catch em volta dele nunca disparar -- e era
+   por isso que o app dizia que um motor estava instalado quando nao estava.
+   Aqui a pergunta e' outra: EXISTE mesmo? */
+function temBin(nome) {
+  try {
+    const p = acharBin(nome);
+    if (p !== nome) return true;              // achou caminho completo
+    if (path.isAbsolute(p)) return fs.existsSync(p);
+    // nome cru: procura no PATH do jeito do sistema
+    const exts = EH_WIN ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';') : [''];
+    for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
+      if (!dir) continue;
+      for (const e of exts) {
+        try { if (fs.existsSync(path.join(dir, nome + e))) return true; } catch {}
+      }
+    }
+    return false;
+  } catch { return false; }
+}
+
 /* ---------- terminal de verdade (pty) ----------
    Interface única. Quem chama não sabe (nem precisa saber) qual dos dois motores
    está por baixo: os dois entregam dados, aceitam digitação e redimensionam. */
@@ -178,4 +227,4 @@ function tokenClaude() {
   return null;
 }
 
-module.exports = { EH_WIN, HOME, buildEnv, acharBin, spawnBin, abrirPty, tokenClaude };
+module.exports = { EH_WIN, HOME, buildEnv, acharBin, spawnBin, abrirPty, tokenClaude, temBin, matarProcesso };
