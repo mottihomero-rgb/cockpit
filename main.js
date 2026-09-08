@@ -3597,6 +3597,13 @@ function createWindow() {
   // o ditado precisa do microfone; a pagina e o proprio app, entao o pedido e liberado
   win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(true));
 
+  /* leva 6 — caixa de entrada. Estes dois ficam AQUI, e nao dentro do ligarInbox(): no Mac o
+     app.on('activate') recria a janela quando ele clica no Dock com tudo fechado, e a janela
+     nova nasceria sem eles. A cada carga da tela (abertura e ⌘R) tudo que sobrou na caixa e
+     anunciado de novo. */
+  win.webContents.on('did-start-loading', () => { inboxOuvinte = false; });   // ⌘R: a tela nova ainda nao ouve
+  win.webContents.on('did-finish-load', () => { inboxVistos.clear(); });      // e o que sobrou volta a ser anunciado quando ela avisar
+
   // menu do botao direito: copiar, colar, procurar, etc. — o do sistema mesmo
   win.webContents.on('context-menu', (_ev, props) => {
     const itens = [];
@@ -4642,8 +4649,107 @@ function limparColadosAntigos() {
   } catch {}
 }
 
+/* ===================== CAIXA DE ENTRADA (leva 6) =====================
+   Tudo que cair em userData/inbox vira uma tarja no topo da tela com o botao "usar":
+   .txt/.md viram texto no campo de escrever, imagem vira anexo. E o contrato para o bot
+   do celular (audio ja transcrito em .txt, foto em .png/.jpg) e para qualquer script:
+   escrever o arquivo la basta, nao ha API para aprender.
+
+   A pasta MUDA de nome conforme o app: rodando por `npm start` o Electron usa o campo
+   "name" do package.json (~/Library/Application Support/cockpit/inbox, minusculo) e no app
+   instalado usa o productName (.../Cockpit/inbox). Por isso nenhum script pode cravar o
+   caminho: quem quiser escrever aqui pergunta em `inbox:pasta`, ou olha o caminho que os
+   Ajustes mostram.
+
+   R1: os TRES handlers entram por ipcMain.handle DIRETO, fora do mapa HANDLERS. Se o
+   telefone pudesse chamar `inbox:ouvindo`, a bandeira ligaria antes de a janela do Mac ter
+   registrado o `onInbox`, o `varrerInbox` mandaria o aviso para o vazio e o arquivo ficaria
+   marcado como visto — a mensagem se perderia para sempre. */
+const PASTA_INBOX = () => path.join(app.getPath('userData'), 'inbox');
+const inboxVistos = new Set();
+let inboxOuvinte = false;   // a tela DESTA carga ja registrou o onInbox (senao o aviso vai pro vazio)
+ipcMain.handle('inbox:ouvindo', () => { inboxOuvinte = true; setTimeout(varrerInbox, 100); return { ok: true }; });
+function varrerInbox() {
+  // a tela ainda carregando nao ouve: anunciar agora perderia o aviso pra sempre
+  if (!inboxOuvinte || !win || win.isDestroyed() || win.webContents.isLoading()) return;
+  let nomes = [];
+  try { nomes = fs.readdirSync(PASTA_INBOX()); } catch { return; }
+  const conjunto = new Set(nomes);
+  for (const n of nomes) {
+    const ext = path.extname(n).toLowerCase();
+    if (!['.txt', '.md', '.png', '.jpg', '.jpeg', '.webp'].includes(ext)) continue;
+    const f = path.join(PASTA_INBOX(), n);
+    let st; try { st = fs.statSync(f); } catch { continue; }
+    const idade = Date.now() - st.mtimeMs;
+    // recem-escrito (ate 700 ms, inclusive uns ms "no futuro" por relogio do disco): espera
+    // assentar; mtime muito no futuro (arquivo vindo de maquina com relogio errado) nao fica
+    // preso para sempre
+    if (!st.isFile() || (idade > -5000 && idade < 700)) continue;
+    // visto = nome + hora de escrita: um "voz.txt" regravado e mensagem NOVA
+    if (inboxVistos.has(n + ':' + Math.round(st.mtimeMs))) continue;
+    const base = n.slice(0, -ext.length);
+    const ehImagem = ext !== '.txt' && ext !== '.md';
+    // texto que e LEGENDA de uma imagem (mesmo nome-base) vai junto com ela, num aviso so
+    if (!ehImagem && ['.png', '.jpg', '.jpeg', '.webp'].some((e) => conjunto.has(base + e))) continue;
+    inboxVistos.add(n + ':' + Math.round(st.mtimeMs));
+    let texto = '';
+    if (!ehImagem) { try { texto = fs.readFileSync(f, 'utf8').trim().slice(0, 20000); } catch {} }
+    let legenda = '';
+    if (ehImagem) {
+      for (const e of ['.txt', '.md']) {
+        if (!conjunto.has(base + e)) continue;
+        try { legenda = fs.readFileSync(path.join(PASTA_INBOX(), base + e), 'utf8').trim().slice(0, 4000); } catch {}
+        try { inboxVistos.add(base + e + ':' + Math.round(fs.statSync(path.join(PASTA_INBOX(), base + e)).mtimeMs)); } catch {}
+      }
+    }
+    win.webContents.send('inbox', { arquivo: f, nome: n, tipo: ehImagem ? 'imagem' : 'texto', texto, legenda, quando: st.mtimeMs });
+  }
+  if (inboxVistos.size > 500) inboxVistos.clear();
+}
+function ligarInbox() {
+  try { fs.mkdirSync(PASTA_INBOX(), { recursive: true }); } catch {}
+  // pasta renomeada ou apagada nao pode derrubar o main: o watch so acelera, quem garante e o relogio
+  try { fs.watch(PASTA_INBOX(), () => setTimeout(varrerInbox, 800)).on('error', () => {}); } catch {}
+  setInterval(varrerInbox, 3000);
+  limparInboxAntiga();
+  anota('caixa de entrada em', PASTA_INBOX());
+}
+// o que ficou 7 dias na caixa sem ninguem usar nem descartar vai embora (igual a colados/)
+function limparInboxAntiga() {
+  try {
+    const limite = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const n of fs.readdirSync(PASTA_INBOX())) {
+      const f = path.join(PASTA_INBOX(), n);
+      try { if (fs.statSync(f).mtimeMs < limite) fs.unlinkSync(f); } catch {}
+    }
+  } catch {}
+}
+// "usar": texto e consumido (some da caixa); imagem vai para colados/ e vira anexo
+ipcMain.handle('inbox:consumir', (_e, { arquivo, apagar } = {}) => {
+  try {
+    const f = path.resolve(String(arquivo || ''));
+    // tem de estar DENTRO da caixa (pasta IGUAL, nao "comeca com"): o startsWith em texto
+    // deixava passar "inbox2/x" e "inbox-velha.txt"
+    const raiz = path.resolve(PASTA_INBOX());
+    const mesma = (a, b) => (EH_WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
+    if (!mesma(path.dirname(f), raiz)) return { error: 'fora da caixa de entrada' };
+    const ext = path.extname(f).toLowerCase();
+    const base = f.slice(0, -ext.length);
+    // legenda que veio junto da imagem some com ela
+    for (const e of ['.txt', '.md']) { if (ext !== e && fs.existsSync(base + e)) { try { fs.unlinkSync(base + e); } catch {} } }
+    if (apagar || ext === '.txt' || ext === '.md') { fs.unlinkSync(f); return { ok: true }; }
+    const dir = path.join(app.getPath('userData'), 'colados');
+    fs.mkdirSync(dir, { recursive: true });
+    const destino = path.join(dir, 'celular-' + Date.now() + ext);
+    fs.renameSync(f, destino);
+    return { ok: true, arquivo: destino };
+  } catch (e) { return { error: String((e && e.message) || e) }; }
+});
+ipcMain.handle('inbox:pasta', () => PASTA_INBOX());
+
 app.whenReady().then(() => { anota('app iniciou'); usarClaudeDeCaminhoFixo(); menu(); createWindow(); montarIndiceDeFundo();
   limparColadosAntigos();
+  ligarInbox();   // leva 6: a caixa de entrada passa a ser varrida (a pasta nasce aqui)
   // atalho global de ditar, se ele tiver ligado nos Ajustes (desligado por padrao)
   try { ligarAtalhosGlobais(!!loadConfig().atalhosGlobais); } catch { ligarAtalhosGlobais(false); }
   try {

@@ -103,6 +103,12 @@ contextBridge.exposeInMainWorld('api', {
   // atalho global de ditar (⌃⌥Espaço): vale com o Cockpit atrás
   atalhosEstado: () => ipcRenderer.invoke('atalhos:estado'),
   atalhosLigar: (o) => ipcRenderer.invoke('atalhos:ligar', o),
+  /* caixa de entrada: o que cair em userData/inbox vira tarja com "usar". Os três canais
+     ficam FORA do mapa HANDLERS de propósito (R1) — ver o comentário no main.js */
+  inboxConsumir: (o) => ipcRenderer.invoke('inbox:consumir', o),
+  inboxPasta: () => ipcRenderer.invoke('inbox:pasta'),
+  inboxOuvindo: () => ipcRenderer.invoke('inbox:ouvindo'),
+  onInbox: (cb) => ipcRenderer.on('inbox', (_e, p) => cb(p)),
 
   termRun: (o) => ipcRenderer.invoke('term:run', o),
   termInput: (o) => ipcRenderer.invoke('term:input', o),

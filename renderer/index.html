@@ -16,6 +16,11 @@
   <div class="tb-right"></div>
 </div>
 
+<!-- leva 6: faixa de avisos que vale para a janela inteira (caixa de entrada do celular).
+     Fica FORA do fluxo (position:fixed no CSS): #shell tem altura calculada na mao
+     (100% - 79px) e um elemento a mais no fluxo empurraria a tela toda para baixo. -->
+<div id="faixaAvisos"></div>
+
 <div id="abasTopo">
   <div class="abas-lista" id="abasLista"></div>
   <button class="aba-mais" id="btnNovaAba" title="Nova aba de projeto (⌘⇧T)"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg></button>
@@ -120,6 +125,15 @@
         <label class="chave"><input type="checkbox" id="chkAtalhosGlobais"><span>Atalho global de ditar (vale com o Cockpit atrás): <span class="mono">⌃⌥Espaço</span></span></label>
         <p class="hint">Desligado por padrão: um atalho global toma a combinação de todos os outros programas enquanto o Cockpit estiver aberto. Ligado, aperte de onde estiver que a janela vem para a frente e o microfone liga no chat em foco. Comandos falados durante o ditado: “manda”, “cancela”, “apaga isso”, “próximo painel”.</p>
         <p class="hint hidden" id="atalhosAviso"></p>
+
+        <!-- leva 6: o caminho MUDA entre rodar por npm start (pasta "cockpit") e o app
+             instalado (pasta "Cockpit"). Nenhum script pode cravar: é daqui que se copia. -->
+        <div id="inboxBloco">
+          <label>Caixa de entrada</label>
+          <p class="hint">Arquivo <span class="mono">.txt</span>/<span class="mono">.md</span> (áudio já transcrito, recado) ou imagem que cair nesta pasta vira um aviso no topo da tela com o botão “usar”. É por aqui que o celular e os robôs mandam coisa para cá.</p>
+          <div class="path-box" id="inboxPasta">—</div>
+          <button class="btn-wide" id="btnInboxAbrir">Abrir a pasta</button>
+        </div>
 
         <label>Lista de conversas</label>
         <label class="chave"><input type="checkbox" id="chkRobos"><span>Mostrar também as conversas dos robôs</span></label>

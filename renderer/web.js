@@ -138,6 +138,14 @@
     // na hora evita o TypeError que derrubaria o boot (o app.js é o MESMO arquivo nos dois).
     atalhosEstado: () => Promise.resolve({ falhos: [] }),
     atalhosLigar: () => Promise.resolve({ falhos: [] }),
+    /* Caixa de entrada: a pasta e os arquivos moram no MAC, e o main nem expõe os três canais
+       ao Wi-Fi (R1). Aqui as respostas saem na hora, com o tipo certo, para o app.js — que é o
+       MESMO arquivo nos dois — não morrer num TypeError e derrubar o boot do telefone.
+       O onInbox existe e não faz nada: aviso de arquivo que está no Mac não serve aqui. */
+    inboxConsumir: () => Promise.resolve({ error: 'A caixa de entrada é do Mac.' }),
+    inboxPasta: () => Promise.resolve(null),
+    inboxOuvindo: () => Promise.resolve({ ok: false }),
+    onInbox: () => {},
     // no telefone nao faz sentido mexer no servidor nem abrir janela do Mac
     webEstado: () => Promise.resolve({ ligado: true, endereco: location.origin, senha: '' }),
     webLigar: () => Promise.resolve({ ligado: true, endereco: location.origin, senha: '' }),
