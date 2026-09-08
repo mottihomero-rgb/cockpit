@@ -5788,6 +5788,134 @@ function avisoTemp(P, texto) {
   setTimeout(() => d.remove(), 12000);
 }
 
+/* ===================== leva 6: faixa de avisos da JANELA =====================
+   O avisoTemp acima e o note() moram DENTRO de um chat: a mensagem sobe junto com a conversa
+   e some. Um recado que vale para a janela inteira — "chegou uma foto do celular" — precisa
+   de um lugar próprio, que fique parado até ele resolver.
+
+   Nomes com prefixo `fx` de propósito: a classe `.aviso` já é usada aqui pela tarja de limite
+   do plano (`faixa.className = 'p-uso aviso'`), e as regras `.aviso` do fork de origem a
+   repintariam inteira. */
+/* guarda COMO ele dispensou: { nivel, reseta }.
+   - nivel: se a coisa piorar, volta a avisar.
+   - reseta: quando a semana (ou a sessão) vira, a dispensa antiga morre junto. */
+const avisosFechados = new Map();
+function mostrarAviso({ id, texto, tipo, acao, aoClicar, fixo, nivel, reseta, aoFechar }) {
+  const caixa = $('#faixaAvisos');
+  if (!caixa) return;
+  // dispensado antes: fica calado até a situação piorar ou a janela virar
+  if (id && avisosFechados.has(id)) {
+    const antes = avisosFechados.get(id) || {};
+    const virou = reseta && antes.reseta && reseta !== antes.reseta;
+    const piorou = typeof nivel === 'number' && typeof antes.nivel === 'number' && nivel > antes.nivel;
+    if (!virou && !piorou) return;
+    avisosFechados.delete(id);
+  }
+  /* CSS.escape: o id vem de dado real (nome de arquivo da caixa de entrada). Sem ele, um nome
+     com "\" ou "." dentro faria o seletor não casar com nada e cada chegada empilharia uma
+     tarja nova em vez de atualizar a que já está na tela. */
+  const existente = id && $('[data-aviso="' + CSS.escape(id) + '"]', caixa);
+  const marcar = (el) => avisosFechados.set(id, {
+    nivel: el.dataset.nivel !== undefined ? Number(el.dataset.nivel) : 0,
+    reseta: el.dataset.reseta !== undefined ? Number(el.dataset.reseta) : 0,
+  });
+  if (existente) {
+    const t = $('.fx-txt', existente);
+    if (t) t.textContent = texto;
+    existente.className = 'fx fx-' + (tipo || 'info');
+    if (typeof nivel === 'number') existente.dataset.nivel = String(nivel);
+    if (reseta) existente.dataset.reseta = String(reseta);
+    const ic = $('.fx-ic', existente);
+    if (ic) ic.innerHTML = ico(tipo === 'alerta' ? 'circle-help' : tipo === 'erro' ? 'x' : 'circle');
+    // o texto novo vem com ação nova: o botão e o X têm de apontar para ESTA chamada
+    const btAntigo = $('.fx-acao', existente);
+    if (acao) {
+      const bt = btAntigo || document.createElement('button');
+      bt.className = 'fx-acao';
+      bt.textContent = acao;
+      bt.onclick = () => { try { aoClicar && aoClicar(); } catch {} existente.remove(); };
+      if (!btAntigo) existente.insertBefore(bt, $('.fx-x', existente));
+    } else if (btAntigo) btAntigo.remove();
+    const xAntigo = $('.fx-x', existente);
+    if (xAntigo) xAntigo.onclick = () => { if (id) marcar(existente); existente.remove(); if (aoFechar) { try { aoFechar(); } catch {} } };
+    // aviso repetido: o prazo recomeça, senão o relógio do primeiro apagava o segundo poucos
+    // segundos depois de ele aparecer
+    if (!fixo) {
+      clearTimeout(existente._t);
+      existente._t = setTimeout(() => { if (id) marcar(existente); existente.remove(); }, 20000);
+    }
+    return;
+  }
+  const d = document.createElement('div');
+  d.className = 'fx fx-' + (tipo || 'info');
+  if (id) d.dataset.aviso = id;
+  d.innerHTML = '<span class="fx-ic"></span><span class="fx-txt"></span>'
+    + (acao ? '<button class="fx-acao"></button>' : '')
+    + '<button class="fx-x"></button>';
+  $('.fx-ic', d).innerHTML = ico(tipo === 'alerta' ? 'circle-help' : tipo === 'erro' ? 'x' : 'circle');
+  // textContent, nunca innerHTML: o texto carrega nome de arquivo escrito por outra máquina
+  $('.fx-txt', d).textContent = texto;
+  if (acao) {
+    $('.fx-acao', d).textContent = acao;
+    $('.fx-acao', d).onclick = () => { try { aoClicar && aoClicar(); } catch {} d.remove(); };
+  }
+  $('.fx-x', d).innerHTML = ico('x');
+  $('.fx-x', d).title = 'Fechar';
+  if (typeof nivel === 'number') d.dataset.nivel = String(nivel);
+  if (reseta) d.dataset.reseta = String(reseta);
+  // lê do elemento, não da chamada que o criou: a tarja se atualiza sozinha e o X tem de
+  // gravar o que está na tela AGORA
+  $('.fx-x', d).onclick = () => { if (id) marcar(d); d.remove(); if (aoFechar) { try { aoFechar(); } catch {} } };
+  caixa.appendChild(d);
+  // some sozinho, mas NÃO cala para sempre: se piorar, avisa de novo
+  if (!fixo) d._t = setTimeout(() => { if (id) marcar(d); d.remove(); }, 20000);
+}
+
+/* caixa de entrada: áudio transcrito / foto que chegou do celular (ou de um script) vira
+   tarja com "usar" — o texto vai para o campo do chat em foco, a imagem vira anexo */
+function chegouNaInbox(m) {
+  if (!m || !m.arquivo) return;
+  const corta = (s) => '“' + String(s || '').replace(/\s+/g, ' ').slice(0, 80) + (String(s || '').length > 80 ? '…' : '') + '”';
+  const resumo = m.tipo === 'texto' ? corta(m.texto) : ((m.nome || 'imagem') + (m.legenda ? ' · ' + corta(m.legenda) : ''));
+  // o mesmo nome regravado: a tarja antiga apontava para o MESMO caminho, e o X dela apagaria
+  // a mensagem NOVA
+  try { $$('#faixaAvisos [data-aviso^="inbox-' + CSS.escape(m.nome) + '-"]').forEach((t) => t.remove()); } catch {}
+  const idAviso = 'inbox-' + m.nome + '-' + Math.round((m.quando || Date.now()) / 1000);
+  mostrarAviso({
+    // id por arquivo E hora: o mesmo nome noutro dia não herda o "fechado" do anterior
+    id: idAviso, tipo: 'info', fixo: true,
+    texto: (m.tipo === 'texto' ? '📱 Chegou do celular: ' : '📱 Imagem do celular: ') + resumo,
+    acao: 'usar',
+    aoClicar: () => usarDaInbox(m),
+    // o X descarta de verdade (apaga da caixa); só esconder faria o arquivo voltar a cada
+    // abertura do app, para sempre
+    aoFechar: () => { try { window.api.inboxConsumir({ arquivo: m.arquivo, apagar: true }); } catch {} },
+  });
+  // o X aqui não só esconde: apaga da caixa. Dizer isso.
+  try { const x = $('#faixaAvisos [data-aviso="' + CSS.escape(idAviso) + '"] .fx-x'); if (x) x.title = 'Descartar: apaga da caixa de entrada'; } catch {}
+}
+async function usarDaInbox(m) {
+  const P = focusPane || [...panes.values()][0];
+  // R4: note() sem `true` não aparece na tela, e aqui não há chat garantido — a faixa é o
+  // único lugar que aparece de qualquer jeito
+  if (!P) { mostrarAviso({ tipo: 'alerta', texto: 'Abra um chat primeiro; a mensagem continua na caixa de entrada.' }); return; }
+  let r = null;
+  try { r = await window.api.inboxConsumir({ arquivo: m.arquivo }); } catch {}
+  if (m.tipo === 'texto') {
+    if (r && r.error) { mostrarAviso({ tipo: 'erro', texto: 'Não consegui tirar o recado da caixa de entrada: ' + r.error }); return; }
+    inserirNoInput(P, m.texto || '');
+    const c = $('.p-input', P.el); if (c) c.focus();
+    mostrarAviso({ tipo: 'info', texto: 'Recado do celular colocado no campo. Confira antes de mandar.' });
+  } else if (r && r.arquivo) {
+    await anexar(P, [r.arquivo]);
+    if (m.legenda) inserirNoInput(P, m.legenda);   // a legenda da foto vai junto, no campo
+    // R4: sucesso por avisoTemp/mostrarAviso — note() sem `true` não apareceria
+    mostrarAviso({ tipo: 'info', texto: 'Imagem do celular anexada. Escreva o que quer que ele faça.' });
+  } else {
+    mostrarAviso({ tipo: 'erro', texto: 'Não consegui pegar a imagem da caixa de entrada' + (r && r.error ? ': ' + r.error : '.') });
+  }
+}
+
 const IMG_EXT = ['png','jpg','jpeg','gif','webp','bmp','heic','svg'];
 const TIPO_ICO = (ext) => {
   if (IMG_EXT.includes(ext)) return 'image';
@@ -8155,6 +8283,19 @@ document.addEventListener('keydown', (e) => {
     // se a tecla estiver tomada por outro programa, ele tem de saber ao abrir os Ajustes
     if (window.api.atalhosEstado) { try { pintarAvisoAtalhos(await window.api.atalhosEstado()); } catch (_) {} }
   }
+  /* leva 6 — onde fica a caixa de entrada. O caminho MUDA entre rodar por `npm start` (pasta
+     "cockpit") e o app instalado ("Cockpit"), então nenhum script pode cravá-lo: é daqui que
+     se copia. No telefone a pasta é do Mac e não há o que abrir, então o bloco some. */
+  if ($('#inboxBloco')) {
+    if (window.SEM_ELECTRON) $('#inboxBloco').classList.add('hidden');
+    else {
+      try {
+        const pasta = await window.api.inboxPasta();
+        $('#inboxPasta').textContent = pasta || '—';
+        $('#btnInboxAbrir').addEventListener('click', () => { if (pasta) window.api.openPath(pasta); });
+      } catch (_) {}
+    }
+  }
   if (window.api.webEstado) { const st = await window.api.webEstado(); if ($('#chkWeb')) $('#chkWeb').checked = !!(st && st.ligado); pintarWeb(st); }
   // no telefone: a lateral vira gaveta
   const bg = $('#btnGaveta');
@@ -8219,6 +8360,15 @@ document.addEventListener('keydown', (e) => {
   /* leva 10.4: o chip do git em TODOS os chats, não só no que está em foco — cada aba pode
      estar numa pasta diferente, e a branch de cada uma importa. */
   for (const Q of panes.values()) atualizarGit(Q);
+  /* leva 6 — caixa de entrada. A ordem importa e é esta: primeiro registrar o ouvinte, só
+     DEPOIS avisar o Mac que a tela já ouve. O `inbox:ouvindo` é quem levanta a bandeira lá; se
+     ele fosse chamado antes, o main mandaria o aviso para uma tela que ainda não escuta, o
+     arquivo ficaria marcado como visto e a mensagem se perderia para sempre.
+     R2: guardado por `if`, porque no telefone estas duas são faz-de-conta. */
+  if (window.api.onInbox) {
+    window.api.onInbox((m) => chegouNaInbox(m));
+    if (window.api.inboxOuvindo) window.api.inboxOuvindo().catch(() => {});
+  }
   /* leva 10.6: radar de versão. Atrasado de propósito: a consulta ao npm leva segundos e o
      boot não pode esperar por ela. Se ainda não houver chat nenhum, ele mesmo se reagenda. */
   setTimeout(checarVersoesDosMotores, 12000);
