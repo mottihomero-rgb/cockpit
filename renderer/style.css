@@ -1681,7 +1681,10 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .rot-seta svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .rot-caixa{background:var(--rot-falha);border:1px solid var(--rot-falha-borda);border-radius:8px;padding:2px 4px 6px;margin-bottom:6px}
 .rot-caixa .rot-grupo{color:var(--red)}
-.rot-item{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:7px}
+/* flex-wrap com o botão numa LINHA PRÓPRIA, como a torre já faz: medido nesta máquina, com o
+   "disparar" ao lado do texto sobravam 85px de 206 para o nome, e 31 das 33 rotinas dele
+   apareciam cortadas ("com.adsure.i…", "rodou hoje 12:…"). Nome de robô cortado não serve. */
+.rot-item{display:flex;flex-wrap:wrap;align-items:flex-start;gap:2px 8px;padding:6px 8px;border-radius:7px}
 .rot-item:hover{background:var(--hover)}
 .ri-pt{width:7px;height:7px;border-radius:50%;flex:none;margin-top:5px;background:var(--fg-fraco)}
 /* Verde, não amarelo piscando como no fork do Hugo: aqui metade das rotinas dele é RESIDENTE
@@ -1693,7 +1696,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .rot-item.espera .ri-pt{background:var(--red)}
 .rot-item.parado .ri-pt{background:var(--green);opacity:.55}
 .rot-item.fora .ri-pt{background:var(--fg-fraco);opacity:.7}
-.ri-txt{display:flex;flex-direction:column;min-width:0;flex:1}
+.ri-txt{display:flex;flex-direction:column;min-width:0;flex:1 1 calc(100% - 15px)}
 .ri-tit{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ri-est{font-size:11px;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ri-quando{font-size:11px;color:var(--fg-fraco);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1701,11 +1704,8 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
    a largura inteira da coluna. O botão desce para baixo (a linha 1 já come 100%), senão o
    texto ficaria espremido numa coluna de três palavras ao lado dele. */
 .rot-item.espera .ri-est{color:var(--red);font-weight:600;white-space:normal}
-.rot-item.espera{flex-wrap:wrap}
-.rot-item.espera .ri-txt{flex:1 1 calc(100% - 15px)}
-.rot-item.espera .ri-acao{margin:5px 0 1px 15px}
 .ri-acao{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line2);
-  color:var(--fg-dim);flex:none;align-self:center}
+  color:var(--fg-dim);flex:none;align-self:flex-start;margin:4px 0 1px 15px}
 .ri-acao:hover{color:var(--fg);border-color:var(--accent)}
 /* disparando…, e as da lista-negra (o próprio Cockpit, a ponte do WhatsApp): à vista, mas mortas */
 .ri-acao:disabled{opacity:.5}
