@@ -4690,7 +4690,19 @@ function varrerInbox() {
     const base = n.slice(0, -ext.length);
     const ehImagem = ext !== '.txt' && ext !== '.md';
     // texto que e LEGENDA de uma imagem (mesmo nome-base) vai junto com ela, num aviso so
-    if (!ehImagem && ['.png', '.jpg', '.jpeg', '.webp'].some((e) => conjunto.has(base + e))) continue;
+    if (!ehImagem) {
+      const img = ['.png', '.jpg', '.jpeg', '.webp'].find((e) => conjunto.has(base + e));
+      if (img) {
+        // a legenda pode chegar DEPOIS da imagem (carteiro que baixa a foto e so entao escreve
+        // o texto). Ai a imagem JA foi anunciada, sem legenda, e o texto ficaria preso neste
+        // continue para sempre, calado. Tirar a imagem dos vistos faz a volta seguinte anuncia-la
+        // de novo, agora COM a legenda: mesmo id, a tarja e trocada no lugar. Anunciar o texto
+        // solto nao serviria — o "usar" da imagem apaga base+.txt junto, e a tarja do texto
+        // apontaria para arquivo que nao existe mais.
+        for (const k of [...inboxVistos]) if (k.startsWith(base + img + ':')) inboxVistos.delete(k);
+        continue;
+      }
+    }
     inboxVistos.add(n + ':' + Math.round(st.mtimeMs));
     let texto = '';
     if (!ehImagem) { try { texto = fs.readFileSync(f, 'utf8').trim().slice(0, 20000); } catch {} }
@@ -4734,6 +4746,11 @@ ipcMain.handle('inbox:consumir', (_e, { arquivo, apagar } = {}) => {
     const mesma = (a, b) => (EH_WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
     if (!mesma(path.dirname(f), raiz)) return { error: 'fora da caixa de entrada' };
     const ext = path.extname(f).toLowerCase();
+    // arquivo SEM extensao (README, .gitignore) tem ext = '' e f.slice(0, -0) devolve STRING
+    // VAZIA: o laco de baixo apagaria './.txt' e './.md' relativos ao process.cwd(), FORA da
+    // caixa. Nenhum arquivo assim e anunciado (a lista branca do varrerInbox tem 6 extensoes),
+    // mas este e o unico ponto da leva que da unlink e ele e um handler IPC cru.
+    if (!ext) return { error: 'arquivo sem extensão' };
     const base = f.slice(0, -ext.length);
     // legenda que veio junto da imagem some com ela
     for (const e of ['.txt', '.md']) { if (ext !== e && fs.existsSync(base + e)) { try { fs.unlinkSync(base + e); } catch {} } }
