@@ -2033,7 +2033,9 @@ function vozTirarNivel(P) {
    quase zero. Então o recado do silêncio total é escrito como pergunta, não como acusação. */
 function vozDiagnostico(jaAvisou) {
   const p = VIVO.picoGeral || 0;
-  if (p < VOZ_MUDO) return 'Não chegou som nenhum. Se você falou, confira em Ajustes do Sistema › Som › Entrada qual microfone está escolhido.';
+  // se a nota "Não ouvi nada" já apareceu, não repetir a acusação: só a parte que ajuda
+  if (p < VOZ_MUDO) return (jaAvisou ? '' : 'Não chegou som nenhum. ')
+    + 'Se você falou, confira em Ajustes do Sistema › Som › Entrada qual microfone está escolhido.';
   // captou, mas nunca no volume que o motor chama de fala: este ele CONSEGUE consertar
   if (p < VOZ_LIMIAR) return 'O microfone captou, mas muito baixo. Aumente o volume de entrada em Ajustes do Sistema › Som, ou fale mais perto.';
   return jaAvisou ? '' : 'Não entendi o que foi falado. Tente falar um pouco mais devagar.';
@@ -2047,6 +2049,8 @@ function vozDiagnostico(jaAvisou) {
    tirar a camada de cima, sem reescrever nada e sem roubar o foco. */
 const vozTextoAgora = () => ((VIVO.base ? VIVO.base.replace(/\s*$/, ' ') : '') + VIVO.firme
   + (VIVO.parcial ? ' ' + VIVO.parcial : '')).trim();
+// só o que já FECHOU: a palavra do comando ainda está em VIVO.parcial e não pode ir junto
+const vozTextoFirme = () => ((VIVO.base ? VIVO.base.replace(/\s*$/, ' ') : '') + VIVO.firme).trim();
 function vozZerar() {
   VIVO.P = null; VIVO.base = ''; VIVO.firme = ''; VIVO.parcial = '';
   VIVO.ultimo = ''; VIVO.ultimoEscrito = null;
@@ -2081,7 +2085,7 @@ function vozComando(P, texto) {
   if (!t || t.split(' ').length > 4) return false;
 
   if (/^(manda|mandar|envia|enviar)( isso| agora| ai)?$/.test(t)) {
-    vozSoltar(P, { texto: vozTextoAgora() });
+    vozSoltar(P, { texto: vozTextoFirme() });
     const inp = $('.p-input', P.el);
     if (!inp || !(inp.value.trim() || (P.anexos || []).length || P.quadroColado)) return true;
     // um respiro: o campo acabou de receber o texto firmado e o 'fim' do processo ainda vem
@@ -2104,7 +2108,7 @@ function vozComando(P, texto) {
     return true;
   }
   if (/^proximo painel$/.test(t)) {
-    vozSoltar(P, { texto: vozTextoAgora() });
+    vozSoltar(P, { texto: vozTextoFirme() });
     // não existe `irParaPainel` aqui: quem manda no foco é a aba (abaDe) mais o setFocus
     const A = abaDe(P);
     if (A && A.ordem.length > 1) {
