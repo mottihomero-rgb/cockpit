@@ -1434,6 +1434,139 @@ async function listDirRemotoV2(cwd) {
   return { entries: out.slice(0, 800) };
 }
 
+/* ============== completar caminho de arquivo com "@" no campo ==============
+   Lista os arquivos da pasta do painel para o menu do "@". Guarda em memoria por 30s: sem
+   isso cada tecla digitada varreria o disco de novo (e, na VPS, abriria uma conexao por
+   letra). Os arquivos escondidos seguem a MESMA peneira da arvore (listDir): so passam os
+   tres de sempre. */
+const PONTO_OK = ['.claude', '.codex', '.env.example'];
+const BUSCA_TETO = 20000;        // quantos caminhos ficam guardados por pasta
+const BUSCA_PROF = 8;            // o mesmo teto do -maxdepth do ramo remoto
+/* A pasta do painel PODE ser a home inteira, e ali sao milhares de pastas: varrer fundo
+   travaria o processo principal e guardaria dezenas de MB de texto por 30s. Na home a
+   varredura e rasa de proposito — quem trabalha na home nao esta procurando arquivo em
+   nivel 8, esta so' anexando algo que ve na frente. */
+const BUSCA_PROF_HOME = 2;
+const BUSCA_TETO_HOME = 3000;
+const cacheArquivos = new Map();   // "vps|/caminho" (ou "local|/caminho") -> { quando, lista }
+
+function varrerArquivos(raiz, limite) {
+  // R7: pasta remota nao se le com readdirSync. Sem esta linha o erro seria calado e a lista
+  // vazia entraria no cache, envenenando o "@" daquele painel por 30 segundos.
+  if (!raiz || ehRemoto(raiz)) return [];
+  let naHome = false;
+  try { naHome = path.resolve(raiz) === path.resolve(HOME); } catch {}
+  const fundo = naHome ? BUSCA_PROF_HOME : BUSCA_PROF;
+  const tetoVisitas = naHome ? 400 : 4000;
+  const teto = Math.min(limite || BUSCA_TETO, naHome ? BUSCA_TETO_HOME : BUSCA_TETO);
+  const achados = [];
+  const fila = [{ dir: raiz, prof: 0 }];
+  let visitadas = 0;
+  while (fila.length && achados.length < teto && visitadas < tetoVisitas) {
+    const { dir, prof } = fila.shift();
+    visitadas++;
+    let itens = [];
+    try { itens = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of itens) {
+      if (e.name.startsWith('.') && !PONTO_OK.includes(e.name)) continue;
+      if (IGNORE.has(e.name)) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (prof + 1 < fundo && fila.length < 2000) fila.push({ dir: p, prof: prof + 1 }); }
+      else { achados.push(p); if (achados.length >= teto) break; }
+    }
+  }
+  return achados;
+}
+
+/* A mesma varredura, dentro do servidor, num comando so'. As podas do find saem do MESMO
+   IGNORE e do MESMO PONTO_OK do ramo local — e a mesma peneira, escrita em shell. O
+   -maxdepth segura o custo, o "head -c" segura a tragada, e o base64 traz nome com espaco,
+   acento e ate quebra de linha inteiro. Roda UMA vez a cada 30s (o cache la' de cima).
+   O caminho volta COM o prefixo do servidor ("vps:/opt/..."): sem ele o "@" colaria
+   "/opt/x.js" e o motor, o visor e o link do chat iriam procurar isso aqui no Mac. */
+async function varrerArquivosRemoto(cwd, limite) {
+  const r = partesRemoto(cwd);
+  if (!r) return { error: 'servidor desconhecido' };
+  const alvo = r.caminho || '/';
+  const podas = [...IGNORE].filter((n) => !n.startsWith('.')).map((n) => '-name ' + aspaSh(n)).join(' -o ');
+  const semPonto = "-name '.*' " + PONTO_OK.map((n) => '! -name ' + aspaSh(n)).join(' ');
+  /* termina em "; exit 0": um servidor sem o CLI (ou um find que nao achou nada) sairia com
+     codigo 1 e a tela mostraria isso como erro vermelho, quando e resposta. */
+  const script = 'cd -- ' + aspaSh(alvo) + ' 2>/dev/null || { echo COCKPIT_SEM_PASTA; exit 0; }; '
+    + SONDA_GNU
+    + 'find . -mindepth 1 -maxdepth ' + BUSCA_PROF + ' \\( \\( ' + semPonto + ' \\)'
+    + (podas ? ' -o ' + podas : '') + ' \\) -prune -o '
+    + "-type f -printf '%p\\0' 2>/dev/null | head -c 2000000 | base64 -w0; exit 0";
+  const rr = await noServidorSsh(r, script, 30000);
+  if (rr.error) return { error: rr.error };
+  // erro do servidor NAO pode virar "essa pasta nao tem arquivo nenhum" (a licao da leva 7)
+  if (rr.code !== 0 && !String(rr.out || '').trim()) {
+    return { error: String(rr.errout || '').trim().slice(0, 300)
+      || ('A VPS respondeu com erro (código ' + rr.code + ') e não mandou a lista de arquivos.') };
+  }
+  const bruto = String(rr.out || '').trim();
+  if (bruto.startsWith('COCKPIT_SEM_PASTA')) {
+    return { error: 'Não consegui abrir a pasta ' + alvo + ' no servidor. Ela existe e você tem acesso a ela?' };
+  }
+  const semGnu = erroDaSondaGnu(bruto);
+  if (semGnu) return { error: semGnu };
+  const regs = registrosNul(bruto);
+  if (regs.error) return regs;
+  const lista = [];
+  for (const p of regs.itens) {
+    if (!p.startsWith('./')) continue;                                  // pedaco cortado pelo head
+    lista.push(r.chave + ':' + path.posix.join(alvo, p.slice(2)));      // POSIX: la e Linux
+    if (lista.length >= (limite || BUSCA_TETO)) break;
+  }
+  return { lista };
+}
+
+/* pontuacao do "@": nome igual > comeca com > contem > o caminho contem.
+   O basename muda de dialeto conforme o alvo: caminho da VPS e sempre POSIX. */
+function pontuarArquivos(lista, termo, remoto) {
+  const pb = remoto ? path.posix : path;
+  const base = (p) => pb.basename(String(p).replace(/^[a-z0-9_-]+:/i, ''));
+  const alvo = String(termo || '').toLowerCase();
+  if (!alvo) return lista.slice(0, 40).map((p) => ({ path: p, nome: base(p) }));
+  const pontua = (p) => {
+    const nome = base(p).toLowerCase();
+    if (nome === alvo) return 0;
+    if (nome.startsWith(alvo)) return 1;
+    if (nome.includes(alvo)) return 2;
+    if (String(p).toLowerCase().includes(alvo)) return 3;
+    return 99;
+  };
+  return lista.map((p) => ({ p, s: pontua(p) })).filter((x) => x.s < 99)
+    .sort((a, b) => a.s - b.s || a.p.length - b.p.length).slice(0, 40)
+    .map((x) => ({ path: x.p, nome: base(x.p) }));
+}
+
+/* RESPOSTA de duas formas, de proposito: pasta do Mac devolve a LISTA crua; pasta da VPS
+   devolve { itens, error } — falha de rede nao pode virar "essa pasta nao tem arquivo". */
+handle('fs:buscarArquivos', async (_e, d) => {
+  const o = (d && typeof d === 'object') ? d : {};
+  const raiz = o.cwd || HOME;
+  const rem = ehRemoto(raiz) ? partesRemoto(raiz) : null;
+  const agora = Date.now();
+  const chave = (rem ? rem.chave : 'local') + '|' + raiz;
+  let c = cacheArquivos.get(chave);
+  if (!c || (agora - c.quando) > 30000) {
+    let lista;
+    if (rem) {
+      const r = await varrerArquivosRemoto(raiz, BUSCA_TETO);
+      if (r.error) return { itens: [], error: r.error };   // falha NAO entra no cache
+      lista = r.lista;
+    } else {
+      lista = varrerArquivos(raiz, BUSCA_TETO);
+    }
+    c = { quando: agora, lista };
+    cacheArquivos.set(chave, c);
+    if (cacheArquivos.size > 8) cacheArquivos.delete(cacheArquivos.keys().next().value);
+  }
+  const achados = pontuarArquivos(c.lista, o.termo, !!rem);
+  return rem ? { itens: achados } : achados;
+});
+
 /* ======================= conversas recentes ======================= */
 const CLAUDE_PROJ = path.join(HOME, '.claude/projects');
 const NOMES_PATH = () => path.join(app.getPath('userData'), 'nomes.json');
@@ -3022,6 +3155,32 @@ handle('vps:testar', async () => {
   if (rr.error) return { error: rr.error };
   return { ok: true, versao: (rr.out || '').split('\n')[1] || '' };
 });
+
+/* ---------- prompts salvos com nome ----------
+   Um json SEU, fora do app: ~/.claude/cockpit-prompts.json. Fica fora do config do Cockpit
+   de proposito — assim reinstalar o app nao leva junto os pedidos longos que ele guardou,
+   e da' para abrir o arquivo e editar na mao. */
+const PROMPTS_PATH = () => path.join(HOME, '.claude', 'cockpit-prompts.json');
+handle('prompts:ler', () => {
+  try {
+    const j = JSON.parse(fs.readFileSync(PROMPTS_PATH(), 'utf8'));
+    return Array.isArray(j) ? j.filter((p) => p && p.nome && p.texto).slice(0, 200) : [];
+  } catch { return []; }
+});
+handle('prompts:salvar', (_e, lista) => {
+  try {
+    const limpa = (Array.isArray(lista) ? lista : [])
+      .filter((p) => p && String(p.nome || '').trim() && String(p.texto || '').trim())
+      .map((p) => ({ nome: String(p.nome).trim().slice(0, 80), texto: String(p.texto).slice(0, 50000), quando: Number(p.quando) || Date.now() }))
+      .slice(0, 200);
+    // a pasta ~/.claude existe em toda maquina com o Claude instalado, mas nao custa garantir:
+    // sem ela o gravarSeguro falharia calado e o prompt se perderia sem recado
+    try { fs.mkdirSync(path.dirname(PROMPTS_PATH()), { recursive: true }); } catch {}
+    if (!gravarSeguro(PROMPTS_PATH(), JSON.stringify(limpa, null, 2))) return { error: 'não consegui gravar o arquivo dos prompts' };
+    return { ok: true };
+  } catch (e) { return { error: String((e && e.message) || e) }; }
+});
+
 /* ---------- guardar a conversa no Obsidian ----------
    Regra da casa: texto mora no vault. Conversa de cliente vai para a pasta dele; o resto cai
    em "3 - Operação". O nome do cliente sai da pasta do chat (…/Projetos-claude/<Cliente>/…). */

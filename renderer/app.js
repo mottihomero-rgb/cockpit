@@ -680,6 +680,17 @@ function newPane(opts = {}) {
       P.navHist = undefined;
     }
   });
+  /* "@" em qualquer lugar da linha: completa caminho de arquivo da pasta deste painel.
+     Ouvinte SEPARADO e ANTES do da "/": o de baixo trata a barra e nao pode ser mexido. */
+  inp.addEventListener('input', () => {
+    const v = inp.value;
+    const cursor = inp.selectionStart || v.length;
+    const mm = /@([^\s@]*)$/.exec(v.slice(0, cursor));
+    if (mm) menuArquivos(P, mm[1]);
+    // apagou o "@": fecha o menu e cancela a busca que ainda vinha pela rede (senao ela
+    // abriria o menu sozinha segundos depois, por cima do que estivesse na tela)
+    else { if (menuDeArquivosNaTela(P)) fecharMenus(); pararBuscaEmVoo(); }
+  });
   // barra no comeco da linha abre o menu de acoes, e vai filtrando conforme digita
   inp.addEventListener('input', () => {
     const v = inp.value;
@@ -1138,6 +1149,10 @@ async function closePane(id, semPerguntar) {
   }
   // fechar o chat tem de apagar a luz do microfone: o processo do ditado é dele
   vozSoltar(P, { guardarTexto: true });
+  // e a busca do "@" deste chat morre junto: sem isto ela voltava depois e tentava abrir o
+  // menu num painel que ja nao esta mais na tela
+  pararBuscaDeArquivos(P);
+  soltarNavArquivos(P);
   const A = abaDe(P);
   // ANTES de tirar o painel do DOM: no instante em que ele sai, os que sobram ja alargam
   // e o texto reflui. Anotar depois disso seria anotar o estrago e devolve-lo fielmente.
@@ -2780,6 +2795,13 @@ async function send(P) {
      no campo vazio no meio do ditado é falha de captação, e ali o ditado tem de continuar.
      `guardarTexto`: o texto já foi lido para `text` e o campo é limpo logo abaixo. */
   vozSoltar(P, { guardarTexto: true });
+  /* A mensagem VAI sair: a busca do "@" que ainda estiver em voo morre aqui. Sem isto ela
+     seguia viva, porque o campo e limpo NA MAO logo abaixo (inp.value = '') e limpar por
+     codigo nao dispara o evento 'input' — o unico lugar de onde o cancelamento saía. Na VPS
+     o relogio de 450 ms acordava DEPOIS do envio e abria o menu de arquivos por cima da
+     resposta que estava chegando. */
+  pararBuscaDeArquivos(P);
+  soltarNavArquivos(P);   // e o atalho de setas sai junto: sem menu, sem dono
 
   if (P.busy) {
     const anx = P.anexos.slice(); P.anexos = []; pintarAnexos(P);
@@ -3805,6 +3827,9 @@ function fecharMenus() {
   for (const P of panes.values()) {
     const m = $('.p-modal', P.el);
     if (m && m.classList.contains('como-menu')) { m.classList.add('hidden'); m.classList.remove('como-menu'); $('.modal-cx', m).innerHTML = ''; }
+    // menu fechado nao pode deixar o atalho de setas do "@" preso ao campo: preso, ele engole
+    // o Enter e a mensagem nunca sai
+    soltarNavArquivos(P);
   }
 }
 document.addEventListener('click', fecharMenus);
@@ -4127,9 +4152,14 @@ async function menuSkills(P, filtroInicial, focar) {
        em painel da VPS. Quem monta a linha do ssh e o main: host e usuario nao saem de la. */
     ...(NA_VPS(P.cwd) ? [{ sec: 'Painel', ic: 'terminal', nome: 'terminal na VPS', desc: 'shell de verdade lá dentro, na pasta deste painel', act: () => abrirTerminalVps(P) }] : []),
     { sec: 'Conectores', ic: 'plug', nome: 'conectores', desc: 'ver, reconectar ou adicionar um conector', act: () => janelaConectores(P) },
+    /* As duas ultimas de propósito: a seção nasce quando o nome muda, então grudadas aqui no
+       FIM elas viram uma seção "Prompts" própria, sem quebrar nenhuma das de cima. */
+    { sec: 'Prompts', ic: 'star', nome: 'Salvar o texto do campo como prompt…', desc: 'para reaproveitar pedidos longos (fica em ~/.claude/cockpit-prompts.json)', act: () => salvarPromptDoCampo(P) },
+    { sec: 'Prompts', ic: 'eraser', nome: 'Apagar um prompt salvo…', act: () => apagarPromptSalvo(P) },
   ];
 
   let skills = [];
+  let prompts = [];
   const pintar = (f) => {
     corpo.innerHTML = '';
     const q = (f || '').toLowerCase().replace(/^\//, '');
@@ -4161,6 +4191,17 @@ async function menuSkills(P, filtroInicial, focar) {
         for (const sk of favoritas) corpo.appendChild(elItem({ ic: '/', nome: sk.name, desc: sk.desc }, () => usarSkill(sk)));
       }
     }
+    /* prompts salvos: filtram pelo nome E pelo comeco do texto (o nome dele e curto, mas o
+       que ele lembra as vezes e uma palavra de dentro do prompt). Clicar cola no campo. */
+    const promptsVis = prompts.filter((p) => !q || String(p.nome || '').toLowerCase().includes(q) || String(p.texto || '').toLowerCase().includes(q)).slice(0, 40);
+    if (promptsVis.length) {
+      corpo.appendChild(elSecao('Prompts salvos (' + prompts.length + ')'));
+      for (const p of promptsVis) corpo.appendChild(elItem({ ic: 'star', nome: p.nome, desc: String(p.texto || '').replace(/\s+/g, ' ').slice(0, 90) }, () => {
+        const inp = $('.p-input', P.el);
+        if (inp.value.startsWith('/') && !inp.value.includes(' ')) inp.value = '';
+        inserirNoInput(P, p.texto);
+      }));
+    }
     const vis = (q ? [...porNome, ...porDesc] : skills).slice(0, 150);
     if (vis.length) {
       corpo.appendChild(elSecao('Comandos e skills' + (skills.length ? ' (' + skills.length + ')' : '')));
@@ -4173,8 +4214,44 @@ async function menuSkills(P, filtroInicial, focar) {
   pintar(busca.value);
   busca.addEventListener('input', () => pintar(busca.value));
   if (filtroInicial === undefined || focar) setTimeout(() => { busca.focus(); busca.setSelectionRange(busca.value.length, busca.value.length); }, 30);
-  skills = (await window.api.skills(P.engine)) || [];
+  /* As duas listas ao mesmo tempo: esperar uma depois da outra dobraria a espera do menu.
+     O `window.api.promptsLer ?` e cinto de seguranca — se um dia a tela abrir num app antigo,
+     sem essa ponte, o menu inteiro morreria num TypeError em vez de ficar so' sem prompts. */
+  [skills, prompts] = await Promise.all([
+    Promise.resolve(window.api.skills(P.engine)).then((s) => s || []).catch(() => []),
+    window.api.promptsLer ? window.api.promptsLer().then((p) => p || []).catch(() => []) : [],
+  ]);
   pintar(busca.value);
+}
+
+/* ---- prompts salvos: reaproveitar pedidos longos sem redigitar ---- */
+async function salvarPromptDoCampo(P) {
+  const inp = $('.p-input', P.el);
+  const texto = (inp && inp.value.trim()) || '';
+  if (!texto) { note(P, 'Escreva o prompt no campo primeiro; depois salve por aqui.', true); return; }
+  const nome = await perguntarTexto(P, 'Salvar prompt', 'Um nome curto para achar depois no menu /.', texto.replace(/\s+/g, ' ').slice(0, 40));
+  if (!nome || !nome.trim()) return;
+  const lista = (await window.api.promptsLer()) || [];
+  const limpo = nome.trim().slice(0, 60);
+  // mesmo nome de novo = ele esta CORRIGINDO o prompt, nao criando um segundo igual
+  const semIgual = lista.filter((p) => p.nome !== limpo);
+  semIgual.unshift({ nome: limpo, texto, quando: Date.now() });
+  const r = await window.api.promptsSalvar(semIgual);
+  // R4: mensagem de sucesso por note() sem `true` nao aparece na tela. Sucesso vai por avisoTemp.
+  if (r && r.ok) avisoTemp(P, 'Prompt “' + limpo + '” salvo. Aparece no menu / em “Prompts salvos”.');
+  else note(P, 'Não consegui salvar: ' + ((r && r.error) || 'erro'), true);
+}
+async function apagarPromptSalvo(P) {
+  const lista = (await window.api.promptsLer()) || [];
+  if (!lista.length) { avisoTemp(P, 'Nenhum prompt salvo ainda.'); return; }
+  const m = novoMenu(P);
+  m.appendChild(tituloPopup('Apagar prompt salvo'));
+  m.appendChild(subPopup('Clique no que quer apagar.'));
+  for (const p of lista) m.appendChild(elItem({ ic: 'eraser', nome: p.nome, desc: String(p.texto || '').replace(/\s+/g, ' ').slice(0, 80) }, async () => {
+    const r = await window.api.promptsSalvar(lista.filter((x) => x !== p));
+    if (r && r.ok) avisoTemp(P, 'Prompt “' + p.nome + '” apagado.');
+    else note(P, 'Não consegui apagar: ' + ((r && r.error) || 'erro'), true);
+  }));
 }
 
 /* ---- janelinha de conectores, no meio da conversa ---- */
@@ -4386,6 +4463,57 @@ function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
     if (r && r.error) term.write('\r\n\x1b[31m[não consegui rodar: ' + r.error + ']\x1b[0m\r\n');
   });
   setTimeout(() => term.focus(), 60);
+}
+
+/* Caixinha de UMA pergunta ("qual o nome?"), na janelinha do proprio painel. Mesmo molde do
+   janelaTerminal: o .p-modal daqui e por painel, nao ha modal global.
+   Devolve o que ele escreveu, ou null se desistiu — por Esc, pelo X, pelo Cancelar ou por
+   clique no veu. Quem chamou SEMPRE recebe uma resposta: promessa pendurada para sempre e
+   pior do que resposta vazia. */
+function perguntarTexto(P, titulo, dica, inicial) {
+  return new Promise((res) => {
+    fecharMenus();
+    const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
+    modal.classList.remove('hidden');
+    /* Sem estas duas linhas o painel que ja abriu a Conta do Codex fica marcado 'account'
+       para sempre, e o evento rotineiro de conta trocaria o innerHTML NO MEIO da digitacao:
+       o nome que ele estava escrevendo sumiria da tela sem explicacao. */
+    modal.classList.remove('como-menu');
+    modal.dataset.codexSurface = '';
+    cx.className = 'modal-cx';
+    cx.onclick = (e) => e.stopPropagation();
+    cx.innerHTML = '<div class="mo-top"><span class="mo-tit"></span><button class="mo-x">' + ico('x') + '</button></div>'
+      + '<div class="mo-sub"></div><div class="mo-form"><input id="pedirTextoInp" maxlength="120"></div>'
+      + '<div class="mo-rodape"><button class="mo-btn destaque" id="pedirTextoOk">OK</button>'
+      + '<button class="mo-btn" id="pedirTextoCancela">Cancelar</button></div>';
+    $('.mo-tit', cx).textContent = titulo;
+    $('.mo-sub', cx).textContent = dica || '';
+    const inp = $('#pedirTextoInp', cx);
+    inp.value = inicial || '';
+    let feito = false;
+    const fim = (v) => {
+      if (feito) return;
+      feito = true;
+      P.fecharTerminal = null;      // evita voltar aqui pelo fecharModal, em circulo
+      cx.className = 'modal-cx';
+      fecharModal(P);
+      res(v);
+    };
+    // o UNICO gancho de fechamento que o Esc do documento respeita (e o ⌘W e o clique no veu)
+    P.fecharTerminal = () => fim(null);
+    modal.onclick = (e) => { if (e.target === modal) fim(null); };
+    $('.mo-x', cx).onclick = () => fim(null);
+    $('#pedirTextoCancela', cx).onclick = () => fim(null);
+    $('#pedirTextoOk', cx).onclick = () => fim(inp.value);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); fim(inp.value); }
+      /* R8: sem o stopPropagation o MESMO Esc fechava a caixinha aqui e subia para o
+         tratador do documento, que — ja sem popup na tela — mandava parar o trabalho da
+         IA. Um aperto, duas coisas, e a segunda invisivel. */
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); fim(null); }
+    });
+    setTimeout(() => { inp.focus(); inp.select(); }, 30);
+  });
 }
 
 
@@ -5226,6 +5354,160 @@ function pintarAnexos(P) {
       pintarAnexos(P);
     }, null, P));   // 5o parametro: clique na fichinha abre o arquivo no visor, e so isso
   }
+}
+
+/* ================= completar caminho de arquivo com "@" =================
+   Digitou "@" em qualquer ponto da linha e o menu mostra os arquivos da pasta DESTE painel —
+   inclusive quando a pasta mora na VPS. Escolheu, o caminho inteiro entra na mensagem. */
+let buscaArqTimer = 0;
+/* Geracao da busca. Na VPS a resposta demora e pode chegar DEPOIS da tecla seguinte: sem
+   isto a lista velha pintava por cima da nova. */
+let buscaArqGen = 0;
+/* O miolo do cancelamento, sem tocar na tela. Separado de proposito: o pararBuscaDeArquivos
+   fecha menu, e fechar menu solta o atalho de volta — em circulo. */
+function pararBuscaEmVoo() {
+  clearTimeout(buscaArqTimer);
+  buscaArqGen++;
+}
+/* R9: o fecharMenus nao reseta o className do .modal-cx, entao a marca "menu-arquivos"
+   sobreviveria escondida ali depois de fechado. Por isso ninguem pergunta so' pela classe:
+   pergunta se a janelinha esta MESMO na tela, e ainda como menu. */
+function menuDeArquivosNaTela(P) {
+  const modal = P && P.el && $('.p-modal', P.el);
+  if (!modal || modal.classList.contains('hidden') || !modal.classList.contains('como-menu')) return false;
+  return !!$('.modal-cx.menu-arquivos', modal);
+}
+/* Para a busca que ainda esta em voo. Vale nos dois ramos: o relogio e de 140 ms no disco e
+   de 450 ms na VPS, e nos dois ele pode acordar depois de o campo ter sido limpo — ai o menu
+   de arquivos abriria sozinho por cima do que ja esta acontecendo na tela. */
+function pararBuscaDeArquivos(P) {
+  if (!P) return;
+  pararBuscaEmVoo();
+  // o "procurando…" pode ja estar na tela: some junto, senao ficava pra sempre
+  if (menuDeArquivosNaTela(P)) fecharMenus();
+}
+/* Solta o atalho de setas do menu de arquivos. Se ficar preso, ele engole o Enter do campo e
+   a mensagem nunca e enviada. */
+function soltarNavArquivos(P) {
+  if (P && P._navArq && P._navArqInp) {
+    try { P._navArqInp.removeEventListener('keydown', P._navArq, true); } catch {}
+  }
+  if (P) { P._navArq = null; P._navArqInp = null; }
+}
+/* O "@" que pediu esta busca ainda esta no campo, com o mesmo trecho? Entre pedir e responder
+   ele pode ter apagado, mandado a mensagem ou trocado de assunto — e ai a lista que volta nao
+   e mais resposta a nada, e abrir o menu seria o app se mexendo sozinho. */
+function arrobaAindaNoCampo(P, termo) {
+  const inp = P && P.el && $('.p-input', P.el);
+  if (!inp) return false;
+  const v = inp.value;
+  const mm = /@([^\s@]*)$/.exec(v.slice(0, inp.selectionStart || v.length));
+  return !!mm && mm[1] === termo;
+}
+/* Uma caixinha de "Arquivos" so' com um recado dentro (procurando / deu erro). Vale so' para
+   a VPS: no disco do Mac a lista chega antes de dar tempo de ler. */
+function recadoDeArquivos(P, texto, ehErro) {
+  const m = novoMenu(P);
+  m.classList.add('menu-arquivos');
+  m.appendChild(tituloPopup('Arquivos'));
+  const s = subPopup(texto);
+  if (ehErro) s.classList.add('erro');
+  m.appendChild(s);
+}
+/* A janelinha do painel (.p-modal) e UMA so': o terminal, os conectores, a conta e o diff do
+   git moram nela tambem. Uma resposta atrasada da busca so' pode escrever ali se a janelinha
+   estiver fechada ou se ainda for menu. Sem esta conferencia ela apagava o conteudo de quem
+   tinha ocupado o lugar no meio-tempo. */
+function janelinhaOcupada(P) {
+  const m = P && P.el && $('.p-modal', P.el);
+  if (!m || !m.classList) return false;
+  if (m.classList.contains('hidden')) return false;
+  return !m.classList.contains('como-menu');
+}
+async function menuArquivos(P, termo) {
+  const remoto = NA_VPS(P.cwd);
+  clearTimeout(buscaArqTimer);
+  const meuGen = ++buscaArqGen;
+  buscaArqTimer = setTimeout(async () => {
+    if (meuGen !== buscaArqGen) return;
+    if (!P.el || !P.el.isConnected) return;              // o chat fechou enquanto o relogio corria
+    if (janelinhaOcupada(P)) return;
+    if (!arrobaAindaNoCampo(P, termo)) return;
+    // na VPS a ida e volta demora: avisa que esta procurando, senao parece travado
+    if (remoto) recadoDeArquivos(P, 'Procurando os arquivos na VPS…');
+    let itens = [], erro = '';
+    try {
+      const r = await window.api.buscarArquivos({ cwd: P.cwd, termo });
+      /* As DUAS formas, de proposito: a pasta do Mac devolve a lista crua e a da VPS devolve
+         { itens, error } — porque falha de rede nao pode virar "essa pasta nao tem arquivo". */
+      if (Array.isArray(r)) itens = r;
+      else if (r && typeof r === 'object') { itens = Array.isArray(r.itens) ? r.itens : []; erro = r.error || ''; }
+    } catch (e) { erro = 'Não consegui buscar os arquivos: ' + ((e && e.message) || e); }
+    if (meuGen !== buscaArqGen) return;                  // outra tecla ja pediu uma busca mais nova
+    if (!P.el || !P.el.isConnected) return;
+    if (janelinhaOcupada(P)) return;                     // enquanto o SSH voltava, a janelinha virou outra coisa
+    if (!arrobaAindaNoCampo(P, termo)) { if (menuDeArquivosNaTela(P)) fecharMenus(); return; }
+    // rede fora aparece como MOTIVO no lugar da lista; fechar calado parecia travamento
+    if (erro) { recadoDeArquivos(P, erro, true); return; }
+    if (!itens.length) { if (menuDeArquivosNaTela(P)) fecharMenus(); return; }
+    const m = novoMenu(P);
+    m.classList.add('menu-arquivos');
+    m.appendChild(tituloPopup('Arquivos'));
+    m.appendChild(subPopup('Escolha para colar o caminho na mensagem.'));
+    const corpo = document.createElement('div');
+    m.appendChild(corpo);
+    let sel = 0;
+    const pintar = () => {
+      corpo.innerHTML = '';
+      itens.slice(0, 40).forEach((x, i) => {
+        const d = elItem({ ic: 'file', nome: x.nome, desc: shortPath(x.path) }, () => {
+          soltarNavArquivos(P);          // escolheu no mouse: solta o atalho tambem
+          const inp = $('.p-input', P.el);
+          const v = inp.value;
+          const cursor = inp.selectionStart || v.length;
+          // troca o "@trecho" pelo caminho escolhido
+          const antes = v.slice(0, cursor).replace(/@([^\s@]*)$/, '');
+          inp.value = antes + x.path + ' ' + v.slice(cursor);
+          inp.focus();
+          inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 190) + 'px';
+          const fim = (antes + x.path + ' ').length;
+          inp.setSelectionRange(fim, fim);
+        });
+        if (i === sel) d.classList.add('sel');
+        corpo.appendChild(d);
+      });
+    };
+    pintar();
+    // setas funcionam sem tirar o foco do campo de escrever
+    const inp = $('.p-input', P.el);
+    soltarNavArquivos(P);                // nunca deixa dois presos ao mesmo tempo
+    const nav = (ev) => {
+      // menu ja saiu da tela (escolheu no mouse, fechou por fora): se solta
+      if (!corpo.isConnected) { soltarNavArquivos(P); return; }
+      const vis = [...corpo.querySelectorAll('.mi')];
+      if (!vis.length) return;
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault(); ev.stopPropagation();
+        sel = ev.key === 'ArrowDown' ? (sel + 1) % vis.length : (sel <= 0 ? vis.length - 1 : sel - 1);
+        pintar(); corpo.children[sel] && corpo.children[sel].scrollIntoView({ block: 'nearest' });
+      } else if (ev.key === 'Enter' && corpo.children[sel]) {
+        ev.preventDefault(); ev.stopPropagation();
+        corpo.children[sel].click();
+        soltarNavArquivos(P);
+      } else if (ev.key === 'Escape') {
+        /* R8: sem estas duas travas o MESMO Esc fechava o menu aqui e ainda subia para o
+           tratador do documento, que mandava PARAR o trabalho da IA. Um aperto, duas coisas,
+           e a segunda invisivel — trabalho jogado fora sem ele entender por quê. */
+        ev.preventDefault(); ev.stopPropagation();
+        pararBuscaEmVoo();               // a proxima resposta em voo nao reabre o menu
+        fecharMenus(); soltarNavArquivos(P);
+      }
+    };
+    P._navArq = nav; P._navArqInp = inp;
+    inp.addEventListener('keydown', nav, true);
+    // 140 ms e o tempo de varrer um disco; por SSH cada tecla viraria uma conexao, entao na
+    // VPS a espera sobe e a tela avisa que esta procurando
+  }, remoto ? 450 : 140);
 }
 
 function inserirNoInput(P, txt) {

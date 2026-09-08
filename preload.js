@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('api', {
   sessionHistory: (o) => ipcRenderer.invoke('sessions:history', o),
   sessionTitulo: (o) => ipcRenderer.invoke('sessions:titulo', o),
   skills: (e) => ipcRenderer.invoke('skills:list', e),
+  // prompts salvos com nome (~/.claude/cockpit-prompts.json): reaproveitar pedidos longos
+  promptsLer: () => ipcRenderer.invoke('prompts:ler'),
+  promptsSalvar: (l) => ipcRenderer.invoke('prompts:salvar', l),
+  // lista de arquivos da pasta do painel, para o menu do "@" no campo de escrever
+  buscarArquivos: (o) => ipcRenderer.invoke('fs:buscarArquivos', o),
   pickFiles: (k) => ipcRenderer.invoke('dialog:pickFiles', k),
   pickPhoto: () => ipcRenderer.invoke('user:pickPhoto'),
   anexoLer: (f) => ipcRenderer.invoke('anexo:ler', f),

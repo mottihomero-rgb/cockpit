@@ -65,6 +65,12 @@
     buscarConversas: (o) => chamar('sessions:buscar', o),
     renomear: (o) => chamar('sessao:renomear', o),
     skills: (e) => chamar('skills:list', e),
+    /* prompts salvos e busca de arquivo do "@": os dois moram no Mac e vem pelo mesmo cano.
+       Sem estas duas linhas o menu "/" do telefone morria inteiro num TypeError — o app.js e
+       o MESMO arquivo nos dois, e o catch de dentro nao segura erro sincrono. */
+    promptsLer: () => chamar('prompts:ler'),
+    promptsSalvar: (l) => chamar('prompts:salvar', l),
+    buscarArquivos: (o) => chamar('fs:buscarArquivos', o),
     pickFiles: () => Promise.resolve([]),
     pickPhoto: () => Promise.resolve(null),
     // erro interno do processo principal so chega na janela do Mac; aqui e so pra a tela
