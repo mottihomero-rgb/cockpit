@@ -285,7 +285,7 @@ function conversaDaPastaNova(P, pasta) {
   // chega (nao ha mais processo pra manda-lo) e TODA mensagem seguinte fica presa em "na fila",
   // para sempre. E o que estava na fila morreu junto com o processo.
   P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
-  pararTrabalho(P); limparPassos(P);
+  pararTrabalho(P); limparPassos(P); limparContinuar(P);
   P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null;
   P.titulo = ''; P.nomeManual = false; P.hist = [];
   P.blocks.clear(); P.tools.clear();
@@ -954,7 +954,7 @@ async function trocarMotor(P, novo) {
   // try/finally: se qualquer coisa tropecar aqui no meio, a trava TEM de sair, senao o botao
   // de trocar de motor fica morto para sempre naquele chat
   try {
-    pararTrabalho(P); limparPassos(P);
+    pararTrabalho(P); limparPassos(P); limparContinuar(P);
     fillModels(P); paintEngine(P); pintarModo(P); setDot(P, 'off');
     // O contexto e o recado da troca TEM de ficar prontos antes do await. Como o desenho ja
     // mudou, ele confia e escreve na hora; se estas duas linhas ficassem depois, a primeira
@@ -1059,7 +1059,7 @@ async function desligarMotor(P) {
   P.started = false;
   P.busy = false;
   if (P.queued) { const q = P.queued; P.queued = null; devolverFilaAoCampo(P, q); }
-  pararTrabalho(P); limparPassos(P);
+  pararTrabalho(P); limparPassos(P); limparContinuar(P);
   escondePerm(P);
   setDot(P, 'off');
 }
@@ -1245,6 +1245,59 @@ function passoPronto(P, id, erro) {
 
 function limparPassos(P) { P.execEl = null; }
 
+/* ===================== CONTINUAR A UM CLIQUE =====================
+   Chip fixo em cima da caixa de texto quando o chat esta parado e ja tem conversa;
+   Enter no campo vazio manda o mesmo "continue". Nunca aparece com trabalho rodando
+   nem com mensagem na fila. */
+function podeContinuar(P) { return !!(P && !P.busy && !P.queued && P.hist && P.hist.length); }
+function mostrarContinuar(P) {
+  limparContinuar(P);
+  if (!podeContinuar(P)) return;
+  const cmp = P.el && $('.pane-cmp', P.el);
+  if (!cmp) return;
+  const box = document.createElement('div');
+  box.className = 'p-cont';
+  const bt = document.createElement('button');
+  bt.className = 'cont-chip';
+  bt.innerHTML = '<span class="cont-seta">▶</span><span>Continuar</span>';
+  bt.title = 'Manda "continue" (Enter no campo vazio faz o mesmo)';
+  bt.addEventListener('click', (e) => { e.stopPropagation(); enviarContinue(P); });
+  cmp.insertBefore(box, $('.cmp-top', P.el));
+}
+function limparContinuar(P) {
+  const b = P && P.el && $('.p-cont', P.el);
+  if (b) b.remove();
+}
+function enviarContinue(P) {
+  if (!podeContinuar(P)) return;
+  const inp = P.el && $('.p-input', P.el);
+  if (!inp || inp.value.trim()) return;   // tem texto escrito: nao atropela
+  inp.value = 'continue';
+  send(P);
+}
+
+/* ===================== ULTIMA FALA COMO LEGENDA =====================
+   Num turno de 20 minutos a unica pista era o relogio: as frases de narracao do
+   agente somem no rolar da tela. A ultima frase curta vira legenda do "trabalhando". */
+function legendaDaFala(texto) {
+  // o corpo de uma cerca de codigo fica de fora ("const x = 1;" nao e' legenda)
+  const cauda = String(texto || '').slice(-600).replace(/```[\s\S]*?(```|$)/g, '');
+  const linhas = cauda.split('\n')
+    .filter((l) => !/^\s*(\||```|~~~)/.test(l))                      // linha de tabela e cerca de codigo nao sao legenda
+    .map((l) => l.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')          // [texto](url) e ![alt](url) -> texto
+      .replace(/^[\s#>*\-•\d.)]+/, '').replace(/[*_`~]/g, '').trim())
+    .filter((l) => l.length > 2 && !/^[|:\-\s]+$/.test(l));
+  const ult = linhas[linhas.length - 1] || '';
+  return ult.length > 90 ? ult.slice(0, 88).trimEnd() + '…' : ult;
+}
+/* No local quem escreve a linha do "trabalhando" e o pintaTrab, de segundo em segundo:
+   escrever direto no .trab-txt seria apagado no proximo tique. Entao aqui so guarda a
+   legenda em P.trabOque e manda repintar. */
+function legendarTrabalho(P, texto) {
+  if (!P || !P.busy || !P.trabEl) return;
+  P.trabOque = legendaDaFala(texto);
+  pintaTrab(P);
+}
 
 function trabalhando(P, oque) {
   if (!P.busy) return;              // terminou? entao nao mostra nada
@@ -1525,6 +1578,9 @@ function textDelta(P, key, text) {
     P.execEl = null;                                  // proximo comando abre cartao novo
   }
   b.raw += text; b.el.innerHTML = marked.parse(b.raw);
+  // o texto ACUMULADO, nao o pedaco de 50ms que chegou agora: sozinho ele quase nunca
+  // e uma frase inteira
+  legendarTrabalho(P, b.raw);
   if (P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
 }
@@ -1945,6 +2001,7 @@ function textFinal(P, key, text) {
     P.execEl = null;
   }
   b.raw = text; b.el.innerHTML = marked.parse(text);
+  legendarTrabalho(P, text);
   linkarArquivos(P, b.el); marcarLinksWeb(b.el); botoesDeCopia(b);
   if (P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
@@ -2210,6 +2267,13 @@ function recuperarEnvio(P, bolha, text, anexos) {
 }
 async function send(P) {
   const inp = $('.p-input', P.el);
+  /* Enter no campo vazio COM o chip "Continuar" na tela = manda "continue". O chip so nasce
+     no fim de um turno desta conversa, entao chat recem-aberto nao liga o motor sem querer.
+     Nao vale durante o ditado (campo vazio ali e falha de captacao, nao pedido), nem com
+     anexo ou desenho do quadro pendurado — isso e esquecimento, e o texto ainda vem. */
+  if (!inp.value.trim() && $('.p-cont', P.el) && podeContinuar(P)
+      && !(P.anexos || []).length && !P.quadroColado
+      && VIVO.P !== P && DITADO.P !== P) inp.value = 'continue';
   const text = inp.value.trim();
   /* Print colado sozinho TEM de sair. Antes o envio exigia texto: ele colava a imagem, apertava
      Enter e nao acontecia nada — a fichinha ficava presa no campo e ele achava que tinha
@@ -2294,7 +2358,10 @@ async function send(P) {
   }
   P.busy = true; P.comecouEm = Date.now(); setDot(P, 'busy');
   P.blocks.clear(); P.codexPlan = null; P.codexEstados = new Map();
-  pararTrabalho(P); limparPassos(P); trabalhando(P);
+  // sem zerar a legenda aqui, a ultima frase do turno ANTERIOR aparece colada no
+  // "trabalhando" do turno novo, como se ele ainda estivesse naquilo
+  P.trabOque = '';
+  pararTrabalho(P); limparPassos(P); limparContinuar(P); trabalhando(P);
   subirNaLista(P);
   let envio = envioComAnexos(P, text, anexos).text;
   /* O contexto entra na FRENTE do 'envio' (que ja carrega a lista de anexos), nunca do 'text' cru:
@@ -2434,6 +2501,7 @@ function receberEventoPane(ev) {
       avisarQueTerminou(P);
       P.busy = false; escondePerm(P, false);   // perguntas não bloqueantes continuam respondíveis
       setDot(P, 'idle'); P.blocks.clear(); pararTrabalho(P); limparPassos(P);
+      mostrarContinuar(P);
       setTimeout(() => { if (!P.busy) { pararTrabalho(P); limparPassos(P); } }, 400);
       // nao zera mais o histCache aqui: zerar trocava a lista por "Carregando..." e derrubava
       // busca, filtro e favorito ate a releitura terminar. O loadHist ja sobrescreve o cache.
@@ -2481,7 +2549,7 @@ function receberEventoPane(ev) {
       // para a caixa em vez de sumir.
       if (P.queued) { const q = P.queued; P.queued = null; devolverFilaAoCampo(P, q); }
       escondePerm(P);
-      setDot(P, 'off'); pararTrabalho(P); limparPassos(P);
+      setDot(P, 'off'); pararTrabalho(P); limparPassos(P); limparContinuar(P);
       // se o aviso de "esta conversa nao existe mais" acabou de sair, nao repetir outro recado
       // dizendo a mesma coisa com outras palavras
       if (!(P.fioSolto && Date.now() - P.fioSolto < 5000)) {
@@ -2883,6 +2951,10 @@ const MODOS = {
   codex: [
     { id: 'manual',    ic: 'hand', nome: 'Manual',                 desc: 'Pergunta antes de cada ação' },
     { id: 'auto',      ic: 'zap', nome: 'Auto',                   desc: 'Segue sozinho no que é seguro e para no que é arriscado' },
+    /* approvalsReviewer: auto_review no thread/start — um revisor automatico do proprio
+       Codex decide os pedidos arriscados, dentro do sandbox da pasta. So do Codex: no
+       Claude nao existe modo assim, e o mapa de la cairia em "sem pedir permissao". */
+    { id: 'revisado',  ic: 'sparkles', nome: 'Revisado por IA',   desc: 'Um revisor automático aprova ou barra os pedidos arriscados, sem te interromper' },
     { id: 'bypass',    ic: 'unlock', nome: 'Sem pedir permissão',    desc: 'Faz tudo sem perguntar, inclusive o que é perigoso' },
   ],
 };
@@ -4197,6 +4269,19 @@ function agDesenhar() {
 /* ============ conta e limite fixos na barra lateral ============ */
 const contaCache = { claude: null, codex: null };
 
+/* O "Entrar" do cartao da coluna chamava contaAcao(focusPane) — o motor do CHAT EM FOCO,
+   nao o da coluna. Com um chat do Codex em foco, clicar em "Entrar" no cartao do Claude
+   rodava "codex login". Agora o login e' sempre o do motor daquele cartao, e sem chat
+   desse motor a tela diz isso em vez de errar calada. */
+function entrarNaConta(engine) {
+  const P = (focusPane && focusPane.engine === engine)
+    ? focusPane
+    : [...panes.values()].find((q) => q.engine === engine);
+  if (P) { setFocus(P); contaAcao(P, 'login', engine); return; }
+  const recado = 'Abra um chat do ' + (engine === 'codex' ? 'Codex' : 'Claude') + ' para entrar na conta dele.';
+  if (focusPane) note(focusPane, recado, true);
+}
+
 async function pintarContaLateral(engine, forcar) {
   const cx = $('.side-conta[data-conta="' + engine + '"]');
   if (!cx) return;
@@ -4208,7 +4293,7 @@ async function pintarContaLateral(engine, forcar) {
   const motor = engine === 'codex' ? 'Codex' : 'Claude';
   if (!c || !c.entrou) {
     cx.innerHTML = '<div class="sc-vazio">Sem conta do ' + motor + ' neste Mac. <button class="sc-link">Entrar</button></div>';
-    $('.sc-link', cx).onclick = () => { const P = focusPane; if (P) contaAcao(P, 'login'); };
+    $('.sc-link', cx).onclick = () => entrarNaConta(engine);
     return;
   }
   const semDado = !c.sessao && !c.semana;
@@ -4280,8 +4365,8 @@ async function janelaConta(P, motorPedido) {
       + '<div class="mo-rodape"><button class="mo-btn" id="ctCodigo">Entrar com código</button>'
       + '<button class="mo-btn destaque" id="ctEntrar">Entrar</button></div>';
     $('.mo-x', cx).onclick = () => fecharModal(P);
-    $('#ctEntrar', cx).onclick = () => { fecharModal(P); contaAcao(P, 'login'); };
-    $('#ctCodigo', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocarCodigo'); };
+    $('#ctEntrar', cx).onclick = () => { fecharModal(P); contaAcao(P, 'login', eng); };
+    $('#ctCodigo', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocarCodigo', eng); };
     return;
   }
 
@@ -4325,11 +4410,11 @@ async function janelaConta(P, motorPedido) {
   $('.ct-n', cx).textContent = c.nome || c.email;
   $('.ct-e', cx).textContent = c.email + (c.via ? '  ·  ' + c.via : '');
   if (c.plano) $('.ct-plano', cx).textContent = c.plano;
-  $('#ctTrocar', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocar'); };
-  $('#ctSair', cx).onclick = () => { fecharModal(P); contaAcao(P, 'logout'); };
-  $('#ctCodigo', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocarCodigo'); };
+  $('#ctTrocar', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocar', eng); };
+  $('#ctSair', cx).onclick = () => { fecharModal(P); contaAcao(P, 'logout', eng); };
+  $('#ctCodigo', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocarCodigo', eng); };
   // o cartao acima le a conta DESTE Mac; com o chat na VPS quem responde e o servidor
-  if ($('#ctVps', cx)) $('#ctVps', cx).onclick = () => { fecharModal(P); contaAcao(P, 'status'); };
+  if ($('#ctVps', cx)) $('#ctVps', cx).onclick = () => { fecharModal(P); contaAcao(P, 'status', eng); };
 }
 
 /* ---------- aviso de limite do plano, em cima da caixa de texto ----------
@@ -4511,8 +4596,12 @@ function lerStatusConta(txt) {
   return { dentro: true, quem: email || t.split('\n')[0].slice(0, 80) };
 }
 
-async function contaAcao(P, acao) {
-  const r = await window.api.auth({ engine: P.engine, acao, cwd: P.cwd });
+/* O 3o argumento diz de QUAL motor e a conta. Sem ele, com um chat do Codex em foco o
+   botao "Entrar" (ou "Sair") do cartao do Claude mexia na conta do CODEX. Quem nao passa
+   nada continua caindo no motor do proprio chat, como antes. */
+async function contaAcao(P, acao, motorPedido) {
+  const eng = motorPedido || P.engine;
+  const r = await window.api.auth({ engine: eng, acao, cwd: P.cwd });
   if (!r) return;
   if (r.error) return note(P, 'Não consegui: ' + r.error, true);
   if (acao === 'status') { avisoTemp(P, (r.texto || 'sem resposta').split('\n').slice(0, 4).join(' · ')); return; }
@@ -4521,19 +4610,19 @@ async function contaAcao(P, acao) {
   janelaTerminal(P, r.terminal, r.titulo || 'Conta', async () => {
     // todo chat do mesmo motor recomeca, senao continua falando pela conta velha
     for (const q of panes.values()) {
-      if (q.engine !== P.engine) continue;
+      if (q.engine !== eng) continue;
       await desligarMotor(q); q.resumeId = null;
     }
     if (!r.confereDepois) { avisoTemp(P, 'Pronto. Mande uma mensagem para começar de novo.'); return; }
     avisoTemp(P, 'Conferindo qual conta ficou…');
-    const st = await window.api.auth({ engine: P.engine, acao: 'status', cwd: P.cwd });
+    const st = await window.api.auth({ engine: eng, acao: 'status', cwd: P.cwd });
     const txt = ((st && st.texto) || '').trim();
     const r2 = lerStatusConta(txt);
     if (r2.dentro) {
       avisoTemp(P, 'Conta trocada' + (r2.quem ? ': ' + r2.quem : '.'));
-      USO_FECHADO[P.engine] = null; lerUso(P.engine, true);
+      USO_FECHADO[eng] = null; lerUso(eng, true);
       // trocou de conta: aqui SIM vale reler o cartao inteiro, pro e-mail e o plano mudarem
-      contaCache[P.engine] = null; pintarContaLateral(P.engine, true);
+      contaCache[eng] = null; pintarContaLateral(eng, true);
     } else {
       avisoTemp(P, 'A entrada não terminou. Tente de novo e não feche a janela até o navegador confirmar. Se o navegador não abrir, use "entrar com código".', true);
     }
@@ -5505,6 +5594,21 @@ function abrirVistaLateral(v) {
   if (v === 'hcodex') { loadHist('codex'); pintarContaLateral('codex', true); }
 }
 
+/* ⌘P: abre a coluna das conversas do motor do chat em foco e ja poe o cursor na busca.
+   Nao passa pelo clique do icone de proposito: aquele caminho repinta a conta com
+   forcar=true, e um "auth status" novo a cada aperto de ⌘P e lento e sem motivo. */
+function abrirBuscaDeConversa() {
+  const eng = (focusPane && focusPane.engine === 'codex') ? 'codex' : 'claude';
+  const v = 'h' + eng;
+  $('#sidebar').classList.remove('hidden'); $('#dragbar').classList.remove('hidden');
+  $$('.side-view').forEach(x => x.classList.toggle('hidden', x.dataset.view !== v));
+  loadHist(eng); pintarContaLateral(eng);
+  sincronizarIconesLaterais();
+  encostarAbas();
+  const campo = $('.side-busca[data-busca="' + eng + '"]');
+  if (campo) setTimeout(() => { campo.focus(); campo.select(); }, 60);
+}
+
 // enquanto a coluna estiver aberta, o limite se atualiza sozinho de 2 em 2 minutos
 setInterval(() => {
   if ($('#sidebar').classList.contains('hidden')) return;
@@ -5649,6 +5753,7 @@ const ATALHOS = [
   ['Ler e copiar', [
     ['PageUp / PageDown', 'Rolar a conversa sem tirar o cursor do campo'],
     ['⌘F', 'Buscar na conversa (Enter vai pro próximo, ⇧Enter volta)'],
+    ['⌘P', 'Buscar uma conversa: abre a coluna e já põe o cursor na busca'],
     ['⌘A depois ⌘C', 'Copiar a conversa inteira, com os comandos'],
     ['⌘K', 'Limpar a tela (a conversa continua de onde estava)'],
     ['⌘S', 'Salvar a conversa no Obsidian'],
@@ -5834,7 +5939,7 @@ function acaoDeMenu(a) {
      nao existia mais. Desfazer/refazer/selecionar tudo e a tela de atalhos NAO entram aqui:
      esses tem que continuar chegando. */
   const ACOES_DO_PAINEL = ['newPane', 'newTab', 'closePane', 'reabrirFechado', 'pickFolder', 'clearPane',
-    'buscarNaConversa', 'perguntarAosDois', 'ditar', 'salvarVault', 'toggleSidebar', 'foco'];
+    'buscarNaConversa', 'buscarConversa', 'perguntarAosDois', 'ditar', 'salvarVault', 'toggleSidebar', 'foco'];
   if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto() && ACOES_DO_PAINEL.includes(a)) return;
   if (a === 'atalhos') return alternarTelaAtalhos();
   if (a === 'desfazer' || a === 'refazer' || a === 'selecionarTudo') return edicaoDoMenu(a);
@@ -5851,6 +5956,7 @@ function acaoDeMenu(a) {
   if (a === 'foco') { const on = alternarFoco(); if (focusPane) avisoTemp(focusPane, on ? 'Modo foco ligado: só pergunta e resposta.' : 'Modo foco desligado.'); return; }
   if (a === 'reabrirFechado') return reabrirUltimoFechado();
   if (a === 'buscarNaConversa') return abrirBuscaConversa(focusPane);
+  if (a === 'buscarConversa') return abrirBuscaDeConversa();
   if (a === 'perguntarAosDois') return focusPane && perguntarAosDois(focusPane);
   if (a === 'ditar') return focusPane && alternarDitado(focusPane);
   if (a === 'quadro') return focusPane && window.Quadro && window.Quadro.abrir(focusPane);

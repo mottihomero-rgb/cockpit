@@ -47,6 +47,9 @@ function turnSettings(settings, policy) {
     ...(settings.effort ? { effort: settings.effort } : {}),
     ...(settings.cwd ? { cwd: settings.cwd } : {}),
     approvalPolicy: policy.policy,
+    // null explicito: o turno seguinte na MESMA thread precisa desligar o revisor
+    // automatico quando o modo deixou de ser "revisado"
+    approvalsReviewer: policy.reviewer || null,
     sandboxPolicy: sandboxPolicy(policy.sandbox, settings.cwd),
     ...(settings.serviceTier ? { serviceTier: settings.serviceTier } : {}),
   };

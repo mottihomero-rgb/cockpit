@@ -701,6 +701,10 @@ const CODEX_MODE = {
   manual:      { policy: 'untrusted',  sandbox: 'workspace-write' },
   'auto-edit': { policy: 'on-request', sandbox: 'workspace-write' },
   auto:        { policy: 'on-request', sandbox: 'workspace-write' },
+  /* "revisado" manda o pedido de permissao pra um revisor AUTOMATICO do proprio Codex
+     (approvalsReviewer: auto_review), ainda dentro do sandbox de escrita na pasta:
+     degrau entre Auto e "sem pedir permissao" — nao interrompe, mas nao e' cego. */
+  revisado:    { policy: 'on-request', sandbox: 'workspace-write', reviewer: 'auto_review' },
   bypass:      { policy: 'never',      sandbox: 'danger-full-access' },
 };
 const CLAUDE_MODE = { manual: 'manual', 'auto-edit': 'acceptEdits', plan: 'plan', auto: 'auto', bypass: 'bypassPermissions' };
@@ -1057,8 +1061,13 @@ function linhaNoServidor(r, comando) {
   const dentro = 'bash -lc ' + aspaSh(comando);
   return r.usuario ? 'sudo -u ' + r.usuario + ' -H ' + dentro : dentro;
 }
+/* O ServerAliveInterval sozinho pergunta de 20 em 20 segundos, mas o ssh desiste na 3a
+   pergunta sem resposta: 60s de silencio e a conversa da VPS caia no meio do trabalho.
+   Com CountMax=6 a espera vai pra 120s (o dobro), e o TCPKeepAlive faz o proprio sistema
+   segurar a tomada quando o roteador de casa tenta fechar a porta por inatividade. */
 function argsSsh(r, comando) {
-  return ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=12', '-o', 'ServerAliveInterval=20', r.host, linhaNoServidor(r, comando)];
+  return ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=12', '-o', 'ServerAliveInterval=20',
+    '-o', 'ServerAliveCountMax=6', '-o', 'TCPKeepAlive=yes', r.host, linhaNoServidor(r, comando)];
 }
 // roda um comando na VPS e devolve a saida (para listar pasta, ler arquivo, etc.)
 function noServidor(r, comando, ms = 20000) {
@@ -2707,6 +2716,9 @@ function claudeAttachmentText(text, attachments) {
 function codexThreadParams(settings, billing) {
   const policy = CODEX_MODE[settings.approval] || CODEX_MODE.bypass;
   return { cwd: settings.cwd || HOME, sandbox: policy.sandbox, approvalPolicy: policy.policy,
+    // null explicito, e nao "some do objeto": o mesmo thread troca de modo por thread/resume,
+    // e um campo ausente deixaria o revisor do modo anterior ligado
+    approvalsReviewer: policy.reviewer || null,
     developerInstructions: instrucoesCasa(), ...(settings.model ? { model: settings.model } : {}),
     ...(billing === 'api' ? { serviceTier: 'default' } : settings.serviceTier ? { serviceTier: settings.serviceTier } : {}),
     modelProvider: billing === 'api' ? ASTRA_PROVIDER : 'openai',
@@ -2996,6 +3008,7 @@ function menu() {
       { label: 'Limpar conversa', accelerator: 'CmdOrCtrl+K', click: () => win && win.webContents.send('menu', 'clearPane') },
       { type: 'separator' },
       { label: 'Buscar nesta conversa', accelerator: 'CmdOrCtrl+F', click: () => win && win.webContents.send('menu', 'buscarNaConversa') },
+      { label: 'Buscar conversa…', accelerator: 'CmdOrCtrl+P', click: () => win && win.webContents.send('menu', 'buscarConversa') },
       { label: 'Perguntar aos dois motores', accelerator: 'CmdOrCtrl+D', click: () => win && win.webContents.send('menu', 'perguntarAosDois') },
       { label: 'Ditar (segure para falar)', accelerator: 'CmdOrCtrl+Shift+D', click: () => win && win.webContents.send('menu', 'ditar') },
       { label: 'Desenhar um fluxo (quadro branco)', accelerator: 'CmdOrCtrl+Shift+E', click: () => win && win.webContents.send('menu', 'quadro') },
