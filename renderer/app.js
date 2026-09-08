@@ -2401,7 +2401,9 @@ function mostrarMudancasDoTurno(P, mudancas, diffTurno) {
   for (const ed of (mudancas || [])) {
     const tit = document.createElement('div');
     tit.className = 'menu-secao';
-    tit.textContent = ed.arquivo || 'arquivo';
+    // so o nome do arquivo: o caminho inteiro em maiuscula ocupava tres linhas do cabecalho
+    tit.textContent = String(ed.arquivo || 'arquivo').split('/').pop() || 'arquivo';
+    tit.title = ed.arquivo || '';
     corpo.appendChild(tit);
     corpo.appendChild(cartaoDeDiff(P, ed));     // o mesmo cartao verde/vermelho do passo
   }
@@ -2488,6 +2490,11 @@ function avisoDoAgente(P, texto) {
   if (P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
   piscar(P);
+  /* Aviso do sistema SO' quando ele nao esta vendo este painel: fora da janela, com a janela
+     escondida, ou com outra aba de projeto na frente. Olhando pro chat, o cartao amarelo e o
+     painel piscando ja dizem tudo — a notificacao ali seria so barulho. */
+  const naFrente = document.hasFocus() && !document.hidden && abaAtiva && P.aid === abaAtiva.id;
+  if (naFrente) return;
   const nome = P.titulo || nomePasta(P.cwd) || 'Painel';
   try { window.api.avisarAgente({ paneId: P.id, titulo: 'Cockpit — ' + nome, texto: t }); } catch {}
 }
