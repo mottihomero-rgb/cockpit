@@ -50,6 +50,10 @@
     <button class="act" data-view="torre" title="Torre de controle: todos os chats, aqui e fora do Cockpit">
       <svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M5 22 12 8l7 14"/><circle cx="12" cy="4.5" r="2"/></svg>
     </button>
+    <!-- leva 11: rotinas — os robôs agendados que rodam sozinhos nesta máquina -->
+    <button class="act" data-view="rotinas" title="Rotinas: os robôs agendados que rodam sozinhos nesta máquina">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>
+    </button>
     <button class="act" data-view="settings" title="Ajustes">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
     </button>
@@ -82,6 +86,11 @@
     <div class="side-view hidden" data-view="torre">
       <div class="side-head"><span>Torre de controle</span><button class="mini" id="btnTorreAtualizar" title="Atualizar agora"></button></div>
       <div class="torre" id="torre"></div>
+    </div>
+    <!-- leva 11: a lista é desenhada por pintarRotinas() -->
+    <div class="side-view hidden" data-view="rotinas">
+      <div class="side-head"><span>Rotinas do Mac</span><button class="mini" id="btnRotinasAtualizar" title="Atualizar agora"></button></div>
+      <div class="rot" id="rotinas"></div>
     </div>
     <div class="side-view hidden" data-view="settings">
       <div class="side-head"><span>Ajustes</span></div>

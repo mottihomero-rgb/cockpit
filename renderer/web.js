@@ -122,6 +122,12 @@
     gitStatus: (o) => chamar('git:status', o),
     gitDiff: (o) => chamar('git:diff', o),
     motoresVersoes: () => chamar('motores:versoes'),
+    /* leva 11: no telefone ele VÊ quais robôs do Mac pararam (é leitura, vai pelo mesmo cano),
+       mas não dispara nenhum — o main nem expõe esse canal ao Wi-Fi (R1). A resposta sai aqui
+       na hora, com o tipo certo, senão o app.js (que é o MESMO arquivo nos dois) morreria num
+       TypeError e derrubaria o boot do celular. */
+    rotinasListar: () => chamar('rotinas:listar'),
+    rotinasDisparar: () => Promise.resolve({ error: 'Disparar uma rotina só funciona no Mac.' }),
     mcpList: (e) => chamar('mcp:list', e),
     mcpAcao: (o) => chamar('mcp:acao', o),
     auth: (o) => chamar('auth:acao', o),

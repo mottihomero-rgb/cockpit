@@ -86,6 +86,10 @@ contextBridge.exposeInMainWorld('api', {
   gitStatus: (o) => ipcRenderer.invoke('git:status', o),
   gitDiff: (o) => ipcRenderer.invoke('git:diff', o),
   motoresVersoes: () => ipcRenderer.invoke('motores:versoes'),
+  /* leva 11: rotinas do launchd. Listar é LEITURA; disparar roda o robô de verdade e o main o
+     mantém fora do mapa servido pelo Wi-Fi (R1). */
+  rotinasListar: () => ipcRenderer.invoke('rotinas:listar'),
+  rotinasDisparar: (o) => ipcRenderer.invoke('rotinas:disparar', o),
   mcpList: (e) => ipcRenderer.invoke('mcp:list', e),
   mcpAcao: (o) => ipcRenderer.invoke('mcp:acao', o),
   avisarPronto: (o) => ipcRenderer.invoke('aviso:pronto', o),

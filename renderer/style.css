@@ -11,6 +11,8 @@
   --sombra1:#00000060; --sombra2:#00000090; --veu:#00000066;
   --codex:#6ea8fe; --claude:#d97757;
   --green:#5aa469; --yellow:#d7ba7d; --red:#e05252;
+  /* leva 11: fundo do bloco da rotina quebrada (o destaque da tela de Rotinas) */
+  --rot-falha:#3a2222; --rot-falha-borda:#6d3434;
   --aba-barra:#131315; --aba-fundo:#303035; --aba-alto:#3b3b41; --aba-borda:#4a4a51; --aba-brilho:#ffffff14;
   --aba-alto-on:#45454e; --aba-borda-on:#6a6a74; --aba-brilho-on:#ffffff2e; --aba-marca:#c8c8d2;
   --aba-neon:#6ea8fe;
@@ -26,6 +28,7 @@ html[data-tema="claro"]{
   --sombra1:#0000001a; --sombra2:#00000026; --veu:#00000033;
   --codex:#1f6feb; --claude:#c2521f;
   --green:#2f7d3a; --yellow:#9a6b00; --red:#c62828;
+  --rot-falha:#fdeaea; --rot-falha-borda:#f0bcbc;
   --aba-barra:#d7d7dc; --aba-fundo:#ececed; --aba-alto:#f7f7f8; --aba-borda:#bfbfc6; --aba-brilho:#ffffff;
   --aba-alto-on:#ffffff; --aba-borda-on:#a6a6b0; --aba-brilho-on:#ffffff; --aba-marca:#3d3d45;
   --aba-neon:#1f6feb;
@@ -42,6 +45,7 @@ html[data-tema="jornal"]{
   --sombra1:#586e7520; --sombra2:#586e7530; --veu:#586e7540;
   --codex:#268bd2; --claude:#cb4b16;
   --green:#859900; --yellow:#b58900; --red:#dc322f;
+  --rot-falha:#f7e3da; --rot-falha-borda:#e0b8a6;
   --aba-barra:#ded6bd; --aba-fundo:#f0e9d5; --aba-alto:#f8f2e2; --aba-borda:#c9c1a6; --aba-brilho:#fffdf6;
   --aba-alto-on:#fffdf4; --aba-borda-on:#b3ab90; --aba-brilho-on:#ffffff; --aba-marca:#3f5560;
   --aba-neon:#268bd2;
@@ -1656,3 +1660,53 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
   place-items:center;border:0;background:transparent;cursor:pointer}
 .fx-x:hover{background:var(--hover3);color:var(--fg)}
 .fx-x .ic{width:10px;height:10px}
+
+/* ======== leva 11: rotinas (os robôs agendados do launchd) ======== */
+/* Cópia da torre com prefixo próprio: mesma linguagem visual, e a mudança de uma não arrasta a
+   outra. O bloco de falha vem primeiro e com fundo próprio — é a razão da tela existir, não
+   pode ser mais um item na lista.
+   overflow:auto porque no Mac são centenas de serviços carregados, não vinte. */
+.rot{padding:6px 8px;display:flex;flex-direction:column;gap:2px;font-size:12px;overflow:auto;flex:1;min-height:0}
+/* o "lendo…" da view: a leitura do launchd leva alguns décimos e a tela abria em branco */
+.rot-carregando{padding:8px 6px;font-size:11.5px;color:var(--fg-dim)}
+.rot-resumo{font-size:11px;color:var(--fg-dim);padding:4px 6px 8px}
+.rot-resumo.tem-falha{color:var(--red);font-weight:600}
+.rot-grupo{display:flex;align-items:center;gap:7px;padding:8px 6px 3px;font-size:11px;
+  text-transform:uppercase;letter-spacing:.05em;color:var(--fg-dim)}
+.rot-conta{margin-left:auto;text-transform:none;letter-spacing:0}
+/* grupo recolhível: os serviços da Apple e dos programas instalados */
+.rot-grupo.clicavel{cursor:pointer;border-radius:6px}
+.rot-grupo.clicavel:hover{background:var(--hover);color:var(--fg)}
+.rot-seta{flex:none;display:flex;align-items:center;opacity:.75}
+.rot-seta svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.rot-caixa{background:var(--rot-falha);border:1px solid var(--rot-falha-borda);border-radius:8px;padding:2px 4px 6px;margin-bottom:6px}
+.rot-caixa .rot-grupo{color:var(--red)}
+.rot-item{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:7px}
+.rot-item:hover{background:var(--hover)}
+.ri-pt{width:7px;height:7px;border-radius:50%;flex:none;margin-top:5px;background:var(--fg-fraco)}
+/* Verde, não amarelo piscando como no fork do Hugo: aqui metade das rotinas dele é RESIDENTE
+   (KeepAlive), e "ligada" é o estado saudável delas — doze bolinhas piscando pareceriam doze
+   avisos. O amarelo pulsando fica só para a rotina AGENDADA flagrada no meio de uma execução,
+   que é onde ele de fato quer dizer "trabalhando agora". */
+.rot-item.ocupado .ri-pt{background:var(--green)}
+.rot-item.ocupado.trabalhando .ri-pt{background:var(--yellow);animation:pulse 1.1s ease-in-out infinite}
+.rot-item.espera .ri-pt{background:var(--red)}
+.rot-item.parado .ri-pt{background:var(--green);opacity:.55}
+.rot-item.fora .ri-pt{background:var(--fg-fraco);opacity:.7}
+.ri-txt{display:flex;flex-direction:column;min-width:0;flex:1}
+.ri-tit{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ri-est{font-size:11px;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ri-quando{font-size:11px;color:var(--fg-fraco);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Na linha quebrada o motivo é o CONTEÚDO, não um detalhe: ele quebra em várias linhas e ocupa
+   a largura inteira da coluna. O botão desce para baixo (a linha 1 já come 100%), senão o
+   texto ficaria espremido numa coluna de três palavras ao lado dele. */
+.rot-item.espera .ri-est{color:var(--red);font-weight:600;white-space:normal}
+.rot-item.espera{flex-wrap:wrap}
+.rot-item.espera .ri-txt{flex:1 1 calc(100% - 15px)}
+.rot-item.espera .ri-acao{margin:5px 0 1px 15px}
+.ri-acao{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line2);
+  color:var(--fg-dim);flex:none;align-self:center}
+.ri-acao:hover{color:var(--fg);border-color:var(--accent)}
+/* disparando…, e as da lista-negra (o próprio Cockpit, a ponte do WhatsApp): à vista, mas mortas */
+.ri-acao:disabled{opacity:.5}
+.ri-acao:disabled:hover{color:var(--fg-dim);border-color:var(--line2)}

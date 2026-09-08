@@ -7095,6 +7095,9 @@ document.querySelectorAll('[data-new]').forEach(b =>
 {
   const btTorre = document.getElementById('btnTorreAtualizar');
   if (btTorre) { btTorre.innerHTML = ico('refresh-cw'); btTorre.addEventListener('click', () => pintarTorre(true)); }
+  // leva 11: o mesmo botão para as rotinas — `true` fura o cache de 20s da lista
+  const btRotinas = document.getElementById('btnRotinasAtualizar');
+  if (btRotinas) { btRotinas.innerHTML = ico('refresh-cw'); btRotinas.addEventListener('click', () => pintarRotinas(true)); }
 }
 
 /* ============ arrastar: chats dentro da aba, e abas entre si ============ */
@@ -7701,6 +7704,231 @@ setInterval(() => {
   if (torreVisivel() && !(b && b.matches(':hover'))) pintarTorre(false);
 }, 4000);
 
+/* ===================== LEVA 11 — ROTINAS: os robôs agendados deste Mac =====================
+   Os robôs que rodam sozinhos aqui (espelho da VPS, radar do painel, coletor do WhatsApp,
+   vigia financeiro...). A tela existe por um motivo só: quando um deles para, ninguém fica
+   sabendo — dá para ficar semanas em silêncio. Por isso o que quebrou vem PRIMEIRO, em
+   vermelho e com o motivo em português; o resto da lista é só contexto.
+   Quem sabe de tudo isto no Mac é o launchd, e é dele que o main tira a lista. */
+let rotinasCache = { itens: [], erro: '', velha: false, quando: 0 };
+let rotinasGen = 0;                    // repaint em voo: o mais novo ganha, o antigo não monta por cima
+const rotinasDisparando = new Set();   // trava de duplo clique, uma chave por rotina
+/* Neste Mac o launchd tem 550 serviços carregados, quase todos da Apple. Eles ficam no grupo
+   recolhido — mas mesmo recolhido, ABRIR e depois repintar de minuto em minuto 500 linhas é o
+   app virando o peso que veio medir. Pinta um teto e diz quantas ficaram de fora. */
+const ROT_TETO_SISTEMA = 150;
+
+function rotinasVisivel() {
+  const v = $('.side-view[data-view="rotinas"]'), lat = $('#sidebar');
+  return !!v && !v.classList.contains('hidden') && !!lat && !lat.classList.contains('hidden');
+}
+
+/* "hoje 08:15", "ontem 22:00", "25/08 08:56". Data crua não diz nada de relance, e o que se
+   quer saber aqui é justamente "faz quanto tempo?". */
+function quandoDaRotina(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const hora = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const soODia = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dias = Math.round((soODia(new Date()) - soODia(d)) / 86400000);
+  if (dias === 0) return 'hoje ' + hora;
+  if (dias === 1) return 'ontem ' + hora;
+  if (dias === -1) return 'amanhã ' + hora;
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + hora;
+}
+
+function linhaDaRotina(t) {
+  /* Quem está RODANDO AGORA vem primeiro na conta: o "falhou" é o resultado da execução
+     ANTERIOR, e dizer "falhou" de um robô que está trabalhando neste instante é chamar de
+     quebrado o que está funcionando. O main já resolve isso; aqui só não se desfaz. */
+  const rodando = t.estado === 'rodando';
+  const cls = (rodando ? 'ocupado' + (t.residente ? '' : ' trabalhando') : t.falhou ? 'espera' : t.estado === 'desativada' ? 'fora' : 'parado');
+  const d = document.createElement('div');
+  d.className = 'rot-item ' + cls;
+  d.innerHTML = '<span class="ri-pt"></span><span class="ri-txt"><span class="ri-tit"></span><span class="ri-est"></span><span class="ri-quando"></span></span>';
+  /* nome, motivo e horário vêm do launchd: entram por textContent, nunca por innerHTML — nome
+     de serviço aceita < e & e viraria marcação na tela. */
+  $('.ri-tit', d).textContent = t.nome;
+  const ultima = quandoDaRotina(t.ultima);
+  $('.ri-est', d).textContent = rodando
+    ? (t.residente ? 'ligada agora' : 'rodando agora') + (ultima ? ' · desde ' + ultima : '')
+    : t.falhou
+      ? 'parou de funcionar' + (ultima ? ' em ' + ultima : '') + ': ' + (t.motivo || 'motivo desconhecido')
+      : (ultima ? 'rodou ' + ultima : 'sem registro de execução') + (t.estado === 'desativada' ? ' · desativada' : '');
+  const proxima = quandoDaRotina(t.proxima);
+  $('.ri-quando', d).textContent = proxima ? 'próxima: ' + proxima : (t.cadencia || 'sem hora marcada');
+  // nome comprido corta com reticências na coluna estreita: o inteiro fica na dica
+  d.title = t.nome + (t.caminho ? '  ·  ' + t.caminho : '');
+  const bt = document.createElement('button');
+  bt.className = 'ri-acao';
+  bt.textContent = 'disparar';
+  if (t.podeDisparar === false) {
+    /* Lista-negra do main (o próprio Cockpit, a ponte do WhatsApp, o executor, a rede da VPS):
+       o botão fica à vista e explicado, em vez de sumir sem dizer por quê. */
+    bt.disabled = true;
+    bt.title = 'Esta não pode ser disparada daqui: ela derrubaria algo que está em uso agora';
+  } else {
+    bt.title = 'Roda esta rotina agora, sem esperar a hora marcada';
+    // repaint no meio de um disparo não pode devolver o botão habilitado
+    if (rotinasDisparando.has(t.nome)) { bt.disabled = true; bt.textContent = 'disparando…'; }
+    bt.addEventListener('click', (e) => { e.stopPropagation(); dispararRotina(t, bt); });
+  }
+  d.appendChild(bt);
+  return d;
+}
+
+/* Disparar dispara trabalho de verdade (o mesmo que a hora marcada dispararia): pergunta
+   antes, e trava a rotina até o launchd responder, para o segundo clique não mandar duas
+   vezes. */
+async function dispararRotina(t, bt) {
+  if (rotinasDisparando.has(t.nome)) return;
+  if (!confirm('Rodar "' + t.nome + '" agora?\n\nIsso dispara a automação de verdade, na hora, como se fosse o horário marcado.')) return;
+  rotinasDisparando.add(t.nome);
+  if (bt) { bt.disabled = true; bt.textContent = 'disparando…'; }
+  let erro = '';
+  try {
+    const r = await window.api.rotinasDisparar({ nome: t.nome });
+    erro = (r && r.error) || '';
+  } catch (e) { erro = String((e && e.message) || e); }
+  rotinasDisparando.delete(t.nome);
+  mostrarAviso({
+    id: 'rotina-' + t.nome,
+    texto: erro ? 'Não consegui disparar "' + t.nome + '": ' + erro : '"' + t.nome + '" foi disparada agora.',
+    tipo: erro ? 'erro' : 'info',
+  });
+  rotinasCache.quando = 0;   // o "ligada agora" tem que aparecer na próxima pintura
+  if (rotinasVisivel()) pintarRotinas(true);
+}
+
+function grupoDeRotinas(nome, quantas, extra) {
+  const g = document.createElement('div');
+  g.className = 'rot-grupo';
+  g.innerHTML = '<span class="rot-nome"></span><span class="rot-conta"></span>';
+  $('.rot-nome', g).textContent = nome;
+  $('.rot-conta', g).textContent = quantas + (quantas === 1 ? ' rotina' : ' rotinas') + (extra || '');
+  return g;
+}
+
+/* Os serviços do macOS e dos programas instalados (Apple, Google, syncthing) entram num grupo
+   próprio, RECOLHIDO. Não somem — um clique abre — mas saem do caminho: o bloco vermelho
+   existe para ele ver as DELE, e aqui são 500 contra 33. */
+let rotinasOutrasAbertas = false;
+function cabecalhoDasOutras(quantas, quantasFalharam) {
+  const g = grupoDeRotinas('Do sistema e de programas', quantas,
+    quantasFalharam ? ' · ' + quantasFalharam + ' com falha' : '');
+  g.classList.add('clicavel');
+  const seta = document.createElement('span');
+  seta.className = 'rot-seta';
+  // marcação fixa do próprio app (nunca dado do launchd): innerHTML aqui é seguro
+  seta.innerHTML = ico(rotinasOutrasAbertas ? 'chevron-down' : 'chevron-right');
+  g.appendChild(seta);
+  g.title = rotinasOutrasAbertas ? 'Esconder os serviços do sistema' : 'Mostrar os serviços do sistema';
+  g.addEventListener('click', () => { rotinasOutrasAbertas = !rotinasOutrasAbertas; pintarRotinas(false); });
+  return g;
+}
+
+async function pintarRotinas(forcar) {
+  const box = $('#rotinas');
+  if (!box) return;
+  // a lista vem por IPC: pinta o que já tem em cache e atualiza quando a resposta chegar
+  if (forcar || Date.now() - rotinasCache.quando > 20000) {
+    /* A geração é SÓ de quem vai BUSCAR. Se todo repaint tomasse uma nova, o perdedor da
+       corrida derrubaria a chamada BOA que ainda está em voo — ela voltaria, veria
+       gen !== rotinasGen e iria para o lixo, deixando a tela dizendo "nenhuma rotina" numa
+       máquina cheia delas. Repintar não invalida quem voa. */
+    const gen = ++rotinasGen;
+    rotinasCache.quando = Date.now();
+    /* A leitura do launchd leva alguns décimos e a view abria EM BRANCO. O "lendo…" é o que
+       separa "lento" de "quebrado". Só quando ainda não há lista nenhuma: por cima de uma
+       lista pronta isso seria pisca-pisca a cada atualização. */
+    if (!rotinasCache.itens.length && rotinasVisivel()) {
+      box.innerHTML = '';
+      const lendo = document.createElement('div');
+      lendo.className = 'rot-carregando';
+      lendo.textContent = 'Lendo os robôs agendados deste Mac…';
+      box.appendChild(lendo);
+    }
+    let chegou = null, erroDaChamada = '';
+    try { chegou = await window.api.rotinasListar(); }
+    catch (e) { erroDaChamada = String((e && e.message) || e); }
+    /* Resposta atrasada de uma busca ultrapassada por OUTRA não pode sobrescrever a lista mais
+       nova — nem a tela, NEM o cache. Sai calada. */
+    if (gen !== rotinasGen) return;
+    if (erroDaChamada) rotinasCache.erro = erroDaChamada;
+    else {
+      rotinasCache.itens = (chegou && Array.isArray(chegou.itens)) ? chegou.itens : [];
+      rotinasCache.erro = (chegou && chegou.error) || '';
+      rotinasCache.velha = !!(chegou && chegou.velho);
+    }
+    if (!rotinasVisivel()) return;
+  }
+  const porNome = (a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR');
+  /* 'dele' pode faltar numa lista guardada por uma versão antiga: na dúvida a rotina é DELE,
+     porque o erro de esconder é pior que o de mostrar demais. */
+  const minhas = rotinasCache.itens.filter((t) => t.dele !== false);
+  const doSistema = rotinasCache.itens.filter((t) => t.dele === false).sort(porNome);
+  const falhas = minhas.filter((t) => t.falhou).sort(porNome);
+  const resto = minhas.filter((t) => !t.falhou).sort(porNome);
+  const falhasDoSistema = doSistema.filter((t) => t.falhou).length;
+  const total = rotinasCache.itens.length;
+
+  const resumo = document.createElement('div');
+  resumo.className = 'rot-resumo' + (falhas.length ? ' tem-falha' : '');
+  resumo.textContent = !total
+    ? (rotinasCache.erro ? 'Não consegui ler o launchd deste Mac.' : 'Nenhuma rotina agendada nesta máquina.')
+    : total + (total === 1 ? ' rotina' : ' rotinas') + ' · '
+      + (falhas.length
+        ? falhas.length + (falhas.length === 1 ? ' sua parou de funcionar' : ' suas pararam de funcionar')
+        : (falhasDoSistema ? 'nenhuma das suas falhou' : 'todas rodaram sem erro'))
+      + (falhasDoSistema ? ' · ' + falhasDoSistema + ' do sistema também' : '')
+      + (rotinasCache.velha ? ' · lista antiga: não consegui atualizar' : '');
+
+  box.innerHTML = '';
+  box.appendChild(resumo);
+  if (rotinasCache.erro && total) {
+    const m = document.createElement('div');
+    m.className = 'rot-resumo';
+    m.textContent = rotinasCache.erro;
+    box.appendChild(m);
+  }
+  // o bloco vermelho vem primeiro e fechado numa caixa própria: é o que a tela veio resolver,
+  // não pode virar mais uma linha no meio de centenas
+  if (falhas.length) {
+    const cx = document.createElement('div');
+    cx.className = 'rot-caixa';
+    cx.appendChild(grupoDeRotinas('Parou de funcionar', falhas.length));
+    for (const t of falhas) cx.appendChild(linhaDaRotina(t));
+    box.appendChild(cx);
+  }
+  if (resto.length) {
+    box.appendChild(grupoDeRotinas(falhas.length ? 'As outras suas' : 'Em dia', resto.length));
+    for (const t of resto) box.appendChild(linhaDaRotina(t));
+  }
+  // as do sistema ficam recolhidas: presentes, contadas, fora do destaque
+  if (doSistema.length) {
+    box.appendChild(cabecalhoDasOutras(doSistema.length, falhasDoSistema));
+    if (rotinasOutrasAbertas) {
+      // as que falharam vêm na frente do teto: seria burrice cortar justo a linha que importa
+      const ordem = doSistema.filter((t) => t.falhou).concat(doSistema.filter((t) => !t.falhou));
+      for (const t of ordem.slice(0, ROT_TETO_SISTEMA)) box.appendChild(linhaDaRotina(t));
+      if (ordem.length > ROT_TETO_SISTEMA) {
+        const m = document.createElement('div');
+        m.className = 'rot-resumo';
+        m.textContent = '…e mais ' + (ordem.length - ROT_TETO_SISTEMA) + ' serviços do sistema, não mostrados aqui.';
+        box.appendChild(m);
+      }
+    }
+  }
+}
+/* 60 segundos, não 8: cada atualização acorda o launchd e lê 37 plists, e num Mac de 16 GB
+   fazer isso a cada 8 s é o app cobrando mais do que entrega. Sem a guarda do :hover o botão
+   "disparar" some debaixo do mouse no meio do clique, porque o repaint troca a linha inteira. */
+setInterval(() => {
+  const b = $('#rotinas');
+  if (rotinasVisivel() && !(b && b.matches(':hover'))) pintarRotinas(false);
+}, 60000);
+
 /* ===================== LEVA 10.4 — CHIP DO GIT NO CABEÇALHO =====================
    Mostra a branch da pasta deste chat e quantos arquivos estão mexidos. Clicar abre a lista,
    e cada arquivo abre o diff. Some sozinho fora de repositório e em chat da VPS (o git roda
@@ -7860,6 +8088,8 @@ function abrirVistaLateral(v) {
   // leva 10.2: a torre é sempre desenhada na hora — mostrar o estado de 4 segundos atrás
   // seria pior do que não mostrar nada
   if (v === 'torre') pintarTorre(true);
+  // leva 11: mesma ideia da torre — estado de um minuto atrás não serve para dizer se um robô parou
+  if (v === 'rotinas') pintarRotinas(true);
 }
 
 /* ⌘P: abre a coluna das conversas do motor do chat em foco e ja poe o cursor na busca.
