@@ -1306,6 +1306,7 @@ function mostrarContinuar(P) {
   bt.innerHTML = '<span class="cont-seta">▶</span><span>Continuar</span>';
   bt.title = 'Manda "continue" (Enter no campo vazio faz o mesmo)';
   bt.addEventListener('click', (e) => { e.stopPropagation(); enviarContinue(P); });
+  box.appendChild(bt);
   cmp.insertBefore(box, $('.cmp-top', P.el));
 }
 function limparContinuar(P) {
@@ -4759,13 +4760,16 @@ async function anexar(P, caminhos) {
 }
 
 function fichaAnexo(a, comX, aoTirar, P, Pvisor) {
-  /* O 5o parametro liga SO o visor (clique na ficha abre o arquivo). Quem usa o 4o e o dono
-     da ficha, e e nele que vao pendurar os extras futuros (o botao de OCR do Hugo, por
-     exemplo): a barra de escrever pede so o visor, entao passa null no 4o e o painel no 5o. */
-  P = P || Pvisor;
+  /* Dois jeitos de passar o painel, e a diferenca importa:
+     - 4o parametro (P): dono da ficha. Liga o visor E fica sendo o gancho de tudo que
+       for pendurado aqui no futuro (o botao de OCR do Hugo entra por ele).
+     - 5o parametro (Pvisor): liga SOMENTE o clique que abre o arquivo no visor.
+     A barra de escrever passa null no 4o e o painel no 5o, entao `P` continua null la
+     dentro: extra novo guardado por `if (P ...)` nao nasce sozinho na barra. */
+  const Pv = P || Pvisor;   // quem abre o visor; so as 2 linhas abaixo usam
   const d = document.createElement('div');
-  d.className = 'anx' + (P && a.path ? ' clicavel' : '');
-  if (P && a.path) d.onclick = (e) => { if (!e.target.closest('.anx-x')) verArquivo(P, a.path); };
+  d.className = 'anx' + (Pv && a.path ? ' clicavel' : '');
+  if (Pv && a.path) d.onclick = (e) => { if (!e.target.closest('.anx-x')) verArquivo(Pv, a.path); };
   d.title = a.path || a.nome || a.name || 'Imagem anexada';
   d.innerHTML = '<div class="anx-mini"></div><div class="anx-txt">'
     + '<span class="anx-n"></span><span class="anx-s"></span></div>'
