@@ -1,6 +1,9 @@
 {
   "name": "Cockpit",
   "short_name": "Cockpit",
+  "id": "/",
+  "scope": "/",
+  "description": "Suas conversas e históricos do Mac no celular.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1e1e1e",

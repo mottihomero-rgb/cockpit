@@ -1,5 +1,5 @@
-/* Serve a mesma interface do Cockpit pelo Wi-Fi, para abrir no iPhone.
-   Só a sua rede enxerga, e ainda assim pede uma senha. */
+/* A mesma interface e os mesmos históricos do Mac, pelo Tailscale.
+   No modo protegido, só escuta no próprio Mac: o Tailscale entrega a conexão ali. */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -31,6 +31,12 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     const p = v.split('.').map(Number);
     return p.length === 4 && p[0] === 100 && p[1] >= 64 && p[1] <= 127;
   };
+  // O Tailscale em userspace (Homebrew no Mac) e o Serve entregam a conexão
+  // por loopback. Exigir IP 100.x aqui barrava inclusive o iPhone autorizado.
+  // Aceitar loopback SÓ é seguro junto do listen em 127.0.0.1 abaixo: a LAN
+  // continua sem conseguir chegar ao servidor. Não confiar em headers de proxy.
+  const redePermitida = (req) => !somenteTailscale || ipTailscale(ip(req))
+    || ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip(req));
   const igual = (a, b) => {
     const x = Buffer.from(String(a || ''));
     const y = Buffer.from(String(b || ''));
@@ -55,7 +61,7 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
 
   const servidor = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
-    if (somenteTailscale && !ipTailscale(ip(req))) {
+    if (!redePermitida(req)) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end('Abra pelo Tailscale para proteger seu Mac.');
     }
@@ -104,7 +110,7 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     const esperado = 'http://' + String(req.headers.host || '');
     // Navegadores sempre informam a origem. Sem esta checagem, uma página aberta
     // no celular poderia tentar falar com o Cockpit usando a sessão já existente.
-    if (somenteTailscale && !ipTailscale(ip(req))) { ws.close(1008, 'fora do Tailscale'); return; }
+    if (!redePermitida(req)) { ws.close(1008, 'fora do Tailscale'); return; }
     if (origin && origin !== esperado) { ws.close(1008, 'origem invalida'); return; }
     const cookie = String(req.headers.cookie || '');
     const t = (cookie.match(/ck=([a-f0-9]+)/) || [])[1];
@@ -160,7 +166,7 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     servidor.once('error', caiu);
     wss.once('error', caiu);
   });
-  servidor.listen(porta, '0.0.0.0');
+  servidor.listen(porta, somenteTailscale ? '127.0.0.1' : '0.0.0.0');
 
   // Desligar o acesso so parava de aceitar telefone NOVO: quem ja estava dentro continuava
   // com poder total sobre o Mac. Este fechar() derruba tambem as conexoes abertas.
@@ -172,7 +178,7 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     try { servidor.close(); } catch {}
   };
 
-  return { servidor, fechar, pronto, endereco: endereco || ('http://' + ipDaRede() + ':' + porta) };
+  return { servidor, fechar, pronto, endereco: endereco || (somenteTailscale ? '' : ('http://' + ipDaRede() + ':' + porta)) };
 }
 
 function mandarArquivo(res, arq) {
@@ -196,21 +202,28 @@ function mandarArquivo(res, arq) {
 function paginaSenha(errou, detalhe = '') {
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cockpit">
+<meta name="theme-color" content="#1e1e1e">
+<link rel="manifest" href="/manifest.json"><link rel="apple-touch-icon" href="/icone-180.png">
 <title>Cockpit</title><style>
 body{margin:0;height:100dvh;display:grid;place-items:center;background:#1e1e1e;color:#ccc;
 font:15px -apple-system,system-ui,sans-serif}
 form{width:min(320px,86%);text-align:center}
 h1{font-size:19px;color:#e8e8e8;margin:0 0 6px}p{color:#8b8b8b;font-size:13px;margin:0 0 18px}
-input{width:100%;padding:13px;border-radius:11px;border:1px solid #474747;background:#252526;
+input{box-sizing:border-box;width:100%;padding:13px;border-radius:11px;border:1px solid #474747;background:#252526;
 color:#ccc;font-size:16px;outline:none;text-align:center}
 input:focus{border-color:#d97757}
 button{width:100%;margin-top:10px;padding:13px;border:0;border-radius:11px;background:#d97757;
 color:#fff;font-size:15px;font-weight:600}
 .erro{color:#e05252;font-size:12.5px;margin-top:10px}
+details{margin-top:28px;color:#aaa;font-size:13px;line-height:1.6}summary{cursor:pointer}details p{margin-top:10px}
 </style></head><body><form action="/entrar">
 <h1>Cockpit</h1><p>Digite a senha que aparece no Mac</p>
-<input name="s" type="password" autofocus placeholder="senha mostrada no Mac">
+<input name="s" type="password" autocomplete="current-password" aria-label="Senha do Cockpit" placeholder="senha mostrada no Mac" required>
 <button>Entrar</button>${errou ? '<div class="erro">' + (detalhe || 'Senha errada') + '</div>' : ''}
+<details><summary>Instalar no iPhone</summary><p>No Safari, toque em Compartilhar e em Adicionar à Tela de Início. Ative Abrir como App da Web e toque em Adicionar.</p><p>As conversas ficam no Mac. Mantenha o Mac ligado e o Tailscale conectado.</p></details>
 </form></body></html>`;
 }
 

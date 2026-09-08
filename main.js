@@ -5174,9 +5174,11 @@ function enderecoTailscale() {
     const args = fs.existsSync(socket) ? ['--socket=' + socket, 'status', '--json'] : ['status', '--json'];
     const st = JSON.parse(execFileSync(bin, args, { encoding: 'utf8', timeout: 5000 }));
     const dns = st && st.Self && String(st.Self.DNSName || '').replace(/\.$/, '');
-    if (dns) return 'http://' + dns + ':7788';
-    const ip = st && st.TailscaleIPs && st.TailscaleIPs[0];
+    // No iPhone deste Mac o MagicDNS não resolvia. O IP privado é estável e
+    // funciona também no Tailscale em userspace, sem depender do DNS do Safari.
+    const ip = st && st.TailscaleIPs && st.TailscaleIPs.find(v => /^100\./.test(v));
     if (ip) return 'http://' + ip + ':7788';
+    if (dns) return 'http://' + dns + ':7788';
   } catch (e) { anota('tailscale:', e.message); }
   return '';
 }
@@ -5202,7 +5204,11 @@ handle('web:ligar', async (_e, ligar) => {
       cfg.webLigado = true; cfg.webSeguroConfirmado = true;
       anotarChaveDoMain('webLigado', true); anotarChaveDoMain('webSeguroConfirmado', true);
       saveConfig(cfg);
-    } catch (e) { anota('web:', e); return { error: e.message }; }
+    } catch (e) {
+      try { if (web) web.fechar(); } catch {}
+      web = null; manterAcordado(false);
+      anota('web:', e); return { error: e.message };
+    }
   } else if (!ligar && web) {
     // fechar() derruba tambem os telefones ja conectados; o close() sozinho so impedia
     // conexao nova e quem estava dentro seguia com poder total sobre o Mac

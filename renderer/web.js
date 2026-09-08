@@ -3,17 +3,41 @@
   window.SEM_ELECTRON = true;   // estamos no telefone, pelo navegador
   const pend = new Map();
   const ouvintes = {};
-  let seq = 0, ws = null, fila = [];
+  let seq = 0, ws = null, fila = [], religar = null;
+  let jaConectou = false;
+
+  function encerrarPedido(id, erro, resposta) {
+    const p = pend.get(id);
+    if (!p) return;
+    pend.delete(id); clearTimeout(p.timer);
+    fila = fila.filter(x => x.id !== id);
+    erro ? p.rej(new Error(erro)) : p.res(resposta);
+  }
 
   function ligar() {
+    clearTimeout(religar);
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
-    ws.onopen = () => { document.body.classList.remove('sem-mac'); fila.forEach(t => ws.send(t)); fila = []; };
-    ws.onclose = () => { document.body.classList.add('sem-mac'); setTimeout(ligar, 1500); };
+    ws.onopen = () => {
+      document.body.classList.remove('sem-mac');
+      fila.forEach(x => { if (pend.has(x.id)) ws.send(x.txt); }); fila = [];
+      const reconectou = jaConectou; jaConectou = true;
+      window.dispatchEvent(new CustomEvent('cockpit:conectado', { detail: { reconectou } }));
+    };
+    ws.onclose = (ev) => {
+      document.body.classList.add('sem-mac');
+      // Nunca repetir um envio que talvez já tenha chegado ao Mac.
+      for (const id of [...pend.keys()]) encerrarPedido(id, 'A conexão com o Mac caiu. Confira a conversa antes de enviar de novo.');
+      if (ev.code === 1008 && /sessao/.test(ev.reason || '')) {
+        window.dispatchEvent(new CustomEvent('cockpit:salvar-rascunhos'));
+        location.replace('/'); return;
+      }
+      religar = setTimeout(ligar, 1500);
+    };
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (m.tipo === 'resposta') {
-        const p = pend.get(m.id);
-        if (p) { pend.delete(m.id); m.erro ? p.rej(new Error(m.erro)) : p.res(m.resposta); }
+        encerrarPedido(m.id, m.erro, m.resposta);
       } else if (m.tipo === 'evento') {
         (ouvintes[m.canal] || []).forEach(f => f(m.dados));
       }
@@ -23,11 +47,14 @@
 
   const chamar = (nome, arg) => new Promise((res, rej) => {
     const id = ++seq;
-    pend.set(id, { res, rej });
+    const timer = setTimeout(() => encerrarPedido(id, 'O Mac não respondeu.'), 120000);
+    pend.set(id, { res, rej, timer });
     const txt = JSON.stringify({ tipo: 'chamada', id, nome, arg });
-    if (ws && ws.readyState === 1) ws.send(txt); else fila.push(txt);
-    setTimeout(() => { if (pend.has(id)) { pend.delete(id); rej(new Error('o Mac não respondeu')); } }, 120000);
+    if (ws && ws.readyState === 1) ws.send(txt); else fila.push({ id, txt });
   });
+
+  window.addEventListener('online', ligar);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) ligar(); });
 
   window.api = {
     getConfig: () => chamar('config:get'),

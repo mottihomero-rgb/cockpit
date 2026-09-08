@@ -1214,6 +1214,7 @@ function setFocus(P) {
   if (!P) return;
   const A = abaDe(P);
   if (A) { A.ativo = P.id; if (abaAtiva !== A) ativarAbaProjeto(A); }
+  if (window.SEM_ELECTRON) window.dispatchEvent(new CustomEvent('cockpit:foco', { detail: { paneId: P.id } }));
   if (focusPane === P) return;
   focusPane = P;
   for (const q of panes.values()) q.el.classList.toggle('focus', q === P);
@@ -8772,4 +8773,5 @@ document.addEventListener('keydown', (e) => {
   /* leva 10.6: radar de versão. Atrasado de propósito: a consulta ao npm leva segundos e o
      boot não pode esperar por ela. Se ainda não houver chat nenhum, ele mesmo se reagenda. */
   setTimeout(checarVersoesDosMotores, 12000);
+  window.dispatchEvent(new Event('cockpit:pronto'));
 })();

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
 <title>Cockpit</title>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -21,10 +21,18 @@
 
 <div id="titlebar">
   <div class="tb-drag"></div>
-  <button id="btnGaveta" class="tb-btn so-celular">☰</button>
+  <button id="btnGaveta" class="tb-btn so-celular" aria-label="Conversas e históricos" aria-expanded="false">☰</button>
   <div class="tb-center" id="tbTitle">Cockpit</div>
-  <div class="tb-right"></div>
+  <div class="tb-right"><button id="btnInstalar" class="tb-btn" title="Adicionar à Tela de Início">Instalar</button></div>
 </div>
+
+<dialog id="instalarApp" aria-labelledby="instalarTitulo">
+  <h2 id="instalarTitulo">Cockpit no iPhone</h2>
+  <p>Suas conversas e históricos do Mac, em um app de tela cheia.</p>
+  <ol><li>Abra este endereço no Safari.</li><li>Toque em Compartilhar e em <strong>Adicionar à Tela de Início</strong>.</li><li>Ative <strong>Abrir como App da Web</strong> e toque em Adicionar.</li></ol>
+  <p>Mantenha o Tailscale conectado e o Mac ligado.</p>
+  <button id="fecharInstalar">Entendi</button>
+</dialog>
 
 <!-- leva 6: faixa de avisos que vale para a janela inteira (caixa de entrada do celular).
      Fica FORA do fluxo (position:fixed no CSS): #shell tem altura calculada na mao
@@ -344,5 +352,6 @@
 <script src="quadro-texto.js"></script>
 <script src="quadro.js"></script>
 <script src="app.js"></script>
+<script src="mobile.js"></script>
 </body>
 </html>
