@@ -2176,7 +2176,10 @@ handle('sessions:history', async (_e, { engine, file, id, cwd }) => {
     try {
       const f = alvo || acp.arquivoDe(id);
       if (!f || !fs.existsSync(f)) return [];
-      return cortarHistorico(acp.historico(id, f, 5000), 600, 250);
+      // mesma limpeza que o Claude faz: o balão da sua fala não repete o aviso de contexto
+      const msgs = acp.historico(id, f, 5000)
+        .map((m) => (m.role === 'user' ? { ...m, text: semContexto(m.text) || m.text } : m));
+      return cortarHistorico(msgs, 600, 250);
     } catch { return []; }
   }
   if (engine === 'claude') {
@@ -4173,8 +4176,34 @@ handle('acp:config', async (_e, { paneId, modelo } = {}) => {
 });
 
 /* as conversas do ACP são as que o próprio Cockpit anotou (acp.js), num JSONL por sessão */
+/* O título de uma conversa do ACP sai da 1a fala sua. Quando esta tela manda o contexto grudado
+   na mensagem (chat sem fio, troca de motor), essa fala começa com um aviso de meia página — e o
+   título virava "ATENÇÃO: esta conversa caiu…", igual em todas. O acp.js corta em 120 caracteres
+   ANTES de qualquer limpeza, então o marcador "Agora, o novo pedido:" já não está no título: a
+   1a fala é relida do arquivo e passada pelo MESMO semContexto que o Claude e o Codex usam.
+   Só nesse caso, para não custar leitura à toa — e sem tocar uma linha do acp.js. */
+const TITULO_COM_CONTEXTO = /^(ATENÇÃO: esta conversa|Estou continuando uma conversa)/;
+function tituloAcp(s) {
+  const bruto = String((s && s.title) || '');
+  if (!s || !s.file || !TITULO_COM_CONTEXTO.test(bruto)) return bruto;
+  let fd = null;
+  try {
+    fd = fs.openSync(s.file, 'r');
+    const buf = Buffer.alloc(64 * 1024);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    for (const linha of buf.slice(0, n).toString('utf8').split('\n')) {
+      if (linha[0] !== '{') continue;
+      let d; try { d = JSON.parse(linha); } catch { continue; }
+      if (d.role !== 'user' || !String(d.text || '').trim()) continue;
+      return limparTitulo(String(d.text).replace(/\s+/g, ' ').trim()) || bruto;
+    }
+  } catch {} finally { if (fd != null) { try { fs.closeSync(fd); } catch {} } }
+  return bruto;
+}
+
 handle('sessions:acp', () => {
-  try { return acp.sessoes(); } catch (e) { return { error: String(e && e.message || e) }; }
+  try { return (acp.sessoes() || []).map((s) => ({ ...s, title: tituloAcp(s) })); }
+  catch (e) { return { error: String(e && e.message || e) }; }
 });
 
 handle('pane:start', async (_e, data) => {
