@@ -1704,6 +1704,8 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
    a largura inteira da coluna. O botão desce para baixo (a linha 1 já come 100%), senão o
    texto ficaria espremido numa coluna de três palavras ao lado dele. */
 .rot-item.espera .ri-est{color:var(--red);font-weight:600;white-space:normal}
+/* a desativada carrega "· desativada" grudado no resto e estourava a coluna: deixa quebrar */
+.rot-item.fora .ri-est{white-space:normal}
 .ri-acao{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line2);
   color:var(--fg-dim);flex:none;align-self:flex-start;margin:4px 0 1px 15px}
 .ri-acao:hover{color:var(--fg);border-color:var(--accent)}

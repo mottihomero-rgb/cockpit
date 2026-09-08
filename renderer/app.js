@@ -7755,7 +7755,7 @@ function linhaDaRotina(t) {
   $('.ri-tit', d).textContent = t.dele ? t.nome.replace(/^com\.(homeromotti|homero|adsure)\./, '') : t.nome;
   const ultima = quandoDaRotina(t.ultima);
   $('.ri-est', d).textContent = rodando
-    ? (t.residente ? 'ligada agora' : 'rodando agora') + (ultima ? ' · desde ' + ultima : '')
+    ? (t.residente ? 'ligada' : 'rodando') + (ultima ? ' desde ' + ultima : ' agora')
     : t.falhou
       ? 'parou de funcionar' + (ultima ? ' em ' + ultima : '') + ': ' + (t.motivo || 'motivo desconhecido')
       : (ultima ? 'rodou ' + ultima : 'sem registro de execução') + (t.estado === 'desativada' ? ' · desativada' : '');
