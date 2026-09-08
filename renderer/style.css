@@ -1514,12 +1514,14 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .hist-item{position:relative}
 /* Fora da busca os dois botoes novos ficam NA FILA com largura zero e so abrem espaco no
    passar do mouse. Com position:absolute eles caiam POR CIMA da estrela e do lapis
-   (medido: 12px e 17px), e o clique no lapis abria o menu do Apagar. */
+   (medido: 12px e 17px), e o clique no lapis abria o menu do Apagar.
+   O margin-left negativo cancela o vao (gap:7px) enquanto o botao esta com largura zero: sem
+   ele a fila cobrava os 2 vaos o tempo todo e o titulo caia de 107px para 93px em TODA linha. */
 .hist-item:not(.com-trecho) .hi-grupo,
-.hist-item:not(.com-trecho) .hi-mais{width:0;overflow:hidden;transition:width .12s,opacity .12s}
+.hist-item:not(.com-trecho) .hi-mais{width:0;margin-left:-7px;overflow:hidden;transition:width .12s,opacity .12s}
 .hist-item:not(.com-trecho):hover .hi-grupo,
-.hist-item:not(.com-trecho):hover .hi-mais{width:20px;opacity:1}
-.hist-item:not(.com-trecho) .hi-grupo.on{width:20px;opacity:1}
+.hist-item:not(.com-trecho):hover .hi-mais{width:20px;margin-left:0;opacity:1}
+.hist-item:not(.com-trecho) .hi-grupo.on{width:20px;margin-left:0;opacity:1}
 .hist-item:hover .hi-mais{opacity:1}
 .hi-mais:hover{background:var(--hover3);color:var(--fg)}
 .hi-mais .ic{width:12px;height:12px}
