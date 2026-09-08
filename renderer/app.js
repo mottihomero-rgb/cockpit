@@ -1654,6 +1654,10 @@ function ramificarDaqui(P, d) {
 async function ramificarInteiro(P) {
   const id = P.sessaoId || P.resumeId;
   if (!id) { ramoDeReserva(P, 'esta conversa ainda não tem número no motor'); return; }
+  /* R7: pasta na VPS. O fork de verdade acontece no MAC — no Claude o --fork-session iria por
+     ssh para o CLI de lá (que pode ser velho demais e derrubar o painel no start) e no Codex o
+     motor local não enxerga a conversa de lá. Cai direto na reserva do resumo, que sempre vale. */
+  if (NA_VPS(P.cwd)) { ramoDeReserva(P, 'a conversa mora na VPS'); return; }
   if (panes.size >= 12) { avisoEnvio(P, 'Feche um chat para abrir a ramificação.'); return; }
   if (P.engine === 'claude') { forkClaude(P, id); return; }
   let r = null;
@@ -6418,6 +6422,9 @@ async function apagarConversa(s, d) {
   if (Array.isArray(cfg.favoritos)) cfg.favoritos = cfg.favoritos.filter(k => k !== chaveFav(s));
   if (cfg.grupoSessao) delete cfg.grupoSessao[chaveFav(s)];
   window.api.setConfig(cfg);
+  /* só tirar a linha da tela (d.remove()) deixa a contagem do cabeçalho do grupo velha — e ela
+     é dos dois motores. Redesenhar as duas listas antes do marcarAbertas() acerta os números. */
+  repintarGrupos();
   marcarAbertas();
 }
 
@@ -6450,7 +6457,9 @@ function moverParaGrupo(s, grupoId) {
   if (!cfg.grupoSessao) cfg.grupoSessao = {};
   if (grupoId) cfg.grupoSessao[chaveFav(s)] = grupoId; else delete cfg.grupoSessao[chaveFav(s)];
   window.api.setConfig(cfg);
-  if (histCache[s.engine]) paintHist(s.engine, histCache[s.engine]);
+  /* os DOIS motores, não só o da conversa movida: o grupo é compartilhado, então a contagem no
+     cabeçalho do outro motor ficaria velha até o próximo desenho da lista. */
+  repintarGrupos();
 }
 function grupoRecolhido(id) { return Array.isArray(cfg.gruposRecolhidos) && cfg.gruposRecolhidos.includes(id); }
 function alternarGrupoRecolhido(id) {
@@ -6465,6 +6474,15 @@ function repintarGrupos() {
     pintarAbasGrupo(eng);
     if (histCache[eng]) paintHist(eng, histCache[eng]);
   }
+}
+
+/* busca e grupo não convivem: quem escolhe um grupo com o campo de busca cheio teria o filtro
+   descartado pelo paintHist. Limpar o campo junto faz o clique valer, e a tela não mente. */
+function limparBuscaLateral(engine) {
+  if (!buscaAtual[engine]) return;
+  buscaAtual[engine] = '';
+  const inp = $('.side-busca[data-busca="' + engine + '"]');
+  if (inp) inp.value = '';
 }
 
 /* faixa de grupos acima da lista. Sem nenhum grupo criado ela não aparece: barra vazia só
@@ -6494,6 +6512,7 @@ function pintarAbasGrupo(engine) {
     const txt = document.createElement('span'); txt.className = 'grp-aba-txt'; txt.textContent = g.nome;
     bt.appendChild(cor); bt.appendChild(txt);
     bt.addEventListener('click', () => {
+      limparBuscaLateral(engine);   // senão o paintHist descartaria o filtro que ele acabou de escolher
       filtroGrupo[engine] = g.id; pintarAbasGrupo(engine);
       if (histCache[engine]) paintHist(engine, histCache[engine]);
     });
@@ -6710,6 +6729,10 @@ async function paintHist(engine, listaCrua) {
   const box = $(engine === 'claude' ? '#histClaude' : '#histCodex');
   const termo = (buscaAtual[engine] || '').toLowerCase().trim();
   pintarBotaoFiltro(engine);
+  /* buscar e filtrar por grupo ao mesmo tempo faria a faixa MENTIR: o ramo da busca lá embaixo
+     procura na lista inteira e não olha o filtroGrupo. Ao digitar, a faixa volta sozinha para
+     "Todos" — visível na tela, em vez de o filtro ser jogado fora em silêncio. */
+  if (termo && filtroGrupo[engine]) filtroGrupo[engine] = null;
   pintarAbasGrupo(engine);   // leva 8: a faixa de grupos acompanha cada desenho da lista
   const list = filtrarPorPasta(engine, listaCrua);
   box.innerHTML = '';

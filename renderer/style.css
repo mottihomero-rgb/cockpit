@@ -1511,16 +1511,15 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 /* botao "..." da linha da conversa */
 .hi-mais{width:20px;height:20px;border-radius:5px;color:var(--fg-dim);flex:none;opacity:0;
   display:grid;place-items:center}
-/* MEDIDO: com os dois botoes novos DENTRO da fila, o titulo da conversa caía de 84px para
-   30px numa coluna de 206px — virava "Res…". Fora do resultado de busca eles ficam SOBRE a
-   linha e só aparecem no passar do mouse, então o título continua com a largura de sempre. */
 .hist-item{position:relative}
+/* Fora da busca os dois botoes novos ficam NA FILA com largura zero e so abrem espaco no
+   passar do mouse. Com position:absolute eles caiam POR CIMA da estrela e do lapis
+   (medido: 12px e 17px), e o clique no lapis abria o menu do Apagar. */
 .hist-item:not(.com-trecho) .hi-grupo,
-.hist-item:not(.com-trecho) .hi-mais{position:absolute;top:3px}
-.hist-item:not(.com-trecho) .hi-mais{right:5px}
-.hist-item:not(.com-trecho) .hi-grupo{right:27px}
-.hist-item:not(.com-trecho) .hi-grupo.on{opacity:0}
-.hist-item:not(.com-trecho):hover .hi-grupo.on{opacity:1}
+.hist-item:not(.com-trecho) .hi-mais{width:0;overflow:hidden;transition:width .12s,opacity .12s}
+.hist-item:not(.com-trecho):hover .hi-grupo,
+.hist-item:not(.com-trecho):hover .hi-mais{width:20px;opacity:1}
+.hist-item:not(.com-trecho) .hi-grupo.on{width:20px;opacity:1}
 .hist-item:hover .hi-mais{opacity:1}
 .hi-mais:hover{background:var(--hover3);color:var(--fg)}
 .hi-mais .ic{width:12px;height:12px}
