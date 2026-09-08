@@ -7749,7 +7749,10 @@ function linhaDaRotina(t) {
   d.innerHTML = '<span class="ri-pt"></span><span class="ri-txt"><span class="ri-tit"></span><span class="ri-est"></span><span class="ri-quando"></span></span>';
   /* nome, motivo e horário vêm do launchd: entram por textContent, nunca por innerHTML — nome
      de serviço aceita < e & e viraria marcação na tela. */
-  $('.ri-tit', d).textContent = t.nome;
+  /* O prefixo é o mesmo em TODAS as dele (com.homero., com.adsure.) e come metade da coluna:
+     com ele, "com.homero.ingresso-revisor" aparecia como "com.homero.ingresso-…" e não dava
+     para saber de qual robô era a linha. Sai da tela, fica na dica e no aviso do disparo. */
+  $('.ri-tit', d).textContent = t.dele ? t.nome.replace(/^com\.(homeromotti|homero|adsure)\./, '') : t.nome;
   const ultima = quandoDaRotina(t.ultima);
   $('.ri-est', d).textContent = rodando
     ? (t.residente ? 'ligada agora' : 'rodando agora') + (ultima ? ' · desde ' + ultima : '')
