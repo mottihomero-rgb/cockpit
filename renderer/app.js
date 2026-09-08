@@ -153,7 +153,7 @@ const AGENTES_ACP = [
 ];
 /* Enquanto o radar não respondeu, tudo conta como instalado: dizer "não está instalado" sem
    ter olhado seria pior do que não dizer nada. */
-const agenteAcpTem = (m) => !MOTORES_OK || !MOTORES_OK.acpBins || !!MOTORES_OK.acpBins[m.bin];
+const agenteAcpTem = (m) => !m.bin || !MOTORES_OK || !MOTORES_OK.acpBins || !!MOTORES_OK.acpBins[m.bin];
 // o primeiro agente que EXISTE nesta máquina; '' quando não há nenhum (ou o radar ainda não voltou)
 const melhorAgenteAcp = () => {
   if (!MOTORES_OK || !MOTORES_OK.acpBins) return '';
@@ -166,7 +166,9 @@ const MODELOS_GROK = [{ id: '', nome: 'Padrão do Grok', desc: 'Usa o modelo con
 function modelosDe(P) {
   if (P.engine === 'gemini') return MODELOS_GEMINI;
   if (P.engine === 'grok') return MODELOS_GROK;
-  if (P.engine === 'acp') return AGENTES_ACP;
+  if (P.engine === 'acp') return P.model && !AGENTES_ACP.some(m => m.id === P.model)
+    ? [...AGENTES_ACP, { id: P.model, nome: 'Agente personalizado', desc: P.model, efforts: ['medium'] }]
+    : AGENTES_ACP;
   if (P.engine === 'claude') return MODELOS_CLAUDE;
   // testar o TAMANHO, nao so se existe: quando o Codex esta fora do ar a chamada devolve lista
   // vazia, que e "verdadeira" em JS. Sem isto, ms[0] virava undefined e quebrava criar chat
@@ -1201,6 +1203,11 @@ function paintEngine(P) {
   // leva 12.4: a paleta do terceiro motor, e o interruptor de 2 lados some por CSS neste painel
   P.el.classList.toggle('eng-acp', P.engine === 'acp');
   for (const e of ['gemini', 'grok']) P.el.classList.toggle('eng-' + e, P.engine === e);
+  let etiqueta = $('.motor-extra', P.el);
+  if (['acp', 'gemini', 'grok'].includes(P.engine)) {
+    if (!etiqueta) { etiqueta = document.createElement('span'); etiqueta.className = 'motor-extra'; $('.pane-hd', P.el).prepend(etiqueta); }
+    etiqueta.textContent = nomeDoMotor(P.engine);
+  } else if (etiqueta) etiqueta.remove();
   pintarControlesCodex(P);
 }
 function setFocus(P) {
@@ -4195,6 +4202,22 @@ async function menuModelos(P) {
       }));
     }
     m.appendChild(elLinha());
+    if (P.engine === 'acp') m.appendChild(elItem({ nome: 'Outro agente…', desc: 'Informe o comando de um agente que fale ACP' }, async () => {
+      const comando = await perguntarTexto(P, 'Comando do agente', 'Exemplo: opencode acp', P.model || '');
+      if (!comando || !comando.trim()) return;
+      await desligarMotor(P);
+      if (P.hist.length) P.passarContexto = montarContexto(P, true, 'troca-de-agente');
+      P.model = comando.trim(); P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
+      fillModels(P); savePanes();
+    }));
+    if (['acp', 'grok'].includes(P.engine) && P.acpInfo?.modelos?.length) {
+      m.appendChild(elSecao('Modelos anunciados pelo agente'));
+      for (const modelo of P.acpInfo.modelos) m.appendChild(elItem({ nome: modelo.nome || modelo.id, desc: modelo.desc || '', on: modelo.id === P.acpInfo.modeloAtual }, async () => {
+        const r = await window.api.acpConfig({ paneId: P.id, modelo: modelo.id });
+        if (r?.error) { note(P, r.error, true); return; }
+        P.acpInfo.modeloAtual = modelo.id;
+      }));
+    }
     if (P.engine === 'claude' || P.engine === 'codex') m.appendChild(barraEsforco(P));   // no ACP quem decide o esforço é o agente
     secoesCodexNoCerebro(P, m, pintar);
   };
@@ -7119,6 +7142,7 @@ async function openSession(s, el) {
   await window.api.paneStop({ paneId: P.id, engine: P.engine });
   escondePerm(P);
   P.engine = s.engine; P.cwd = s.cwd; P.resumeId = s.id; P.sessaoId = null; P.started = false; P.busy = false; P.model = '';
+  if (s.engine === 'acp' && s.comando) P.model = s.comando;
   P.forkPendente = false;   // leva 8.3: abrir outra conversa aqui cancela a intencao de ramificar
   P.worktree = '';          // leva 10.5: a conversa escolhida nasceu na pasta principal, nao na branch isolada
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
@@ -7886,11 +7910,11 @@ function linhaDaRotina(t) {
   const bt = document.createElement('button');
   bt.className = 'ri-acao';
   bt.textContent = 'disparar';
-  if (t.podeDisparar === false) {
+  if (window.SEM_ELECTRON || t.podeDisparar === false) {
     /* Lista-negra do main (o próprio Cockpit, a ponte do WhatsApp, o executor, a rede da VPS):
        o botão fica à vista e explicado, em vez de sumir sem dizer por quê. */
     bt.disabled = true;
-    bt.title = 'Esta não pode ser disparada daqui: ela derrubaria algo que está em uso agora';
+    bt.title = window.SEM_ELECTRON ? 'Disparar uma rotina só funciona no Mac.' : 'Esta não pode ser disparada daqui: ela derrubaria algo que está em uso agora';
   } else {
     bt.title = 'Roda esta rotina agora, sem esperar a hora marcada';
     // repaint no meio de um disparo não pode devolver o botão habilitado

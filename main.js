@@ -2340,6 +2340,8 @@ handle('sessions:historyRemoto', (_e, o) => claudeHistoryRemoto(o && o.id));
 function ehArquivoDeConversa(f) {
   try {
     const p = path.resolve(String(f || ''));
+    const extras = [path.join(app.getPath('userData'), 'acp'), path.join(app.getPath('userData'), 'gemini'), path.join(HOME, '.gemini', 'tmp')];
+    if (/\.jsonl?$/i.test(p) && extras.some(r => p.startsWith(path.resolve(r) + path.sep))) return true;
     if (!/\.jsonl$/i.test(p)) return false;
     const raizes = [CLAUDE_PROJ, CODEX_SESS].filter(Boolean).map((r) => path.resolve(r));
     return raizes.some((r) => p === r || p.startsWith(r + path.sep));
@@ -2356,7 +2358,7 @@ ipcMain.handle('sessao:apagar', async (_e, dados) => {
     /* rede de seguranca so para o Claude: la o nome do arquivo E o numero da conversa. No Codex
        o id vem de dentro do arquivo (fi.sid), entao procurar pelo nome pegaria o arquivo errado
        — ali vale so o caminho que a lista mandou. */
-    if ((!f || !fs.existsSync(f)) && id && engine !== 'codex') {
+    if ((!f || !fs.existsSync(f)) && id && engine === 'claude') {
       const achados = [];
       varrerConversas(CLAUDE_PROJ, achados, 0);
       const it = achados.find((a) => a.id === id);

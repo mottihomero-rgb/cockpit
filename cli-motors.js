@@ -24,7 +24,7 @@ function cliLerConversa(file, tetoBytes) {
   let meta = {};
   let bruto = '';
   try {
-    bruto = tetoBytes ? headRead(file, tetoBytes) : fs.readFileSync(file, 'utf8');
+    bruto = tetoBytes && !/\.json$/i.test(file) ? headRead(file, tetoBytes) : fs.readFileSync(file, 'utf8');
   } catch { return { meta, msgs: [] }; }
   // As versões atuais também usam um JSON completo, não apenas JSONL.
   try {

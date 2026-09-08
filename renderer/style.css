@@ -1724,6 +1724,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .ri-acao:disabled:hover{color:var(--fg-dim);border-color:var(--line2)}
 
 /* Motores adicionais, mantendo os mesmos tamanhos e componentes do Cockpit. */
+.motor-extra{color:var(--accent);font-size:12px;font-weight:600;white-space:nowrap;padding:0 7px}
 :root { --gemini:#87a9fa; --grok:#bcbac8; }
 html[data-tema="claro"] { --gemini:#3168c9; --grok:#565069; }
 html[data-tema="jornal"] { --gemini:#268bd2; --grok:#586e75; }
