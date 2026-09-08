@@ -81,6 +81,11 @@ contextBridge.exposeInMainWorld('api', {
   codexReiniciar: () => ipcRenderer.invoke('codex:reiniciar'),
   // Apps do ChatGPT (conectores da conta, não os MCP deste Mac)
   codexApps: () => ipcRenderer.invoke('codex:apps'),
+  // leva 10: torre de controle, chip do git e radar de versao — as tres sao LEITURA
+  agentesClaude: () => ipcRenderer.invoke('agentes:claude'),
+  gitStatus: (o) => ipcRenderer.invoke('git:status', o),
+  gitDiff: (o) => ipcRenderer.invoke('git:diff', o),
+  motoresVersoes: () => ipcRenderer.invoke('motores:versoes'),
   mcpList: (e) => ipcRenderer.invoke('mcp:list', e),
   mcpAcao: (o) => ipcRenderer.invoke('mcp:acao', o),
   avisarPronto: (o) => ipcRenderer.invoke('aviso:pronto', o),

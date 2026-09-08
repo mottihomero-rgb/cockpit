@@ -41,6 +41,10 @@
     <button class="act ic-codex" data-view="hcodex" title="Conversas do Codex">
       <svg viewBox="0 0 24 24" class="logo-motor" id="svgCodex"></svg>
     </button>
+    <!-- leva 10.2: torre de controle — todas as sessões, aqui e fora do Cockpit -->
+    <button class="act" data-view="torre" title="Torre de controle: todos os chats, aqui e fora do Cockpit">
+      <svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M5 22 12 8l7 14"/><circle cx="12" cy="4.5" r="2"/></svg>
+    </button>
     <button class="act" data-view="settings" title="Ajustes">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
     </button>
@@ -68,6 +72,11 @@
       <div class="grp-abas" data-grupos="codex"></div>
       <button class="new-chat" data-new="codex"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
       <div class="hist" id="histCodex"></div>
+    </div>
+    <!-- leva 10.2: a torre é desenhada por pintarTorre() -->
+    <div class="side-view hidden" data-view="torre">
+      <div class="side-head"><span>Torre de controle</span><button class="mini" id="btnTorreAtualizar" title="Atualizar agora"></button></div>
+      <div class="torre" id="torre"></div>
     </div>
     <div class="side-view hidden" data-view="settings">
       <div class="side-head"><span>Ajustes</span></div>
@@ -205,6 +214,8 @@
         <span class="ch-bolha"></span>
       </div>
       <button class="p-cwd" title="Trocar pasta deste painel"></button>
+      <!-- leva 10.4: branch do git desta pasta; some sozinho fora de repositório -->
+      <button class="p-git hidden" title="Branch do git"></button>
       <span class="p-spacer"></span>
       <span class="p-tokens" title="Tamanho da conversa agora, comparado ao que cabe neste modelo"></span>
       <span class="p-dot dot off"></span>

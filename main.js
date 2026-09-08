@@ -788,6 +788,30 @@ function encodeCwd(dir) { return caminhoReal(dir).replace(/[^a-zA-Z0-9]/g, '-');
 // texto oficial do modo ultracode do proprio Claude Code (o mesmo que a versao de terminal injeta)
 const ULTRACODE_SP = 'Ultracode is on: optimize for the most exhaustive, correct answer — not the fastest or cheapest. Use the Workflow tool on every substantive task; token cost is not a constraint. See the Workflow tool\'s **Ultracode** section and quality patterns. Solo only on conversational/trivial turns.';
 
+/* ---------- leva 10.5: worktree (branch isolada dentro da pasta do painel) ----------
+   O CLI so aceita -w dentro de repositorio git: fora dele morre na hora, a cada mensagem, com
+   erro em ingles. Por isso a conferencia acontece ANTES de subir o processo.
+   R7 (a VPS, que o fork de origem nao tem): "vps:/opt/x" passaria por path.resolve virando
+   "<pasta do app>/vps:/opt/x", o laco subiria ate a raiz do MAC e acharia um .git por engano.
+   Entao pasta remota sai FALSO na primeira linha — a decisao de recusar o worktree remoto e
+   de quem chama, nao deste laco. */
+function dentroDeGit(dir) {
+  if (!dir || ehRemoto(dir)) return false;
+  let d = path.resolve(dir);
+  for (let i = 0; i < 40; i++) {
+    try { if (fs.existsSync(path.join(d, '.git'))) return true; } catch {}
+    const acima = path.dirname(d);
+    if (acima === d) return false;
+    d = acima;
+  }
+  return false;
+}
+// nome que o git aceita como branch: sem "..", sem ".lock" no fim, sem ponto no fim
+const nomeDeWorktree = (n) => {
+  const t = String(n || '');
+  return (/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(t) && !/\.\.|\.lock$|\.$/.test(t)) ? t : '';
+};
+
 function claudeStart(paneId, opts) {
   claudeStop(paneId);
   claudeCwd.set(paneId, opts.cwd || HOME);
@@ -818,6 +842,21 @@ function claudeStart(paneId, opts) {
   if (opts.resumeId && opts.fork) args.push('--fork-session');
   // acesso amplo de saida so no modo que nao pergunta; nos outros ele pede na hora
   if (modo === 'bypass' && opts.cwd && opts.cwd !== HOME && !ehRemoto(opts.cwd)) args.push('--add-dir', HOME);
+
+  /* leva 10.5 — worktree: branch isolada em .claude/worktrees/<nome>, que o proprio CLI cria
+     (ou reaproveita) e onde ele trabalha. Fork de CODIGO, completando o de conversa.
+     TODAS as linhas conferem ehRemoto: no painel da VPS o -w nem e cogitado. Sem opts.worktree
+     nada aqui roda e o argv sai exatamente igual ao de sempre. */
+  const nomeWt = (!ehRemoto(opts.cwd) && opts.worktree) ? String(opts.worktree) : '';
+  if (nomeWt && !dentroDeGit(opts.cwd || HOME)) {
+    emit(paneId, 'note', { text: 'A pasta deste chat não é um repositório git, e o worktree "' + nomeWt + '" só funciona dentro de um. Use "Sair do worktree" no menu / do chat, ou troque a pasta.', error: true });
+    return false;
+  }
+  if (nomeWt && nomeDeWorktree(nomeWt)) args.push('-w', nomeDeWorktree(nomeWt));
+  /* com -w o CLI entra em .claude/worktrees/<nome> ANTES de resolver a sessao: o .jsonl nasce
+     na pasta do worktree, e o caminho que emitimos tem de ser esse (senao a conversa nao volta).
+     A trava do args.includes e obrigatoria: nome recusado pelo git nao vira pasta nenhuma. */
+  if (nomeWt && args.includes('-w')) claudeCwd.set(paneId, path.join(opts.cwd || HOME, '.claude', 'worktrees', nomeDeWorktree(nomeWt)));
 
   let proc;
   if (ehRemoto(opts.cwd)) {
@@ -3997,6 +4036,10 @@ function attachCodexThread(paneId, threadId, response, settings) {
 
 handle('pane:start', async (_e, data) => {
   const { paneId, engine, cwd, model, approval, resumeId, effort, billing } = data;
+  /* leva 10.5 — chat em worktree. Linha NOVA na FRENTE das duas de baixo, que ficaram intactas:
+     sem data.worktree nada muda e o caminho continua sendo exatamente o de sempre. O fork vai
+     junto porque um chat pode ser ramo E estar em worktree ao mesmo tempo. */
+  if (engine === 'claude' && data.worktree) return claudeStart(paneId, { cwd, model, approval, resumeId, effort, fork: data.fork || undefined, worktree: data.worktree });
   /* ramo do Claude: mesma chamada de sempre, so com o aviso de fork junto. Linha NOVA antes da
      de baixo (que ficou intacta) — sem data.fork o caminho continua sendo exatamente o antigo. */
   if (engine === 'claude' && data.fork) return claudeStart(paneId, { cwd, model, approval, resumeId, effort, fork: true });
@@ -4296,6 +4339,122 @@ handle('codex:apps', async () => {
     : erroInst ? 'Não consegui ver quais já estão ligados aqui: o estado pode estar desatualizado.'
     : '';
   return { apps, aviso };
+});
+
+/* ===================== LEVA 10 — TORRE, GIT E RADAR DE VERSAO =====================
+   Tres leituras, nenhuma delas destrutiva: quem esta trabalhando agora nesta maquina, o que
+   mudou na pasta do chat, e se algum motor ficou para tras. Todas entram por handle() de
+   proposito — sao LEITURA, e o iPhone roda o mesmo app.js, entao ele ganha as tres de graca
+   sem nenhum poder novo (o telefone ja alcanca fs:read, arquivo:ver e term:run). */
+
+/* ---- 10.1: sessoes do Claude vivas nesta maquina, dentro OU fora do Cockpit ----
+   (VS Code, Terminal, robo agendado). SEMPRE pelo CLAUDE_BIN: no shell do dono a palavra
+   "claude" e um APELIDO de ssh para a VPS, entao chamar pelo nome abriria uma conexao remota
+   em vez de listar coisa nenhuma. Cache curto porque a Torre repinta de 4 em 4 segundos e o
+   comando leva quase 1s. */
+let cacheAgentes = { quando: 0, itens: [] };
+handle('agentes:claude', async () => {
+  if (Date.now() - cacheAgentes.quando < 15000) return { itens: cacheAgentes.itens };
+  try {
+    const r = await rodar(CLAUDE_BIN, ['agents', '--json'], 20000);
+    /* rodar() nunca rejeita: falha e estouro de tempo chegam como {err} com saida vazia. Isso
+       NAO pode virar "nenhuma sessao" nem apagar a lista boa de antes — a tela mentiria dizendo
+       que nada esta rodando bem na hora em que o comando falhou. */
+    if (r.err && !String(r.out || '').trim()) throw (r.err instanceof Error ? r.err : new Error(String(r.err)));
+    const arr = JSON.parse(String(r.out || '').trim() || '[]');
+    const itens = (Array.isArray(arr) ? arr : []).map((a) => ({
+      pid: a.pid, cwd: String((a && a.cwd) || ''), kind: String((a && a.kind) || ''),
+      startedAt: Number(a && a.startedAt) || 0,
+      sessionId: String((a && a.sessionId) || ''), name: String((a && a.name) || ''),
+    }));
+    cacheAgentes = { quando: Date.now(), itens };
+    return { itens };
+  } catch (e) {
+    return { itens: cacheAgentes.itens, velho: cacheAgentes.itens.length > 0, error: String((e && e.message) || e).slice(0, 200) };
+  }
+});
+
+/* ---- 10.3: branch e arquivos mexidos da pasta do chat ----
+   R7: pasta na VPS sai NULO. O git roda no Mac; apontar o -C para "vps:/opt/..." abriria um
+   caminho que nao existe aqui e o chip mostraria a branch errada (ou nenhuma) sem avisar. */
+handle('git:status', async (_e, o) => {
+  const cwd = o && o.cwd;
+  if (!cwd || ehRemoto(cwd)) return null;
+  try { if (!fs.statSync(cwd).isDirectory()) return null; } catch { return null; }
+  // -C sobe sozinho ate a raiz do repositorio: subpasta de projeto tambem mostra a branch
+  const r = await rodar('git', ['-C', cwd, '-c', 'core.quotePath=false', 'status', '--porcelain=v1', '-b'], 8000);
+  if (r.err) return null;                       // pasta fora de repositorio: sem chip, sem recado
+  const linhas = String(r.out || '').split('\n').filter(Boolean);
+  let branch = '';
+  const arquivos = [];
+  for (const l of linhas) {
+    if (l.startsWith('## ')) { branch = l.slice(3).split('...')[0].split(' ')[0]; continue; }
+    const estado = l.slice(0, 2).trim();
+    let nome = l.slice(3).trim();
+    // arquivo renomeado vem como "antigo -> novo": quem interessa e o novo
+    const seta = nome.indexOf(' -> ');
+    if (seta > 0) nome = nome.slice(seta + 4);
+    if (nome) arquivos.push({ estado, nome });
+  }
+  return { branch, arquivos };
+});
+
+/* O diff de UM arquivo. Tenta primeiro o que ainda nao entrou no commit; se nao houver nada
+   ali (arquivo ja adicionado com "git add"), tenta o que esta em espera. Teto de 120 mil
+   letras para um arquivo gigante nao travar a tela. */
+handle('git:diff', async (_e, o) => {
+  const cwd = o && o.cwd, arquivo = o && o.arquivo;
+  if (!cwd || !arquivo || ehRemoto(cwd)) return '';
+  const r = await rodar('git', ['-C', cwd, 'diff', '--no-color', '--', arquivo], 10000);
+  const texto = String((r && r.out) || '');
+  if (r.err || !texto.trim()) {
+    const r2 = await rodar('git', ['-C', cwd, 'diff', '--no-color', '--cached', '--', arquivo], 10000);
+    return r2.err ? (r.err ? '' : texto.slice(0, 120000)) : String(r2.out || '').slice(0, 120000);
+  }
+  return texto.slice(0, 120000);
+});
+
+/* ---- 10.6: versao instalada x ultima publicada de cada motor ----
+   Este radar existe porque o Claude ficou 13 versoes para tras sem ninguem perceber.
+   O que fica em cache e SO a pergunta ao npm (ela custa rede e a resposta muda pouco). A
+   versao INSTALADA e lida na hora, toda vez: guardada, o aviso continuaria aparecendo 20h
+   depois de ele ja ter atualizado. */
+const VERSOES_PATH = () => path.join(app.getPath('userData'), 'versoes-motores.json');
+const NPM_DOS_MOTORES = {
+  claude: '@anthropic-ai/claude-code',
+  codex: '@openai/codex',
+};
+handle('motores:versoes', async () => {
+  const soVersao = (s) => { const m = String(s || '').match(/(\d+\.\d+\.\d+)/); return m ? m[1] : ''; };
+  let npmCache = {};
+  let fresco = false;
+  let quandoAntigo = 0;
+  try {
+    const c = JSON.parse(fs.readFileSync(VERSOES_PATH(), 'utf8'));
+    if (c && c.quando && (Date.now() - c.quando) < 20 * 60 * 60 * 1000) { npmCache = c.npm || {}; fresco = true; quandoAntigo = c.quando; }
+  } catch {}
+  const dados = {};
+  const npmNovo = { ...npmCache };
+  for (const eng of Object.keys(NPM_DOS_MOTORES)) {
+    // o Claude tem caminho proprio (a copia congelada); o Codex e procurado no PATH.
+    // R6: acharBin devolve o nome quando nao acha, entao quem responde "existe?" e o temBin.
+    const bin = eng === 'claude' ? CLAUDE_BIN : eng;
+    if (eng === 'claude') { if (!fs.existsSync(CLAUDE_BIN) && !temBin('claude')) continue; }
+    else if (!temBin(bin)) continue;             // motor que nao esta na maquina nao entra
+    const instalada = soVersao(await rodar(bin, ['--version'], 15000).then((r) => r.out + ' ' + r.errout).catch(() => ''));
+    if (!instalada) continue;
+    if (!fresco || !npmNovo[eng]) {
+      npmNovo[eng] = soVersao(await rodar('npm', ['view', NPM_DOS_MOTORES[eng], 'version'], 20000).then((r) => r.out).catch(() => '')) || npmNovo[eng] || '';
+    }
+    dados[eng] = { instalada, ultima: npmNovo[eng] || '' };
+  }
+  /* So grava quando conseguiu falar com o npm: guardar vazio calaria o radar por 20 horas.
+     Com o cache ainda valido a DATA nao se renova — senao, abrir o app de hora em hora
+     empurraria a validade para sempre e o npm nunca mais seria consultado. */
+  if (Object.values(npmNovo).some(Boolean)) {
+    try { gravarSeguro(VERSOES_PATH(), JSON.stringify({ quando: (fresco && quandoAntigo) || Date.now(), npm: npmNovo })); } catch {}
+  }
+  return dados;
 });
 
 /* ======================= menu ======================= */

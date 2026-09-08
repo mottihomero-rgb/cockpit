@@ -116,6 +116,12 @@
     codexReiniciar: () => Promise.resolve({ error: 'Reiniciar o Codex só funciona no Mac.' }),
     // este é só leitura: o telefone pode ver os Apps da conta igual ao Mac
     codexApps: () => chamar('codex:apps'),
+    /* leva 10: as tres sao leitura pura e vao pelo mesmo cano do Wi-Fi. A Torre no telefone
+       mostra os mesmos chats do Mac, e o chip do git some sozinho em pasta sem repositorio. */
+    agentesClaude: () => chamar('agentes:claude'),
+    gitStatus: (o) => chamar('git:status', o),
+    gitDiff: (o) => chamar('git:diff', o),
+    motoresVersoes: () => chamar('motores:versoes'),
     mcpList: (e) => chamar('mcp:list', e),
     mcpAcao: (o) => chamar('mcp:acao', o),
     auth: (o) => chamar('auth:acao', o),
