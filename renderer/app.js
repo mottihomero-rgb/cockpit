@@ -3437,7 +3437,13 @@ async function level(dir, container, depth, gen) {
         inp.value = (inp.value ? inp.value + ' ' : '') + e.path;
         inp.focus();
       });
-      n.addEventListener('dblclick', () => window.api.openPath(e.path));
+      /* Arquivo da VPS nao existe no Finder: o openPath falharia calado (o shell:open nem tem
+         guarda de remoto), e era por isso que duplo clique num arquivo da VPS nao fazia NADA.
+         Ele abre no visor de dentro do app. O caminho local segue igual ao que sempre foi. */
+      n.addEventListener('dblclick', () => {
+        if (NA_VPS(e.path) && focusPane) return verArquivo(focusPane, e.path);
+        window.api.openPath(e.path);
+      });
     }
   }
 }
@@ -5306,10 +5312,20 @@ const juntarComVps = (engine, lista) => {
 const VPS_ESPERA = 90000;
 const vpsBuscadoEm = { claude: 0, codex: 0 };
 let vpsBuscando = false;
+let vpsUltimoErro = '';
 async function buscarConversasVps(engine, force) {
   if (engine !== 'claude' || !window.api.sessionsClaudeRemoto) return;
   // sem nenhuma aba na VPS não se gasta uma conexão SSH para nada
-  if (![...abas.values()].some(A => NA_VPS(A.cwd))) return;
+  if (![...abas.values()].some(A => NA_VPS(A.cwd))) {
+    /* fechou a última aba da VPS: a lista dela sai da coluna junto. Sem isto as conversas
+       remotas ficavam listadas (com o rótulo mentindo) até ele reiniciar o app. */
+    if (histCacheVps[engine]) {
+      histCacheVps[engine] = null;
+      histCache[engine] = (histCache[engine] || []).filter(s => !s.remoto);
+      paintHist(engine, histCache[engine]);
+    }
+    return;
+  }
   if (vpsBuscando) return;
   if (!force && Date.now() - vpsBuscadoEm[engine] < VPS_ESPERA) return;
   vpsBuscadoEm[engine] = Date.now();
@@ -5317,7 +5333,17 @@ async function buscarConversasVps(engine, force) {
   let r = null;
   try { r = await window.api.sessionsClaudeRemoto(!!cfg.verRobos); } catch { return; }
   finally { vpsBuscando = false; }
+  /* A frase do motivoDoSsh só serve se ele a VIR: sem isto, VPS fora do ar = as conversas dela
+     somem da coluna e ninguém diz por quê. avisoTemp e não note por causa da R4.
+     Uma vez por queda: esta busca volta a cada resposta e o mesmo recado de 90 em 90 segundos
+     vira barulho. Se o erro mudar, ou depois de uma busca boa, ele avisa de novo. */
+  if (r && r.error) {
+    const P = focusPane;
+    if (P && r.error !== vpsUltimoErro) { vpsUltimoErro = r.error; avisoTemp(P, 'Conversas da VPS: ' + r.error); }
+    return;
+  }
   if (!Array.isArray(r)) return;               // erro do servidor não apaga o que já está na tela
+  vpsUltimoErro = '';
   histCacheVps[engine] = r;
   histCache[engine] = juntarComVps(engine, (histCache[engine] || []).filter(s => !s.remoto));
   paintHist(engine, histCache[engine]);

@@ -1368,6 +1368,13 @@ const erroDaSondaGnu = (bruto) => (/^COCKPIT_(FIND_SEM_PRINTF|SEM_BASE64)/.test(
    aquele pedaco vai fora em vez de virar um item torto na tela. */
 function registrosNul(b64) {
   if (!b64) return { itens: [] };
+  /* Buffer.from(...,'base64') NAO reclama de lixo: ele descarta o que nao for base64 e devolve
+     bytes sem sentido, que viram lista vazia — erro do servidor virando "pasta vazia" de novo,
+     agora calado. O "base64 -w0" nunca quebra linha, entao resposta com qualquer outro
+     caractere e RECADO do servidor (banner, aviso de perfil), nao dado. */
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) {
+    return { error: 'A resposta do servidor veio embaralhada: ' + b64.slice(0, 120) };
+  }
   let texto = '';
   try { texto = Buffer.from(b64, 'base64').toString('utf8'); }
   catch { return { error: 'A resposta do servidor veio corrompida.' }; }
@@ -1393,6 +1400,17 @@ async function listDirRemotoV2(cwd) {
     + "find . -mindepth 1 -maxdepth 1 -printf '%Y\\t%f\\0' 2>/dev/null | head -c 400000 | base64 -w0";
   const rr = await noServidorSsh(r, script, 20000);
   if (rr.error) return { error: rr.error };
+  /* Comando remoto que morreu SEM dizer nada nao pode virar "pasta vazia" na tela. O
+     noServidorSsh so preenche `error` no 255 (que e do proprio ssh); saida != 0 com stdout
+     vazio — "set -o pipefail" no perfil do servidor, disco cheio, sudo negado, bash ausente —
+     chegava aqui como lista vazia e a arvore desenhava a pasta VAZIA, calada. O noServidor
+     antigo transformava qualquer codigo != 0 em recado, e esta linha devolve esse aviso.
+     Exige stdout vazio de proposito: com pipefail, uma pasta enorme cortada pelo "head" sai
+     141 COM lista boa, e isso e resultado, nao falha. */
+  if (rr.code !== 0 && !String(rr.out || '').trim()) {
+    return { error: String(rr.errout || '').trim().slice(0, 300)
+      || ('A VPS respondeu com erro (código ' + rr.code + ') e não mandou a lista desta pasta.') };
+  }
   const bruto = String(rr.out || '').trim();
   if (bruto.startsWith('COCKPIT_SEM_PASTA')) {
     return { error: 'Não consegui abrir a pasta ' + alvo + ' no servidor. Ela existe e você tem acesso a ela?' };
@@ -2021,6 +2039,11 @@ async function claudeSessionsRemoto(incluirRobos) {
     + "printf '%s|~|%s|~|%s|~|%s|~|%s\\n' \"$arq\" \"$mtime\" \"$tam\" \"$tb\" \"$hb\"; done; exit 0";
   const rr = await noServidorSsh(r, script, 30000);
   if (rr.error) return { error: rr.error };
+  // mesmo cuidado da arvore: erro sem uma palavra viraria "nenhuma conversa na VPS"
+  if (rr.code !== 0 && !String(rr.out || '').trim()) {
+    return { error: String(rr.errout || '').trim().slice(0, 300)
+      || ('A VPS respondeu com erro (código ' + rr.code + ') ao procurar as conversas.') };
+  }
   const nomesMeus = lerNomes();
   const out = [];
   for (const linha of String(rr.out || '').split('\n')) {
@@ -2073,22 +2096,32 @@ function claudeHistoryTexto(data, maxFalas, maxTools) {
   return cortarHistorico(msgs, maxFalas || 600, maxTools);
 }
 
+/* A tela percorre a resposta com `for (const m of msgs)`: devolver {error} ali estoura um
+   TypeError e o painel fica MUDO, sem nem dizer o que houve. Como item de lista com role
+   'note', a frase aparece na conversa em vermelho (renderizarHistorico entende 'note'). */
+const notaDeErro = (texto) => [{ role: 'note', text: texto, error: true }];
+
 /* le o .jsonl de uma conversa que rodou na VPS: procura pelo id em ~/.claude/projects e traz o
    conteudo em base64, numa conexao so. Sem isto, clicar na conversa abria um chat vazio. */
 async function claudeHistoryRemoto(id) {
   const r = partesRemoto('vps:/');
-  if (!r) return { error: 'servidor desconhecido' };
+  if (!r) return notaDeErro('Não consegui trazer esta conversa: servidor desconhecido.');
   const seguro = String(id || '').replace(/[^\w-]/g, '');
   if (!seguro) return [];
   const script = 'f=$(find ~/.claude/projects -name ' + aspaSh(seguro + '.jsonl') + ' -print -quit 2>/dev/null); '
     + '[ -n "$f" ] && tail -c 6000000 "$f" | base64 -w0; exit 0';
   const rr = await noServidorSsh(r, script, 30000);
-  if (rr.error) return { error: rr.error };
+  if (rr.error) return notaDeErro('Não consegui trazer esta conversa da VPS: ' + rr.error);
   const b64 = String(rr.out || '').trim();
+  // erro sem uma palavra viraria conversa vazia, como se ela nunca tivesse existido
+  if (rr.code !== 0 && !b64) {
+    return notaDeErro('A VPS respondeu com erro (código ' + rr.code + ') ao ler esta conversa. '
+      + String(rr.errout || '').trim().slice(0, 200));
+  }
   if (!b64) return [];   // nao esta mais la: isso e resposta, nao falha de conexao
   let texto = '';
   try { texto = Buffer.from(b64, 'base64').toString('utf8'); }
-  catch { return { error: 'A resposta do servidor veio corrompida.' }; }
+  catch { return notaDeErro('A resposta do servidor veio corrompida.'); }
   // o corte e o DAQUI (600 falas / 250 ferramentas), nao os 60 itens do fork de origem
   return claudeHistoryTexto(texto, 600, 250);
 }
