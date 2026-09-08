@@ -88,6 +88,9 @@
     termResize: (o) => chamar('term:resize', o),
     termKill: (o) => chamar('term:kill', o),
     onTermEvent: (cb) => { (ouvintes['term:event'] = ouvintes['term:event'] || []).push(cb); },
+    // quem mostra aviso do sistema e' o Mac. Responder aqui na hora evita o TypeError que
+    // derruba o boot do telefone (o app.js e' o MESMO arquivo nos dois).
+    avisarAgente: () => Promise.resolve({ ok: false }),
     // no telefone nao faz sentido mexer no servidor nem abrir janela do Mac
     webEstado: () => Promise.resolve({ ligado: true, endereco: location.origin, senha: '' }),
     webLigar: () => Promise.resolve({ ligado: true, endereco: location.origin, senha: '' }),

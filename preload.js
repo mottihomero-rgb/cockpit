@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('api', {
   mcpList: (e) => ipcRenderer.invoke('mcp:list', e),
   mcpAcao: (o) => ipcRenderer.invoke('mcp:acao', o),
   avisarPronto: (o) => ipcRenderer.invoke('aviso:pronto', o),
+  // o agente te chamou no meio do trabalho (PushNotification): aviso do sistema, sem badge
+  avisarAgente: (o) => ipcRenderer.invoke('aviso:agente', o),
   copiar: (t) => ipcRenderer.invoke('clipboard:copiar', t),
   desfazerEdicao: (o) => ipcRenderer.invoke('arquivo:desfazer', o),
   abaDoNavegador: () => ipcRenderer.invoke('navegador:aba'),

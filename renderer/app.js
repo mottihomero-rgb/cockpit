@@ -135,6 +135,7 @@ const TOOL_PT = {
   Glob: 'Procurando arquivos', Grep: 'Buscando no código', WebSearch: 'Pesquisando na web',
   WebFetch: 'Abrindo link', Task: 'Agente', TodoWrite: 'Lista de tarefas', Skill: 'Skill',
   NotebookEdit: 'Editando notebook', BashOutput: 'Saída do terminal',
+  PushNotification: 'Avisando você',
 };
 function toolLabel(n) {
   if (TOOL_PT[n]) return TOOL_PT[n];
@@ -2248,6 +2249,9 @@ function toolStart(P, id, name, arg, extra) {
     P.tools.get(id).semTexto = true;            // o resultado cru não sobrescreve o diff
     P.edicoes = P.edicoes || [];
     P.edicoes.push(ex.edicao);                  // guardado para o "voltar no tempo"
+    // e tambem no rastro DESTE turno, que o carimbo do fim mostra junto ("ver mudanças").
+    // Lista separada de proposito: a P.edicoes e da sessao inteira e nunca e zerada.
+    (P.mudancasTurno = P.mudancasTurno || []).push(ex.edicao);
   }
   if (ex.tarefas && ex.tarefas.length) {
     const alvo = $('.exec-out', d);
@@ -2262,9 +2266,12 @@ function toolOutput(P, id, text) {
   if (t.buf.length > 20000) t.buf = t.buf.slice(-20000);
   t.out.textContent = t.buf;
 }
-function toolEnd(P, id, output, isErr) {
+function toolEnd(P, id, output, isErr, imagens) {
   passoPronto(P, id, isErr);
   const t = P.tools.get(id); if (!t) return;
+  /* ANTES do return antecipado da linha de baixo: um passo com diff (semTexto) tambem pode ter
+     trazido print, e ali a funcao ja teria voltado sem pendurar a imagem. */
+  if (imagens && imagens.length) mostrarPrintsDoPasso(P, t.el, imagens);
   if (t.semTexto && !isErr) return;      // o diff (ou a lista de tarefas) vale mais que o texto cru
   let txt = (output || t.buf || '').toString().trim();
   if (txt.length > 20000) txt = txt.slice(0, 20000) + '\n… (cortado)';
@@ -2278,6 +2285,211 @@ function note(P, text, isErr) {
   d.className = 'note err';
   d.textContent = text;
   P.chat.appendChild(d); scroll(P, true);
+}
+
+/* ===================== SINAIS DO TURNO =====================
+   Um turno de 20 minutos era uma caixa preta: acabava e nao sobrava nada dizendo quanto
+   levou, quanto consumiu, o que mexeu em arquivo nem o que ele viu. Aqui nasce o rastro do
+   turno (zerado a cada turno novo) e o carimbo discreto que fecha a conversa. */
+function comecarTurno(P) {
+  /* Relogio PROPRIO do turno. Nao dava pra reaproveitar o P.comecouEm: ele e do aviso de
+     "ficou pronto" e o avisarQueTerminou o zera UMA LINHA antes do carimbo ser desenhado. */
+  P.t0 = Date.now();
+  P.usoTurno = null;
+  P.mudancasTurno = [];
+  P.diffTurno = '';
+  P.printsTurno = [];
+}
+function duracaoCurta(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  return m + 'm' + String(s % 60).padStart(2, '0') + 's';
+}
+const fmtK = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0));
+// quantos arquivos o diff agregado do Codex mexeu
+function arquivosDoDiffUnificado(diff) {
+  const m = String(diff || '').match(/^diff --git /gm);
+  return m ? m.length : 1;
+}
+// quantos arquivos DIFERENTES este turno editou (o mesmo arquivo pode ter varias edicoes)
+function arquivosDasMudancas(P) {
+  return new Set((P.mudancasTurno || []).map((ed) => ed && ed.arquivo).filter(Boolean)).size
+    || (P.mudancasTurno || []).length;
+}
+
+/* linha discreta no fim do turno: quanto levou, quanto consumiu e o que mudou.
+   A guarda do P.t0 nao e' enfeite: o Codex manda 'turn-end' DUAS vezes (turn/completed e
+   status idle), e sem ela sairiam dois carimbos por turno. */
+function marcarFimDoTurno(P) {
+  if (!P.t0) return;
+  const levou = Date.now() - P.t0;
+  P.t0 = 0;
+  const temMudanca = !!(P.diffTurno || (P.mudancasTurno && P.mudancasTurno.length));
+  const prints = (P.printsTurno || []).slice();      // congela: o turno seguinte zera a lista
+  // resposta curta, sem mudanca e sem print nao precisa de carimbo
+  if (levou < 3000 && !temMudanca && !prints.length) return;
+  const d = document.createElement('div');
+  d.className = 'turno-fim';
+  const txt = document.createElement('span');
+  const tok = P.tokens ? ' · ' + (P.tokens / 1000).toFixed(1) + 'k de contexto' : '';
+  const uso = P.usoTurno ? ' · ' + fmtK(P.usoTurno.entrada) + '↑ ' + fmtK(P.usoTurno.saida) + '↓' : '';
+  txt.textContent = 'levou ' + duracaoCurta(levou) + uso + tok;
+  d.appendChild(txt);
+  if (temMudanca) {
+    const n = P.diffTurno ? arquivosDoDiffUnificado(P.diffTurno) : arquivosDasMudancas(P);
+    const bt = document.createElement('button');
+    bt.className = 'turno-mudancas';
+    bt.textContent = 'ver mudanças (' + n + (n === 1 ? ' arquivo' : ' arquivos') + ')';
+    bt.title = 'Tudo que este turno mexeu em arquivo, num lugar só';
+    // congela o rastro DESTE turno: o proximo turno zera P.mudancasTurno
+    const mudancas = (P.mudancasTurno || []).slice();
+    const diffTurno = P.diffTurno || '';
+    bt.addEventListener('click', (e) => { e.stopPropagation(); mostrarMudancasDoTurno(P, mudancas, diffTurno); });
+    d.appendChild(bt);
+  }
+  if (prints.length) {
+    const bp = document.createElement('button');
+    bp.className = 'turno-mudancas turno-prints';
+    bp.textContent = prints.length + (prints.length === 1 ? ' print' : ' prints');
+    bp.title = 'As imagens que o agente viu neste turno';
+    bp.addEventListener('click', (e) => { e.stopPropagation(); mostrarPrintsDoTurno(P, prints); });
+    d.appendChild(bp);
+  }
+  P.chat.appendChild(d);
+  scroll(P);
+}
+
+/* R9: o .modal-cx nao volta ao normal sozinho. Quem carimba classe (aqui, cx-term de 780px)
+   tem de desfazer na saida, senao a proxima janelinha DESTE painel nasce deformada. O unico
+   gancho que o Esc respeita e o P.fecharTerminal — e por ele que a limpeza acontece. */
+function abrirJanelaLarga(P, titulo) {
+  const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
+  modal.classList.remove('hidden');
+  cx.className = 'modal-cx cx-term';
+  cx.onclick = (e) => e.stopPropagation();
+  const fechar = () => { cx.className = 'modal-cx'; P.fecharTerminal = null; fecharModal(P); };
+  P.fecharTerminal = fechar;
+  modal.onclick = (e) => { if (e.target === modal) fechar(); };
+  cx.innerHTML = '<div class="mo-top"><span class="mo-tit"></span><button class="mo-x">' + ico('x') + '</button></div>';
+  $('.mo-tit', cx).textContent = titulo;
+  $('.mo-x', cx).onclick = fechar;
+  const corpo = document.createElement('div');
+  corpo.className = 'mo-lista';
+  cx.appendChild(corpo);
+  return corpo;
+}
+
+function mostrarMudancasDoTurno(P, mudancas, diffTurno) {
+  const corpo = abrirJanelaLarga(P, 'O que mudou neste turno');
+  if (diffTurno) {
+    // o Codex manda o diff agregado pronto (turn/diff/updated): desenha como o do git
+    const box = document.createElement('div');
+    box.className = 'dif dif-git';
+    for (const linha of String(diffTurno).split('\n').slice(0, 4000)) {
+      const l = document.createElement('div');
+      const t = linha.startsWith('+') && !linha.startsWith('+++') ? 'mais'
+        : linha.startsWith('-') && !linha.startsWith('---') ? 'menos'
+        : linha.startsWith('@@') || linha.startsWith('diff --git') ? 'pula' : 'igual';
+      l.className = 'dl ' + t;
+      l.textContent = linha;
+      box.appendChild(l);
+    }
+    corpo.appendChild(box);
+    return;
+  }
+  for (const ed of (mudancas || [])) {
+    const tit = document.createElement('div');
+    tit.className = 'menu-secao';
+    tit.textContent = ed.arquivo || 'arquivo';
+    corpo.appendChild(tit);
+    corpo.appendChild(cartaoDeDiff(P, ed));     // o mesmo cartao verde/vermelho do passo
+  }
+  if (!(mudancas || []).length) corpo.innerHTML = '<div class="mo-carregando">Nenhuma mudança de arquivo neste turno.</div>';
+}
+
+/* ===================== PRINTS DO AGENTE =====================
+   Imagem dentro do resultado de uma ferramenta (ele tirou um print) vira miniatura no proprio
+   passo; clique abre grande no VISOR — nao no .p-modal, que quebraria a escada do Esc.
+   Antes a imagem era jogada fora e so' sobrava o base64 em texto. */
+function mostrarPrintsDoPasso(P, d, imagens) {
+  const lista = (imagens || []).filter((im) => im && im.dados).slice(0, 4);
+  if (!lista.length) return;
+  P.printsTurno = P.printsTurno || [];
+  // a faixa e IRMA do .exec-t: o .exec-bd nasce fechado, e la dentro o print ficaria invisivel
+  let cx = d ? $('.pa-imgs', d) : null;
+  if (d && !cx) { cx = document.createElement('div'); cx.className = 'pa-imgs'; d.appendChild(cx); }
+  for (const im of lista) {
+    const src = 'data:' + (im.mime || 'image/png') + ';base64,' + im.dados;
+    if (P.printsTurno.length < 40) P.printsTurno.push(src);
+    if (!cx) continue;
+    const img = document.createElement('img');
+    img.className = 'pa-img';
+    img.src = src;
+    img.alt = 'print tirado pelo agente';
+    img.title = 'Print que o agente tirou — clique pra ver grande';
+    img.addEventListener('click', (e) => { e.stopPropagation(); verImagemGrande(P, src); });
+    cx.appendChild(img);
+  }
+  scroll(P);
+}
+function mostrarPrintsDoTurno(P, lista) {
+  const corpo = abrirJanelaLarga(P, 'O que ele viu neste turno');
+  corpo.classList.add('mo-prints');
+  for (const src of (lista || [])) {
+    const img = document.createElement('img');
+    img.className = 'mo-print';
+    img.alt = 'print tirado pelo agente';
+    img.src = src;
+    img.addEventListener('click', () => verImagemGrande(P, src));
+    corpo.appendChild(img);
+  }
+}
+/* Ver grande: o VISOR do painel, o mesmo do verArquivo. De proposito NAO e o .p-modal — ele
+   entra antes do visor na escada do Esc e faria um Esc fechar a janelinha errada. */
+function verImagemGrande(P, src) {
+  const v = $('.p-visor', P.el);
+  const corpo = $('.visor-corpo', v);
+  v.classList.remove('hidden');
+  v.onclick = (e) => { if (e.target === v) fecharVisor(); };
+  $('.visor-nome', v).textContent = 'Print do agente';
+  $('.visor-x', v).innerHTML = ico('x');
+  $('.visor-x', v).onclick = fecharVisor;
+  // este print nao e' um arquivo no disco: nao ha o que abrir no Mac
+  const abrir = $('.visor-abrir', v);
+  abrir.innerHTML = ico('image');
+  abrir.onclick = null;
+  abrir.title = 'Print do agente — não é um arquivo no Mac';
+  corpo.innerHTML = '';
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = 'print tirado pelo agente';
+  corpo.appendChild(img);
+}
+
+/* ===================== AVISO DO AGENTE (PushNotification) =====================
+   O agente decidiu que voce precisa saber de algo AGORA. O CLI, sem terminal, descartava
+   ("not sent"); o main intercepta a chamada e ela chega aqui: cartao que FICA na conversa,
+   painel piscando e aviso do sistema. */
+function avisoDoAgente(P, texto) {
+  const t = String(texto || '').replace(/\s+/g, ' ').trim();
+  if (!t) return;
+  clearEmpty(P);
+  const d = document.createElement('div');
+  d.className = 'aviso-agente';
+  d.innerHTML = '<span class="ag-ic"></span><span class="ag-txt"></span>';
+  $('.ag-ic', d).innerHTML = ico('zap');
+  $('.ag-txt', d).textContent = t;
+  d.setAttribute('role', 'status');
+  // sela a caixa de passos (P.execEl = null): o passo da propria notificacao, que o main manda
+  // logo em seguida, abre outra caixa EMBAIXO do cartao, e nao acima dele
+  limparPassos(P);
+  P.chat.appendChild(d);
+  if (P.trabEl) P.chat.appendChild(P.trabEl);
+  scroll(P);
+  piscar(P);
+  const nome = P.titulo || nomePasta(P.cwd) || 'Painel';
+  try { window.api.avisarAgente({ paneId: P.id, titulo: 'Cockpit — ' + nome, texto: t }); } catch {}
 }
 
 /* ============ envio ============ */
@@ -2454,6 +2666,7 @@ async function send(P) {
     }
   }
   P.busy = true; P.comecouEm = Date.now(); setDot(P, 'busy');
+  comecarTurno(P);          // relogio e rastro DESTE turno (uso, mudancas, prints)
   P.blocks.clear(); P.codexPlan = null; P.codexEstados = new Map();
   // sem zerar a legenda aqui, a ultima frase do turno ANTERIOR aparece colada no
   // "trabalhando" do turno novo, como se ele ainda estivesse naquilo
@@ -2549,7 +2762,7 @@ function receberEventoPane(ev) {
     case 'account': case 'connectors':
       if (!window.api.onCodexEvent) receberEventoGlobalCodex({ ...ev, destino: NA_VPS(P.cwd) ? 'vps' : 'local' });
       break;
-    case 'busy': P.busy = true; setDot(P, 'busy'); trabalhando(P); break;
+    case 'busy': P.busy = true; setDot(P, 'busy'); comecarTurno(P); trabalhando(P); break;
     // o motor abriu (ou reabriu) a conversa: este id passa a ser o fio guardado
     case 'sessao': {
       const mudou = P.sessaoId !== ev.id;
@@ -2571,7 +2784,12 @@ function receberEventoPane(ev) {
     case 'text-final': textFinal(P, ev.id, ev.text); break;
     case 'tool-start': toolStart(P, ev.id, ev.name, ev.arg, { edicao: ev.edicao, tarefas: ev.tarefas }); break;
     case 'tool-output': toolOutput(P, ev.id, ev.text); break;
-    case 'tool-end': toolEnd(P, ev.id, ev.output, ev.error); break;
+    case 'tool-end': toolEnd(P, ev.id, ev.output, ev.error, ev.imagens); break;
+    // o agente te chamou no meio do trabalho (PushNotification interceptada no main)
+    case 'aviso-agente': avisoDoAgente(P, ev.texto); break;
+    // rastro do turno: quanto ele consumiu e o diff agregado que o Codex manda pronto
+    case 'turno-uso': P.usoTurno = { entrada: ev.entrada || 0, saida: ev.saida || 0 }; break;
+    case 'diff-turno': P.diffTurno = ev.diff || ''; break;
     case 'compactou': estadoCodex(P, 'compactacao', 'Conversa resumida', 'O resumo liberou espaço para continuar.', true); break;
     case 'compacting': estadoCodex(P, 'compactacao', 'Resumindo a conversa', ev.message || 'Guardando o contexto para continuar.'); break;
     case 'question': perguntaCodex(P, ev); break;
@@ -2595,6 +2813,7 @@ function receberEventoPane(ev) {
     case 'voz': vozEvento(P, ev); break;
     case 'note': note(P, ev.text, ev.error); break;
     case 'turn-end':
+      marcarFimDoTurno(P);   // PRIMEIRA linha: o carimbo precisa do P.t0 antes de qualquer limpeza
       avisarQueTerminou(P);
       P.busy = false; escondePerm(P, false);   // perguntas não bloqueantes continuam respondíveis
       setDot(P, 'idle'); P.blocks.clear(); pararTrabalho(P); limparPassos(P);
@@ -2608,6 +2827,7 @@ function receberEventoPane(ev) {
       if (P.queued) { const q = P.queued; P.queued = null;
         setTimeout(async () => {
           P.busy = true; setDot(P, 'busy');
+          comecarTurno(P);        // a mensagem da fila e um turno novo: relogio e rastro zerados
           const escolhasDoEnvio = prepararEscolhasEnvio(P);
           try {
             const pacote = typeof q === 'string' ? { text: q } : q;

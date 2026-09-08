@@ -1442,3 +1442,24 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 /* recibo do turno: o fecho "## Recibo" vira cartao no fim da fala */
 .recibo{margin:12px 0 4px;padding:8px 12px;border-left:3px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--bg2));border-radius:6px}
 .recibo .recibo-tit{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-dim);margin:0 0 6px}
+/* ===== sinais do turno: carimbo de fim, prints do agente e o aviso que ele manda ===== */
+.turno-fim{display:flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap;
+  margin:2px 0 10px;font-size:10.5px;color:var(--fg-fraco);opacity:.8}
+.turno-mudancas{font-size:10.5px;color:var(--fg-dim);border:1px solid var(--line2);border-radius:999px;padding:1px 9px}
+.turno-mudancas:hover{color:var(--fg);border-color:var(--accent)}
+.turno-prints{margin-left:6px}
+/* diff agregado que o Codex manda pronto: reusa as cores das linhas do .dl */
+.dif-git{padding:6px 0;max-height:60vh;overflow:auto}
+/* print no proprio passo: faixa irma do .exec-t (o .exec-bd nasce fechado) */
+.pa-imgs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 2px}
+.pa-img{max-width:min(220px,100%);max-height:150px;border-radius:6px;border:1px solid var(--line2);cursor:zoom-in;display:block}
+.pa-img:hover{border-color:var(--accent)}
+/* galeria dos prints do turno */
+.mo-prints{flex-direction:row;flex-wrap:wrap;gap:10px;padding:10px}
+.mo-print{max-width:min(420px,100%);max-height:320px;border-radius:8px;border:1px solid var(--line2);cursor:zoom-in}
+/* aviso que o agente mandou (PushNotification interceptada) */
+.aviso-agente{display:flex;align-items:flex-start;gap:8px;margin:4px 14px 8px;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:1.45;
+  background:color-mix(in srgb,var(--yellow) 14%,var(--bg2));border:1px solid color-mix(in srgb,var(--yellow) 40%,var(--line2));color:var(--fg)}
+.aviso-agente .ag-ic{flex:none;color:var(--yellow);display:flex;margin-top:2px}
+.aviso-agente .ag-ic .ic{width:13px;height:13px}
+.aviso-agente .ag-txt{user-select:text;min-width:0;overflow-wrap:anywhere}

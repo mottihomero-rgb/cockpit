@@ -148,6 +148,13 @@ function emit(paneId, kind, data) {
   }
   const msg = { paneId, kind, ...data };
   if (win && !win.isDestroyed()) win.webContents.send('pane:event', msg);
+  /* PRINT NAO TRAFEGA PELO WI-FI. O send acima ja serializou a mensagem inteira (com as
+     imagens) para a janela do Mac; daqui pra baixo elas saem do objeto. Sem isto, cada print
+     que o agente tira (ate 3 MB de base64, ate 4 por passo) seria empurrado para o iPhone a
+     cada turno, so' para caber numa tela de 6 polegadas.
+     A ORDEM DESTA LINHA IMPORTA: ela tem de ficar DEPOIS do send do Mac e ANTES do laco do
+     Wi-Fi. Quem mexer aqui, nao mova. */
+  if (msg.imagens) { msg.prints = msg.imagens.length; delete msg.imagens; }
   for (const ws of ouvintesWeb) { try { ws.send(JSON.stringify({ tipo: 'evento', canal: 'pane:event', dados: msg })); } catch {} }
 }
 
@@ -551,6 +558,19 @@ function codexNotification(method, params, destino = 'local') {
         });
       } else if (it.type === 'fileChange') {
         emit(pane, 'tool-end', { id: it.id, output: fileChangeSummary(it), error: it.status === 'failed' });
+      /* O resultado do MCP trouxe imagem (print). Ate aqui o shortJson transformava o base64
+         em texto: um paredao de megabytes dentro do passo, e a imagem ninguem via. Agora sai
+         como imagem, e o texto vira a contagem. Os dois ramos originais seguem intocados
+         logo abaixo, para todo resultado que NAO tem imagem. */
+      } else if ((it.type === 'mcpToolCall' || it.type === 'dynamicToolCall')
+        && imagensDoResultado(it.type === 'mcpToolCall' ? (it.result ?? it.output) : it.contentItems).length) {
+        const imagens = imagensDoResultado(it.type === 'mcpToolCall' ? (it.result ?? it.output) : it.contentItems);
+        emit(pane, 'tool-end', {
+          id: it.id,
+          output: imagens.length === 1 ? '(1 imagem)' : '(' + imagens.length + ' imagens)',
+          error: it.status === 'failed' || it.success === false,
+          imagens,
+        });
       } else if (it.type === 'mcpToolCall') {
         emit(pane, 'tool-end', { id: it.id, output: shortJson(it.result ?? it.output), error: it.status === 'failed' });
       } else if (it.type === 'dynamicToolCall') {
@@ -607,6 +627,25 @@ function codexNotification(method, params, destino = 'local') {
           codexReq(destinoDoPane(pane), 'turn/interrupt', { threadId: tid, turnId: turno }).catch(() => {});
         }
       }
+      break;
+    }
+
+    /* diff agregado do turno, pronto do lado do motor: alimenta o "ver mudanças" do carimbo
+       de fim de turno. O Codex manda isto de verdade (esta na lista de notificacoes do CLI). */
+    case 'turn/diff/updated':
+      emit(pane, 'diff-turno', { diff: String(params.diff || '').slice(0, 300000) });
+      break;
+
+    /* consumo DESTE turno, separado do total da conversa (que continua saindo pelo
+       'thread/tokenUsage/updated', intocado logo acima).
+       ATENCAO: o codex-cli 0.153.4 ainda NAO emite este aviso — conferi a lista de
+       notificacoes dentro do binario. Fica pronto para quando ele passar a emitir; ate la o
+       carimbo do Codex mostra o tempo e as mudancas, sem a conta de tokens. */
+    case 'turn/tokenUsage/updated': {
+      const tuTurno = (params.tokenUsage && (params.tokenUsage.last || params.tokenUsage.total)) || params.tokenUsage || {};
+      const entradaDoTurno = tuTurno.inputTokens || tuTurno.input_tokens || 0;
+      const saidaDoTurno = tuTurno.outputTokens || tuTurno.output_tokens || 0;
+      if (entradaDoTurno || saidaDoTurno) emit(pane, 'turno-uso', { entrada: entradaDoTurno, saida: saidaDoTurno });
       break;
     }
 
@@ -880,6 +919,28 @@ function escreverClaude(paneId, obj) {
   }
 }
 
+/* ---------- print que o agente tirou ----------
+   Imagem dentro do RESULTADO de uma ferramenta. Ate aqui era jogada fora (no Claude) ou virava
+   um paredao de base64 no texto do passo (no Codex). Dois formatos:
+     Claude    -> { type:'image', source:{ type:'base64', media_type, data } }
+     MCP/Codex -> { type:'image', mimeType, data }
+   Teto por imagem e por resultado: e' pra ver o print, nao pra guardar um filme na tela. */
+const LIM_IMG_PASSO = 3 * 1024 * 1024;   // em base64 (~2,2 MB de png)
+const MAX_IMG_PASSO = 4;
+function imagensDoResultado(content) {
+  const lista = Array.isArray(content) ? content
+    : (content && Array.isArray(content.content) ? content.content : []);
+  const out = [];
+  for (const x of lista) {
+    if (!x || x.type !== 'image') continue;
+    const dados = (x.source && x.source.type === 'base64' && x.source.data) || x.data || '';
+    if (!dados || typeof dados !== 'string' || dados.length > LIM_IMG_PASSO) continue;
+    out.push({ mime: (x.source && x.source.media_type) || x.mimeType || 'image/png', dados });
+    if (out.length >= MAX_IMG_PASSO) break;
+  }
+  return out;
+}
+
 function claudeMessage(paneId, m) {
   if (m.type === 'control_response') return;
   if (m.type === 'control_request' && m.request && m.request.subtype === 'can_use_tool') {
@@ -903,6 +964,16 @@ function claudeMessage(paneId, m) {
   if (m.type === 'assistant' && m.message) {
     (m.message.content || []).forEach((c, i) => {
       if (c.type === 'text') emit(paneId, 'text-final', { id: 'b' + i, text: c.text || '' });
+      /* O agente te chamou (PushNotification). Sem terminal, o CLI descarta a notificacao e
+         responde "not sent": a chamada passa por aqui ANTES disso e o Cockpit entrega ele
+         mesmo — tambem quando vem de um sub-agente, porque quem chamou foi ele do mesmo jeito.
+         O ramo generico de tool_use logo abaixo segue intocado. */
+      else if (c.type === 'tool_use' && c.name === 'PushNotification') {
+        const texto = [c.input && c.input.title, c.input && c.input.message]
+          .filter(Boolean).join(': ').replace(/\s+/g, ' ').trim().slice(0, 300);
+        if (texto) emit(paneId, 'aviso-agente', { texto });
+        emit(paneId, 'tool-start', { id: c.id, name: c.name, arg: texto, edicao: null, tarefas: null });
+      }
       else if (c.type === 'tool_use') emit(paneId, 'tool-start', {
         id: c.id, name: c.name, arg: claudeToolArg(c.name, c.input),
         edicao: dadosDaEdicao(c.name, c.input),
@@ -917,7 +988,8 @@ function claudeMessage(paneId, m) {
         let txt = '';
         if (typeof c.content === 'string') txt = c.content;
         else if (Array.isArray(c.content)) txt = c.content.map(x => x && x.type === 'text' ? x.text : '').join('\n');
-        emit(paneId, 'tool-end', { id: c.tool_use_id, output: txt, error: !!c.is_error });
+        const imagens = imagensDoResultado(c.content);
+        emit(paneId, 'tool-end', { id: c.tool_use_id, output: txt, error: !!c.is_error, ...(imagens.length ? { imagens } : {}) });
       }
     }
     return;
@@ -968,6 +1040,12 @@ function claudeMessage(paneId, m) {
       janela: janela || undefined,
     });
     if (m.is_error) emit(paneId, 'note', { text: String(m.result || m.subtype), error: true });
+    /* quanto o TURNO consumiu (nao o tamanho da conversa, que ja saiu no 'tokens' acima): vai
+       pro carimbo de fim de turno. cache_read fica de fora — e' releitura, nao consumo novo.
+       Nomes proprios porque o 'u' deste escopo ja e' o m.usage. */
+    const entradaDoTurno = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    const saidaDoTurno = u.output_tokens || 0;
+    if (entradaDoTurno || saidaDoTurno) emit(paneId, 'turno-uso', { entrada: entradaDoTurno, saida: saidaDoTurno });
     emit(paneId, 'turn-end', {});
   }
 }
@@ -2640,6 +2718,27 @@ function zerarBadge() {
   prontosParados = 0;
   if (app.dock) app.dock.setBadge('');
 }
+
+/* O AGENTE TE CHAMOU no meio do trabalho (PushNotification interceptada em claudeMessage).
+   NAO reusa o 'aviso:pronto' de proposito: aquele conta "chats prontos" no badge do Dock, e
+   aqui o chat NAO terminou — o numero do Dock passaria a mentir. Aqui e' so o aviso do
+   sistema; o cartao na conversa e o piscar do painel sao da tela. */
+handle('aviso:agente', (_e, { paneId, titulo, texto }) => {
+  if (!Notification.isSupported()) return { ok: false };
+  const n = new Notification({
+    title: String(titulo || 'O agente te chamou').slice(0, 120),
+    body: String(texto || '').slice(0, 220),
+    silent: false,
+  });
+  n.on('click', () => {
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.show(); win.focus();
+    win.webContents.send('menu', 'ir:' + paneId);
+  });
+  n.show();
+  return { ok: true };
+});
 
 handle('clipboard:copiar', (_e, txt) => { clipboard.writeText(String(txt || '')); return { ok: true }; });
 

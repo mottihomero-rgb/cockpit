@@ -147,6 +147,24 @@ function imageData(item) {
   return { id: item.id, path: item.savedPath || '', url, prompt: item.revisedPrompt || '', status: item.status || '', error: item.failure || null };
 }
 
+/* Imagens dentro do resultado de uma ferramenta MCP, no formato do protocolo:
+   { type:'image', mimeType, data } (o Claude usa source.base64; os dois cabem aqui).
+   Mesmos tetos do main.js: 3 MB por imagem, 4 por resultado. */
+const LIM_IMG_HIST = 3 * 1024 * 1024;
+function imagensDoConteudo(valor) {
+  const lista = Array.isArray(valor) ? valor
+    : (valor && Array.isArray(valor.content) ? valor.content : []);
+  const out = [];
+  for (const x of lista) {
+    if (!x || x.type !== 'image') continue;
+    const dados = (x.source && x.source.type === 'base64' && x.source.data) || x.data || '';
+    if (!dados || typeof dados !== 'string' || dados.length > LIM_IMG_HIST) continue;
+    out.push({ mime: (x.source && x.source.media_type) || x.mimeType || 'image/png', dados });
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
 function historyItem(item) {
   if (!item) return null;
   if (item.type === 'userMessage') {
@@ -160,6 +178,21 @@ function historyItem(item) {
   if (item.type === 'commandExecution') return { role: 'tool', name: 'Terminal', arg: item.command || '', output: item.aggregatedOutput || '' };
   if (item.type === 'fileChange') return { role: 'tool', name: 'Editando arquivo', arg: (item.changes || []).map(x => x.path || '').join(', ') };
   if (item.type === 'webSearch') return { role: 'tool', name: 'Pesquisando na web', arg: item.query || '' };
+  /* Resultado de MCP que trouxe imagem (print). Sem isto o JSON.stringify abaixo joga o
+     base64 inteiro dentro do passo: megabytes de texto que ninguem le e que ainda tem de
+     atravessar o cano do IPC toda vez que a conversa e' remontada. Aqui o payload da imagem
+     sai do texto e vira a lista `imagens`; todo resultado SEM imagem segue pelo ramo
+     original, intocado, logo abaixo. */
+  if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') {
+    const imagens = imagensDoConteudo(item.result != null ? item.result : item.contentItems);
+    if (imagens.length) return {
+      role: 'tool',
+      name: [item.server, item.tool].filter(Boolean).join(' · '),
+      arg: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}),
+      output: imagens.length === 1 ? '(1 imagem)' : '(' + imagens.length + ' imagens)',
+      imagens,
+    };
+  }
   if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') return { role: 'tool', name: [item.server, item.tool].filter(Boolean).join(' · '), arg: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}), output: item.result ? JSON.stringify(item.result) : '' };
   if (item.type === 'collabAgentToolCall') return { role: 'tool', name: 'Time de agentes', arg: item.prompt || item.tool || '' };
   if (item.type === 'functionCallOutput') return { role: 'tool', name: item.name || 'Ferramenta', arg: '', output: typeof item.output === 'string' ? item.output : JSON.stringify(item.output) };
