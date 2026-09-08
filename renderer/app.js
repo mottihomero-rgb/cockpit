@@ -4132,6 +4132,10 @@ async function menuSkills(P, filtroInicial, focar) {
     // Eram cinco linhas aqui (trocar conta, entrar com codigo, logout, conta, ver conta) e as
     // cinco levavam ao mesmo lugar. Ficou UMA: a janela da conta ja tem todos esses botoes.
     { sec: 'Conta', ic: 'user', nome: 'conta', desc: 'quem está entrado, limite de uso, trocar ou sair' + (NA_VPS(P.cwd) ? ' · na VPS' : ''), act: () => janelaConta(P) },
+    /* Linha NOVA, e o nome dela nao pode ser "Trocar de conta": esse botao ja existe na janela
+       da Conta e faz OUTRA coisa (sai e entra pelo CLI, com navegador). Aqui e' so alternar
+       entre contas ja logadas, trocando o arquivo de credencial guardado. */
+    { sec: 'Conta', ic: 'arrow-left-right', nome: 'Contas guardadas…', desc: 'alternar entre contas já logadas, sem refazer login', act: () => menuContas(P) },
     { sec: 'Contexto', ic: 'upload', nome: 'Anexar arquivo…', act: () => menuAnexo(P) },
     { sec: 'Contexto', ic: 'folder', nome: 'Mencionar a pasta deste painel', act: () => inserirNoInput(P, P.cwd) },
     { sec: 'Contexto', ic: 'eraser', nome: 'Limpar a tela', desc: 'a conversa continua', act: () => { P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); P.rolagem = null; } },
@@ -4218,7 +4222,9 @@ async function menuSkills(P, filtroInicial, focar) {
      O `window.api.promptsLer ?` e cinto de seguranca — se um dia a tela abrir num app antigo,
      sem essa ponte, o menu inteiro morreria num TypeError em vez de ficar so' sem prompts. */
   [skills, prompts] = await Promise.all([
-    Promise.resolve(window.api.skills(P.engine)).then((s) => s || []).catch(() => []),
+    // { engine, cwd } em vez de só o motor: no Codex quem sabe as skills de verdade é o
+    // app-server, e a resposta dele depende da PASTA deste painel
+    Promise.resolve(window.api.skills({ engine: P.engine, cwd: P.cwd })).then((s) => s || []).catch(() => []),
     window.api.promptsLer ? window.api.promptsLer().then((p) => p || []).catch(() => []) : [],
   ]);
   pintar(busca.value);
@@ -4281,12 +4287,32 @@ async function janelaConectores(P) {
   cx.innerHTML = cabeca() + '<div class="mo-carregando">Verificando conectores…</div>';
   $('.mo-x', cx).onclick = () => fecharModal(P);
 
+  /* Linhas NOVAS: no Codex sao DUAS coisas diferentes na mesma tela — os Apps do ChatGPT (que
+     vivem na CONTA e valem em qualquer computador) e os conectores MCP que rodam aqui no Mac.
+     O pedido sai ANTES do await de baixo, mas NAO e esperado aqui: medido nesta maquina, o
+     catalogo de Apps leva 15 segundos e sao 3.563 itens. Esperar por ele deixaria a janelinha
+     inteira presa em "Verificando conectores...". Quando chegar, o bloco se encaixa sozinho —
+     se ainda for esta janelinha, e' o que a marca abaixo confere. */
+  const marcaApps = 'ap' + Date.now() + Math.random();
+  cx.dataset.geracaoApps = marcaApps;
+  const pedidoApps = (P.engine === 'codex' && window.api.codexApps)
+    ? lerAppsDoChatGpt() : Promise.resolve(null);
+  /* o encaixe e' pedido DEPOIS de a janelinha ja ter se pintado, senao o innerHTML de baixo
+     apagaria o bloco recem-encaixado quando a resposta vier do cache (instantanea) */
+  const encaixarApps = (appsR) => {
+    if (!appsR || cx.dataset.geracaoApps !== marcaApps) return;   // a janelinha virou outra coisa
+    if (modal.classList.contains('hidden') || modal.dataset.codexSurface !== 'connectors') return;
+    encaixarAppsDoChatGpt(cx, appsR);
+  };
   const lista = await window.api.mcpList(P.engine);
   if (!modal || modal.classList.contains('hidden')) return;
 
   if (lista && lista.error) {
     cx.innerHTML = cabeca() + '<div class="mo-erro">' + lista.error + '</div>';
+    cx.dataset.geracaoApps = marcaApps;   // o innerHTML apaga os filhos, nao o dataset; reafirma
     $('.mo-x', cx).onclick = () => fecharModal(P);
+    // o erro dos conectores locais nao pode apagar os Apps, que podem ter carregado bem
+    pedidoApps.then(encaixarApps);
     return;
   }
 
@@ -4306,7 +4332,10 @@ async function janelaConectores(P) {
       + '<div class="mo-rodape"><button class="mo-btn destaque" id="btAdd">Adicionar conector</button>'
       + '<button class="mo-btn" id="btRe">Atualizar</button></div>';
     $('.mo-x', cx).onclick = () => fecharModal(P);
-    $$('.co', cx).forEach((el) => {
+    /* ":not(.ap)" e essencial: as linhas dos Apps tambem sao ".co", e o data-i delas conta
+       outra lista. Sem isto o "Tirar" de um App tiraria o conector MCP errado. Hoje elas ainda
+       nao existem neste ponto (entram logo abaixo, depois deste laco), mas a trava fica. */
+    $$('.co:not(.ap)', cx).forEach((el) => {
       const c = arr[Number(el.dataset.i)];
       $('.co-n', el).textContent = nomeLimpo(c.nome);
       $('.co-s', el).textContent = c.precisaEntrar ? 'precisa entrar' : c.status;
@@ -4325,6 +4354,81 @@ async function janelaConectores(P) {
     $('#btAdd', cx).onclick = () => formConector(P);
   };
   pintar(lista || []);
+  cx.dataset.geracaoApps = marcaApps;   // o innerHTML do pintar apaga os filhos, nao o dataset
+  pedidoApps.then(encaixarApps);
+}
+
+/* texto de fora (nome de App, recado de erro da API) nunca entra cru no HTML */
+function escHtml(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+/* O catalogo de Apps e' o mesmo para a conta inteira e demora ~15s para voltar (sao milhares).
+   Guardar por um minuto evita que cada repinte da janelinha — e ela repinta sozinha a cada
+   aviso de conector do Codex — pague de novo essa espera. */
+const APPS_VALE = 60000;
+let appsGuardados = { quando: 0, dados: null, emVoo: null };
+function lerAppsDoChatGpt() {
+  if (appsGuardados.dados && Date.now() - appsGuardados.quando < APPS_VALE) return Promise.resolve(appsGuardados.dados);
+  if (appsGuardados.emVoo) return appsGuardados.emVoo;   // duas janelinhas abertas nao pedem duas vezes
+  appsGuardados.emVoo = window.api.codexApps()
+    .then((r) => { appsGuardados = { quando: Date.now(), dados: r || null, emVoo: null }; return r || null; })
+    .catch(() => { appsGuardados.emVoo = null; return null; });
+  return appsGuardados.emVoo;
+}
+
+/* Bloco NOVO da janelinha de conectores: os Apps do ChatGPT.
+   Entra por DOM, DEPOIS de a janelinha ja ter se pintado, e nao dentro do innerHTML dela — de
+   proposito. Assim a janelaConectores continua a mesma (inclusive o dataset.codexSurface, que
+   e quem faz o repinte automatico funcionar), e as linhas dos Apps nascem depois do laco que
+   liga os botoes dos MCP: o data-i de uma lista nunca alcanca a outra. */
+function encaixarAppsDoChatGpt(cx, appsR) {
+  if (!appsR || !cx) return;                    // painel do Claude, ou a ponte nem existe
+  $$('.ap-bloco', cx).forEach((n) => n.remove());   // repinte nao empilha dois blocos
+  const todos = Array.isArray(appsR.apps) ? appsR.apps : [];
+  /* Medido nesta conta: 3.563 Apps, e 3.550 deles vem "Indisponível nesta conta" — sem botao,
+     sem acao, nada que ele possa fazer. Despejar isso na janelinha seria um paredao cinza de
+     3.550 linhas escondendo as 13 que importam. Aqui ficam as que significam alguma coisa
+     (liberadas na conta ou ja instaladas aqui) e o resto vira UMA frase, sem esconder o total. */
+  const apps = todos.filter((a) => a.acessivel || a.instalado).slice(0, 60);
+  const deFora = todos.length - apps.length;
+  const cabecaApps = '<div class="mo-sec ap-bloco">Apps do ChatGPT<span class="mo-sec-d">valem na sua conta, em qualquer computador</span></div>';
+  let miolo;
+  if (appsR.error) miolo = '<div class="mo-erro ap-bloco">' + escHtml(appsR.error) + '</div>';
+  else if (!apps.length) miolo = '<div class="mo-carregando ap-bloco">Nenhum App ligado nesta conta.</div>';
+  else {
+    const linhas = apps.map((a, i) => {
+      /* amarelo e "precisa de voce" (a lista de MCP usa a mesma cor para "precisa entrar"):
+         App desligado de proposito, ou ligado sem ferramenta nenhuma, e cinza, com o texto
+         explicando — nao e problema dele para resolver. */
+      return '<div class="co ap" data-i="' + i + '" title="' + escHtml(a.desc || a.nome) + '">'
+        + '<span class="co-pt ' + (a.chamavel ? 'ok' : 'off') + '"></span>'
+        + '<span class="co-txt"><span class="co-n">' + escHtml(a.nome) + '</span>'
+        + '<span class="co-s">' + escHtml(a.status) + '</span></span>'
+        // sem acesso na conta, "Instalar" so levaria a uma pagina que nao resolve
+        + ((a.acessivel && !a.instalado && a.installUrl) ? '<button class="co-bt destaque">Instalar</button>' : '')
+        + '</div>';
+    }).join('');
+    miolo = (appsR.aviso ? '<div class="mo-dica ap-bloco">' + escHtml(appsR.aviso) + '</div>' : '')
+      + '<div class="mo-lista ap-bloco">' + linhas + '</div>'
+      + (deFora > 0 ? '<div class="mo-dica ap-bloco">Outros ' + deFora
+          + ' Apps existem no catálogo do ChatGPT, mas não estão liberados nesta conta.</div>' : '');
+  }
+  const caixa = document.createElement('div');
+  caixa.innerHTML = cabecaApps + miolo
+    + '<div class="mo-sec ap-bloco">Conectores deste Mac<span class="mo-sec-d">MCP instalados aqui</span></div>';
+  $$('.co.ap', caixa).forEach((el) => {
+    const a = apps[Number(el.dataset.i)];
+    const bt = a && $('.co-bt', el);
+    if (bt) bt.onclick = () => window.api.abrirLink(a.installUrl);
+  });
+  // o alvo tem de ser lido ANTES de encaixar, senao o .mo-lista dos Apps viraria o alvo
+  const alvo = $('.mo-lista', cx) || $('.mo-erro', cx) || $('.mo-rodape', cx);
+  while (caixa.firstChild) {
+    const n = caixa.firstChild;
+    if (alvo) cx.insertBefore(n, alvo); else cx.appendChild(n);
+  }
 }
 
 function formConector(P) {
@@ -5073,6 +5177,101 @@ async function janelaConta(P, motorPedido) {
   $('#ctCodigo', cx).onclick = () => { fecharModal(P); contaAcao(P, 'trocarCodigo', eng); };
   // o cartao acima le a conta DESTE Mac; com o chat na VPS quem responde e o servidor
   if ($('#ctVps', cx)) $('#ctVps', cx).onclick = () => { fecharModal(P); contaAcao(P, 'status', eng); };
+}
+
+/* ---------- contas guardadas: alternar sem refazer login ----------
+   Coisa DIFERENTE do "Trocar de conta" da janela da Conta, que sai e entra pelo CLI abrindo o
+   navegador. Aqui e' so' trocar o arquivo da credencial por uma copia ja guardada — dois
+   segundos em vez de dois minutos. Por isso o rotulo e' "Contas guardadas". */
+async function menuContas(P, motorPedido) {
+  const eng = motorPedido || P.engine;
+  const nomeEng = eng === 'codex' ? 'Codex' : 'Claude';
+  let guardadas = [], podeGuardar = false, porqueNao = '';
+  // le antes de abrir: no disco isso e instantaneo, e assim o menu nao pisca vazio
+  try { const r = await window.api.contasListar(eng); guardadas = Array.isArray(r) ? r : []; } catch {}
+  try { const d = await window.api.contasDisponivel(eng); podeGuardar = !!(d && d.ok); porqueNao = (d && (d.motivo || d.error)) || ''; } catch {}
+
+  const m = novoMenu(P);
+  m.appendChild(tituloPopup('Contas guardadas'));
+  m.appendChild(subPopup('Contas do ' + nomeEng + ' já logadas neste Mac. Clicar troca na hora, sem passar pelo navegador.'));
+  for (const g of guardadas) {
+    m.appendChild(elItem({
+      ic: 'user', nome: g.apelido, on: g.atual,
+      desc: g.atual ? 'em uso agora' : 'trocar para esta',
+    }, () => { if (!g.atual) trocarParaConta(P, eng, g.apelido); }));
+  }
+  if (guardadas.length) m.appendChild(elLinha());
+  if (podeGuardar) {
+    const c = contaCache[eng];
+    m.appendChild(elItem({ ic: 'plus', nome: 'Guardar a conta de agora…', desc: (c && c.email) || '' },
+      () => guardarContaAtual(P, eng)));
+  } else {
+    // dizer POR QUE em vez de simplesmente nao mostrar o item: some sem explicacao parece defeito
+    m.appendChild(elItem({ ic: 'lock', nome: 'Não dá para guardar a conta de agora', desc: porqueNao }));
+  }
+  if (guardadas.length) m.appendChild(elItem({ ic: 'eraser', nome: 'Esquecer uma conta guardada…',
+    desc: 'apaga só a cópia guardada aqui; o login continua onde está' }, () => menuEsquecerConta(P, eng)));
+}
+
+async function guardarContaAtual(P, eng) {
+  let c = contaCache[eng];
+  if (!c) { try { c = await window.api.contaLer(eng); } catch {} }
+  const sugestao = String((c && c.email) || '').split('@')[0] || '';
+  const apelido = await perguntarTexto(P, 'Guardar esta conta',
+    'Dê um apelido para reconhecer depois. A cópia fica guardada neste Mac.', sugestao);
+  if (!apelido || !apelido.trim()) return;
+  const nome = apelido.trim();
+  const r = await window.api.contasSalvar({ engine: eng, apelido: nome });
+  if (!r || r.error) { note(P, 'Não consegui guardar: ' + ((r && r.error) || 'erro'), true); return; }
+  // R4: sucesso por note() sem `true` nao apareceria na tela
+  avisoTemp(P, 'Conta guardada como “' + nome + '”. Agora dá para alternar em “Contas guardadas”.');
+}
+
+async function menuEsquecerConta(P, eng) {
+  let lista = [];
+  try { const r = await window.api.contasListar(eng); lista = Array.isArray(r) ? r : []; } catch {}
+  if (!lista.length) { avisoTemp(P, 'Nenhuma conta guardada.'); return; }
+  const m = novoMenu(P);
+  m.appendChild(tituloPopup('Esquecer conta guardada'));
+  m.appendChild(subPopup('Esquecer apaga só a cópia guardada aqui — não desconecta a conta nem faz logout.'));
+  for (const g of lista) {
+    m.appendChild(elItem({ ic: 'eraser', nome: g.apelido, desc: g.atual ? 'em uso agora' : 'guardada' }, async () => {
+      const r = await window.api.contasEsquecer({ engine: eng, apelido: g.apelido });
+      if (!r || r.error) { note(P, 'Não consegui esquecer: ' + ((r && r.error) || 'erro'), true); return; }
+      avisoTemp(P, 'Conta “' + g.apelido + '” esquecida aqui. O login em si continua onde estava.');
+    }));
+  }
+}
+
+async function trocarParaConta(P, eng, apelido) {
+  const nomeEng = eng === 'codex' ? 'Codex' : 'Claude';
+  /* PRIMEIRO parar os motores. Um CLI vivo renova o token e reescreve o arquivo da credencial:
+     trocar com ele rodando podia ser desfeito calado, minutos depois. */
+  let religados = 0;
+  for (const Q of [...panes.values()]) {
+    if (Q.engine !== eng) continue;
+    await desligarMotor(Q);
+    // religa na MESMA conversa: a sessao e' arquivo local, nao pertence a conta
+    Q.resumeId = Q.sessaoId || Q.resumeId; Q.sessaoId = null;
+    if (Q.resumeId) religados++;      // chat que nunca rodou nao "religa"
+    Q.started = false;
+  }
+  /* o Codex compartilha UM app-server entre todos os paineis, e ele leu a conta quando subiu:
+     parar painel nao basta, tem de derrubar o motor pra ele reler a credencial. Sem isto a
+     tela dizia "Conta trocada" e o Codex seguia respondendo pela conta antiga. */
+  if (eng === 'codex') { try { await window.api.codexReiniciar(); } catch {} }
+  savePanes();
+  const r = await window.api.contasTrocar({ engine: eng, apelido });
+  if (!r || r.error) {
+    // os chats ja foram desligados aqui em cima: nao deixa ele achar que nao aconteceu nada
+    note(P, ((r && r.error) || 'não consegui trocar a conta')
+      + (religados ? ' — a conta NÃO mudou; os chats religam na conta de antes na próxima mensagem.' : ''), true);
+    return;
+  }
+  contaCache[eng] = null; pintarContaLateral(eng, true);
+  USO_FECHADO[eng] = null; lerUso(eng, true);
+  avisoTemp(P, 'Conta do ' + nomeEng + ' trocada para “' + apelido + '”'
+    + (religados ? ' · ' + religados + ' chat(s) religam na conta nova na próxima mensagem' : '') + '.');
 }
 
 /* ---------- aviso de limite do plano, em cima da caixa de texto ----------

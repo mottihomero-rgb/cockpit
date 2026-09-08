@@ -2287,8 +2287,78 @@ function skillDesc(file) {
   return (t || '').replace(/^#+\s*/, '').slice(0, 140);
 }
 
+/* ---------- skills nativas do Codex (skills/list do app-server) ----------
+   Quem sabe as skills de verdade no Codex e' o proprio app-server: ele resolve escopo
+   (pessoal, projeto, plugin), respeita o que esta desligado e enxerga a PASTA do painel. A
+   varredura de disco continua sendo a base — e' ela quem acha ~/.codex/prompts — e tambem a
+   rede de seguranca quando a chamada nativa falha.
+
+   Cache PROPRIO, por pasta e com validade: o skillCache de baixo e' eterno e por MOTOR. Isso
+   serve para o Claude (as skills dele nao mudam com a pasta), mas aqui daria dois defeitos —
+   a pasta do painel B veria a lista do painel A, e skill nova so' apareceria reabrindo o app. */
+const skillsCodexCache = new Map();     // cwd -> { quando, lista }
+const SKILL_CODEX_VALE = 60 * 1000;     // um minuto: skill nova aparece sem reabrir o app
+const SKILL_CODEX_MAX = 12;             // uma chave por pasta aberta; a mais velha sai
+
+// mesma leitura do protocolo, com os campos que o menu "/" usa
+function normalizarSkillsNativas(resposta, cwd) {
+  const entradas = resposta && Array.isArray(resposta.data) ? resposta.data : [];
+  const querido = String(cwd || '').toLowerCase();
+  const entrada = entradas.find((x) => String((x && x.cwd) || '').toLowerCase() === querido) || entradas[0];
+  if (!entrada || !Array.isArray(entrada.skills)) return [];
+  return entrada.skills.filter((s) => s && s.enabled !== false).map((s) => ({
+    name: String(s.name || ''),
+    desc: String((s.interface && s.interface.shortDescription) || s.shortDescription || s.description || '').slice(0, 240),
+    displayName: String((s.interface && s.interface.displayName) || s.name || ''),
+    path: String(s.path || ''),
+    scope: String(s.scope || ''),
+    source: 'native',
+  })).filter((s) => s.name);
+}
+
+async function skillsNativasDoCodex(cwd) {
+  // R7: painel da VPS roda o app-server DE LA. Perguntar as skills de "vps:/opt/..." ao Codex
+  // do Mac devolveria a lista da pasta errada; melhor devolver nada e deixar so' o disco.
+  if (!cwd || ehRemoto(cwd)) return null;
+  const c = skillsCodexCache.get(cwd);
+  if (c && Date.now() - c.quando < SKILL_CODEX_VALE) return c.lista;
+  /* so' pergunta se o app-server JA esta de pe. Esperar o codexStart aqui segurava o menu "/"
+     por ate' 45s na primeira abertura (30s do initialize + 15s da chamada) — o menu tem de
+     abrir na hora, com o que houver, e as nativas entram na proxima abertura. */
+  if (!conexaoCodex('local').proc) { codexStart('local').catch(() => {}); return null; }
+  try {
+    const r = await codexReq('local', 'skills/list', { cwds: [cwd] }, 6000);
+    const lista = normalizarSkillsNativas(r, cwd);
+    skillsCodexCache.delete(cwd);        // reinsere no fim: a mais velha a sair e' a menos usada
+    skillsCodexCache.set(cwd, { quando: Date.now(), lista });
+    if (skillsCodexCache.size > SKILL_CODEX_MAX) skillsCodexCache.delete(skillsCodexCache.keys().next().value);
+    return lista;
+  } catch { return null; }   // nao virou cache: na proxima abertura pergunta de novo
+}
+
+// a nativa vale mais que a do disco quando as duas tem o mesmo nome
+function juntarSkills(nativas, disco) {
+  const vistas = new Set(); const out = [];
+  for (const lista of [nativas || [], disco || []]) {
+    for (const s of lista) { if (!s || !s.name || vistas.has(s.name)) continue; vistas.add(s.name); out.push(s); }
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
+// a varredura de disco de sempre, chamada pelo nome: assim a parte nova reaproveita o codigo
+// antigo sem copiar nem mexer nele
+const skillsDoDisco = (engine) => HANDLERS['skills:list'](null, engine);
+
 let skillCache = { claude: null, codex: null };
 handle('skills:list', (_e, engine) => {
+  /* NOVO: o painel passou a mandar { engine, cwd }. A forma antiga — so' a string do motor —
+     continua valendo, e e' a que o iPhone manda e a que a varredura de disco usa aqui embaixo. */
+  if (engine && typeof engine === 'object') {
+    const ped = engine;
+    engine = ped.engine;
+    if (engine === 'codex') return skillsNativasDoCodex(ped.cwd).then((n) => juntarSkills(n, skillsDoDisco('codex')));
+  }
   if (skillCache[engine]) return skillCache[engine];
   let dirs;
   if (engine === 'claude') {
@@ -2789,6 +2859,187 @@ handle('user:pickPhoto', async (_e) => {
     if (b.length > 3 * 1024 * 1024) return { error: 'Imagem muito pesada. Use uma menor que 3 MB.' };
     return { dataUrl: 'data:image/' + mime + ';base64,' + b.toString('base64') };
   } catch (e) { return { error: e.message }; }
+});
+
+/* ================= contas guardadas: trocar sem refazer login =================
+   Cada motor guarda a credencial num arquivo. Guardando uma copia por apelido, da' pra
+   alternar entre duas contas ja' logadas so' trocando o arquivo de volta.
+
+   No MAC a credencial do Claude NAO e' arquivo: mora no Chaveiro. Por isso a lista dele fica
+   vazia — e a chave continua aqui, vazia, de proposito: quem ler sabe que a ausencia foi
+   decidida e nao esquecida. Gravar um ~/.claude/.credentials.json que nunca existiu faria o
+   CLI passar a acreditar num token que o Chaveiro nao conhece. */
+const CAMINHOS_CRED = {
+  claude: [],
+  codex: [path.join(HOME, '.codex', 'auth.json')],
+};
+function arqCred(engine) {
+  const lista = CAMINHOS_CRED[engine] || [];
+  for (const p of lista) { try { if (fs.existsSync(p)) return p; } catch {} }
+  return lista[0];
+}
+/* Por que este motor NAO troca de conta por arquivo, em portugues. Vale para os quatro
+   (listar, salvar, trocar, esquecer): sem barrar tambem o "trocar", um clique solto criaria o
+   arquivo do Claude com o token de outra conta. */
+function contaSemArquivo(engine) {
+  if (engine === 'acp') return 'Este painel usa a conta do próprio agente ACP.';
+  const caminhos = CAMINHOS_CRED[engine];
+  if (!caminhos) return 'Não conheço as contas deste motor.';
+  if (!EH_WIN && engine === 'claude') return 'No Mac a conta do Claude fica no Chaveiro, não num arquivo. Use “Trocar de conta” na janela da Conta.';
+  // lista de caminhos vazia = de proposito, este motor nao guarda a conta em arquivo. Sem esta
+  // linha o motor passava pela peneira e so' era barrado la na frente, com um recado seco.
+  if (!caminhos.length) return 'Este motor não guarda a conta num arquivo que eu possa copiar.';
+  return '';
+}
+function trocaDeContaDisponivel(engine) {
+  if (contaSemArquivo(engine)) return false;
+  const p = arqCred(engine);
+  if (!p) return false;
+  try { return fs.existsSync(p); } catch { return false; }
+}
+const PASTA_CONTAS = () => path.join(app.getPath('userData'), 'contas');
+function lerCredencial(engine) {
+  const p = arqCred(engine);
+  if (!p) return null;
+  try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
+}
+function credencialValida(texto) {
+  try { const o = JSON.parse(texto); return !!o && typeof o === 'object' && Object.keys(o).length > 0; }
+  catch { return false; }
+}
+/* R1: estes cinco entram por handle(), entao o iPhone tambem os alcanca pelo Wi-Fi. Trocar a
+   conta do Mac por um toque no telefone e' exatamente o que nao pode acontecer. */
+const SO_NO_MAC = { error: 'Trocar de conta só funciona no Mac.' };
+
+handle('contas:disponivel', (_e, engine) => {
+  if (souRemoto(_e)) return { ok: false, motivo: SO_NO_MAC.error };
+  const motivo = contaSemArquivo(engine);
+  if (motivo) return { ok: false, motivo };
+  return trocaDeContaDisponivel(engine)
+    ? { ok: true }
+    : { ok: false, motivo: 'Não achei uma conta do ' + (engine === 'codex' ? 'Codex' : engine) + ' logada agora para guardar.' };
+});
+
+handle('contas:listar', (_e, engine) => {
+  if (souRemoto(_e)) return [];
+  if (contaSemArquivo(engine)) return [];
+  const dir = PASTA_CONTAS();
+  const out = [];
+  const atualTxt = lerCredencial(engine);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.startsWith(engine + '__') || !f.endsWith('.json')) continue;
+      let apelido; try { apelido = decodeURIComponent(f.slice((engine + '__').length, -5)); } catch { continue; }
+      let igualAtual = false;
+      try { igualAtual = atualTxt !== null && fs.readFileSync(path.join(dir, f), 'utf8') === atualTxt; } catch {}
+      out.push({ apelido, atual: igualAtual });
+    }
+  } catch {}
+  out.sort((a, b) => a.apelido.localeCompare(b.apelido));
+  return out;
+});
+
+handle('contas:salvar', (_e, { engine, apelido } = {}) => {
+  if (souRemoto(_e)) return SO_NO_MAC;
+  const motivo = contaSemArquivo(engine);
+  if (motivo) return { error: motivo };
+  const txt = lerCredencial(engine);
+  if (!txt || !credencialValida(txt)) return { error: 'Não achei uma conta logada para guardar.' };
+  const nome = String(apelido || '').trim().slice(0, 40);
+  if (!nome) return { error: 'Dê um apelido para esta conta.' };
+  try {
+    const dir = PASTA_CONTAS();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, engine + '__' + encodeURIComponent(nome) + '.json'), txt, { mode: 0o600 });
+    return { ok: true };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+});
+
+handle('contas:trocar', (_e, { engine, apelido } = {}) => {
+  if (souRemoto(_e)) return SO_NO_MAC;
+  const motivo = contaSemArquivo(engine);
+  if (motivo) return { error: motivo };
+  const alvo = path.join(PASTA_CONTAS(), engine + '__' + encodeURIComponent(String(apelido || '')) + '.json');
+  const destino = arqCred(engine);
+  if (!destino) return { error: 'Não sei onde fica a credencial deste motor.' };
+  try {
+    if (!fs.existsSync(alvo)) return { error: 'Essa conta não está mais guardada.' };
+    const txt = fs.readFileSync(alvo, 'utf8');
+    if (!credencialValida(txt)) return { error: 'O arquivo desta conta está corrompido — não vou trocar.' };
+    fs.mkdirSync(path.dirname(destino), { recursive: true });
+    /* grava em temporario e troca de uma vez: escrever direto podia pegar o CLI no meio de uma
+       renovacao de token e deixar o arquivo pela metade. O backup de verdade e' a copia que
+       continua guardada em PASTA_CONTAS — nao fica token solto no disco. */
+    const tmp = destino + '.tmp';
+    fs.writeFileSync(tmp, txt, { mode: 0o600 });
+    try { fs.renameSync(tmp, destino); }
+    catch (e) {
+      try { fs.unlinkSync(tmp); } catch {}
+      const cod = String(e && (e.code || e.message) || e);
+      const porque = (cod === 'EBUSY' || cod === 'EPERM' || cod === 'EACCES') ? 'o arquivo está em uso' : cod;
+      return { error: 'Não consegui trocar a credencial agora (' + porque + '). Tente de novo.' };
+    }
+    return { ok: true };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+});
+
+handle('contas:esquecer', (_e, { engine, apelido } = {}) => {
+  if (souRemoto(_e)) return SO_NO_MAC;
+  const motivo = contaSemArquivo(engine);
+  if (motivo) return { error: motivo };
+  try {
+    fs.unlinkSync(path.join(PASTA_CONTAS(), engine + '__' + encodeURIComponent(String(apelido || '')) + '.json'));
+    return { ok: true };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+});
+
+/* Trocar o arquivo da credencial nao adianta NADA com o app-server velho de pe: ele leu a
+   conta quando subiu e segue respondendo por ela. Aqui o processo do destino LOCAL cai, para
+   o proximo pedido subir outro ja com a conta nova. A VPS nao entra: la a conta e' do
+   servidor, e derrubar o app-server de la nao troca conta nenhuma aqui. */
+handle('codex:reiniciar', async (_e) => {
+  if (souRemoto(_e)) return SO_NO_MAC;
+  const c = conexaoCodex('local');
+  const p = c.proc;
+  /* limpa o estado do destino ANTES de matar, para o processo NOVO nascer limpo:
+     - buf: meia linha de JSON do processo velho grudaria na primeira linha do novo;
+     - pend: quem esperava resposta precisa saber que ela nunca vem. */
+  c.proc = null; c.ready = null; c.buf = '';
+  for (const [, pend] of c.pend) { try { pend.reject(new Error('o Codex foi reiniciado para trocar de conta')); } catch {} }
+  c.pend.clear();
+  /* pedido de permissao do processo VELHO: o rpcId dele nao existe no novo, e responder depois
+     so' devolveria erro. Some junto com o processo. */
+  for (const [k, a] of pendingApprovals) if (a && a.destino === 'local') pendingApprovals.delete(k);
+  // painel que vivia no processo velho perde a thread: a proxima mensagem abre outra
+  for (const [paneId, d] of codexPaneDest) {
+    if (d !== 'local') continue;
+    const tid = codex.paneToThread.get(paneId);
+    if (tid) codex.threadToPane.delete(tid);
+    codex.paneToThread.delete(paneId);
+    codex.paneTurn.delete(paneId);
+    codexPaneDest.delete(paneId);
+    codexPaneBilling.delete(paneId);
+  }
+  if (!p) return { ok: true };
+  /* O 'close' registrado no codexStart nao confere se quem caiu ainda e' o processo atual: se
+     ele disparasse depois de o Codex NOVO ja estar de pe, apagaria o processo novo e o chat
+     ficaria em "Ligando o Codex..." para sempre. Por isso o ouvinte sai ANTES de matar.
+     Nao emito 'engine-down' de proposito: la a tela diz "a conexao caiu", e aqui a queda foi
+     de proposito — quem chama ja desligou os paineis antes. */
+  try { p.removeAllListeners('close'); } catch {}
+  await new Promise((r) => {
+    let feito = false;
+    const fim = () => { if (feito) return; feito = true; clearTimeout(prazo); r(); };
+    const prazo = setTimeout(fim, 4000);   // nao trava a tela se ele emperrar
+    p.once('close', fim);
+    matarProcesso(p);
+  });
+  // pelo prazo pode ter escapado sem passar pelo 'close': solta o ouvinte do processo velho
+  // pra ele nao continuar despejando resposta na fila do novo, e insiste na morte dele
+  try { p.stdout.removeAllListeners('data'); } catch {}
+  if (p.exitCode === null && p.signalCode === null) { try { p.kill('SIGKILL'); } catch {} }
+  return { ok: true };
 });
 
 const EXT_IMG = ['png','jpg','jpeg','gif','webp','bmp','heic','svg'];
@@ -3726,6 +3977,49 @@ handle('codex:models', async () => {
       multiAgentVersion: m.multiAgentVersion || null,
     }));
   } catch { return []; }
+});
+
+/* Apps do ChatGPT (os conectores da CONTA, nao os MCP daqui do Mac).
+   Duas chamadas: app/list diz o que existe na conta e app/installed diz o que ja esta ligado
+   nesta maquina. A conta pode nao ter direito a isso — o app-server responde 403 — e nesse
+   caso a tela mostra o recado em vez de ficar vazia. So o destino local: a conta da VPS e
+   outra, e o "ligado nesta maquina" de la nao diz nada sobre este Mac. */
+handle('codex:apps', async () => {
+  try { await codexStart('local'); }
+  catch (e) { return { error: 'O Codex não está no ar: ' + String((e && e.message) || e).slice(0, 160) }; }
+  const [lista, instalados] = await Promise.all([
+    codexReq('local', 'app/list', {}, 20000).catch((e) => ({ __erro: String((e && e.message) || e) })),
+    codexReq('local', 'app/installed', {}, 20000).catch((e) => ({ __erro: String((e && e.message) || e) })),
+  ]);
+  /* o 403 do catalogo vem com uma pagina HTML inteira do Cloudflare junto: jogar isso na tela
+     nao ajuda ninguem. Corta na primeira tag — mas se a mensagem COMECAR com "<" nao sobraria
+     texto nenhum, e ai o recado sumia e a tela dizia "nenhum App", que e' mentira. */
+  const limpa = (t) => {
+    const cru = String(t || '').trim();
+    const semTag = cru.split('<')[0].trim();
+    return (semTag || cru.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || 'o Codex recusou o pedido').slice(0, 160);
+  };
+  /* o "sem acesso" tem de ser procurado no texto INTEIRO: cortado em 160 caracteres, o "403"
+     da pagina do Cloudflare fica de fora e o recado amigavel virava sopa de HTML picotado */
+  const semAcesso = (t) => /\b403\b|forbidden|not permitted|unauthorized/i.test(String(t || ''));
+  const falhouLista = !!(lista && lista.__erro);
+  const falhouInst = !!(instalados && instalados.__erro);
+  const erroLista = falhouLista ? limpa(lista.__erro) : '';
+  const erroInst = falhouInst ? limpa(instalados.__erro) : '';
+  const apps = codexProtocol.mergeApps(falhouLista ? null : lista, falhouInst ? null : instalados);
+  /* so' e' ERRO quando as DUAS falharam. Catalogo vazio com o installed fora do ar nao e'
+     "nao consegui ler": e' que nao ha App nenhum mesmo. */
+  if (!apps.length && falhouLista && falhouInst) {
+    return { error: (semAcesso(lista.__erro) || semAcesso(instalados.__erro))
+      ? 'Sua conta do ChatGPT ainda não libera a lista de Apps por aqui.'
+      : ('Não consegui ler os Apps: ' + (erroLista || erroInst)) };
+  }
+  /* deu pra listar mesmo com uma das duas fora do ar. Mostra o que da' e diz qual metade esta
+     faltando — senao a tela mente sem avisar. */
+  const aviso = erroLista ? 'Só consegui ver o que já está instalado neste Mac.'
+    : erroInst ? 'Não consegui ver quais já estão ligados aqui: o estado pode estar desatualizado.'
+    : '';
+  return { apps, aviso };
 });
 
 /* ======================= menu ======================= */

@@ -199,4 +199,60 @@ function historyItem(item) {
   return null;
 }
 
-module.exports = { decodeOutput, normalizeSettings, threadConfig, turnSettings, userInput, answersFor, requestResponse, imageData, historyItem };
+/* ---------- Apps do ChatGPT ----------
+   Sao os conectores da CONTA (valem em qualquer computador), nao os MCP instalados aqui.
+   Duas chamadas ao app-server dizem coisas diferentes: `app/list` e' o catalogo do que existe
+   na conta, `app/installed` e' o que ja esta ligado nesta maquina. Estas duas funcoes sao
+   puras de proposito: da' pra conferir o contrato sem ligar motor nem gastar cota. */
+function appStatus(app, runtime) {
+  if (!app.isAccessible) return 'Indisponível nesta conta';
+  if (runtime && runtime.callable) return 'Pronto para usar';
+  if ((runtime && !runtime.enabled) || app.isEnabled === false) return 'Desligado';
+  if (runtime) return 'Ligado, mas sem ferramenta disponível';
+  return 'Disponível para instalar';
+}
+
+function mergeApps(listResponse, installedResponse) {
+  const listed = listResponse && Array.isArray(listResponse.data) ? listResponse.data : [];
+  const installed = installedResponse && Array.isArray(installedResponse.apps) ? installedResponse.apps : [];
+  const runtimeById = new Map(installed.map((app) => [String(app.id), app]));
+  const seen = new Set();
+  const result = listed.map((app) => {
+    const id = String(app.id || '');
+    const runtime = runtimeById.get(id);
+    seen.add(id);
+    return {
+      id,
+      nome: String(app.name || (runtime && runtime.runtimeName) || id),
+      desc: String(app.description || ''),
+      acessivel: !!app.isAccessible,
+      habilitado: runtime ? !!runtime.enabled : app.isEnabled !== false,
+      instalado: !!runtime,
+      chamavel: !!(runtime && runtime.callable),
+      status: appStatus(app, runtime),
+      installUrl: String(app.installUrl || ''),
+      logo: String(app.logoUrl || ''),
+    };
+  });
+  // instalado aqui mas fora do catalogo (a conta perdeu o acesso, ou o App saiu da lista):
+  // sumir com ele da tela seria esconder algo que continua ligado nesta maquina
+  for (const runtime of installed) {
+    const id = String(runtime.id || '');
+    if (!id || seen.has(id)) continue;
+    result.push({
+      id,
+      nome: String(runtime.runtimeName || id),
+      desc: '',
+      acessivel: true,
+      habilitado: !!runtime.enabled,
+      instalado: true,
+      chamavel: !!runtime.callable,
+      status: runtime.callable ? 'Pronto para usar' : (runtime.enabled ? 'Ligado, mas sem ferramenta disponível' : 'Desligado'),
+      installUrl: '',
+      logo: '',
+    });
+  }
+  return result;
+}
+
+module.exports = { decodeOutput, normalizeSettings, threadConfig, turnSettings, userInput, answersFor, requestResponse, imageData, historyItem, appStatus, mergeApps };

@@ -59,6 +59,16 @@ contextBridge.exposeInMainWorld('api', {
   webLigar: (v) => ipcRenderer.invoke('web:ligar', v),
   contaLer: (e) => ipcRenderer.invoke('conta:ler', e),
   usoLer: (e) => ipcRenderer.invoke('uso:ler', e),
+  // contas guardadas: alternar entre contas já logadas sem refazer login
+  contasListar: (e) => ipcRenderer.invoke('contas:listar', e),
+  contasDisponivel: (e) => ipcRenderer.invoke('contas:disponivel', e),
+  contasSalvar: (o) => ipcRenderer.invoke('contas:salvar', o),
+  contasTrocar: (o) => ipcRenderer.invoke('contas:trocar', o),
+  contasEsquecer: (o) => ipcRenderer.invoke('contas:esquecer', o),
+  // derruba o app-server do Codex para ele reler a credencial depois da troca
+  codexReiniciar: () => ipcRenderer.invoke('codex:reiniciar'),
+  // Apps do ChatGPT (conectores da conta, não os MCP deste Mac)
+  codexApps: () => ipcRenderer.invoke('codex:apps'),
   mcpList: (e) => ipcRenderer.invoke('mcp:list', e),
   mcpAcao: (o) => ipcRenderer.invoke('mcp:acao', o),
   avisarPronto: (o) => ipcRenderer.invoke('aviso:pronto', o),

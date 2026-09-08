@@ -90,6 +90,18 @@
     termLinhaShell: (cwd) => chamar('term:linhaShell', cwd),
     contaLer: (e) => chamar('conta:ler', e),
     usoLer: (e) => chamar('uso:ler', e),
+    /* Trocar a conta do Mac por um toque no telefone é exatamente o que não pode acontecer: o
+       main já barra os cinco, e aqui a resposta sai na hora, com o tipo certo, para o menu não
+       ficar 2 minutos esperando. Sem estas linhas o app.js (o MESMO arquivo nos dois) morreria
+       num TypeError e derrubaria o boot do celular. */
+    contasListar: () => Promise.resolve([]),
+    contasDisponivel: () => Promise.resolve({ ok: false, motivo: 'Trocar de conta só funciona no Mac.' }),
+    contasSalvar: () => Promise.resolve({ error: 'Guarde a conta pelo Mac.' }),
+    contasTrocar: () => Promise.resolve({ error: 'Trocar de conta só funciona no Mac.' }),
+    contasEsquecer: () => Promise.resolve({ error: 'Esqueça a conta pelo Mac.' }),
+    codexReiniciar: () => Promise.resolve({ error: 'Reiniciar o Codex só funciona no Mac.' }),
+    // este é só leitura: o telefone pode ver os Apps da conta igual ao Mac
+    codexApps: () => chamar('codex:apps'),
     mcpList: (e) => chamar('mcp:list', e),
     mcpAcao: (o) => chamar('mcp:acao', o),
     auth: (o) => chamar('auth:acao', o),
