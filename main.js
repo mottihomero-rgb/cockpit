@@ -1708,7 +1708,11 @@ function textoLegivel(file) {
     let t = '';
     try {
       const d = JSON.parse(linha);
-      t = pega(d.message && d.message.content) || pega(d.payload && d.payload.content) || '';
+      /* 3a alternativa (leva 12.5): a transcrição do ACP é {role, text} solto. Sem esta linha
+         a conversa do ACP indexava VAZIA — e o índice guarda o vazio em cache, então ela nunca
+         mais seria achada pela busca, mesmo depois de arrumar. */
+      t = pega(d.message && d.message.content) || pega(d.payload && d.payload.content)
+        || (d.role && typeof d.text === 'string' ? d.text : '') || '';
     } catch { continue; }
     t = String(t).replace(/\s+/g, ' ').trim();
     if (!t) continue;
@@ -2164,6 +2168,17 @@ function acharConversaClaude(id, cwd) {
 
 handle('sessions:history', async (_e, { engine, file, id, cwd }) => {
   let alvo = file && fs.existsSync(file) ? file : '';
+  /* leva 12.5 — o ACP: o corte é o mesmo dos outros dois motores (600 falas / 250 passos),
+     e NÃO o corte de 60 do acp.js, que é o default de quem chama sem dizer nada. Com 60 a
+     conversa voltava só com o fim, que é exatamente o bug que a leva do histórico consertou.
+     Se o arquivo veio de outra máquina (caminho de lá), o id acha o arquivo daqui. */
+  if (engine === 'acp') {
+    try {
+      const f = alvo || acp.arquivoDe(id);
+      if (!f || !fs.existsSync(f)) return [];
+      return cortarHistorico(acp.historico(id, f, 5000), 600, 250);
+    } catch { return []; }
+  }
   if (engine === 'claude') {
     if (!alvo) alvo = acharConversaClaude(id, cwd);
     return alvo ? claudeHistory(alvo, 600, 250) : [];
@@ -2468,8 +2483,14 @@ handle('skills:list', (_e, engine) => {
   if (engine && typeof engine === 'object') {
     const ped = engine;
     engine = ped.engine;
+    // painel ACP: os comandos "/" são os que o agente DAQUELE painel anunciou, não skills de disco
+    if (engine === 'acp') return acp.comandos(ped.paneId) || [];
     if (engine === 'codex') return skillsNativasDoCodex(ped.cwd).then((n) => juntarSkills(n, skillsDoDisco('codex')));
   }
+  /* forma antiga (só a string do motor, que é a que o iPhone manda): sem o painel não dá para
+     saber de qual agente são os comandos. Sem esta linha o ACP caía no "senão" lá embaixo e
+     listava as skills do Codex, que ele não tem como usar. */
+  if (engine === 'acp') return [];
   if (skillCache[engine]) return skillCache[engine];
   let dirs;
   if (engine === 'claude') {
@@ -2694,6 +2715,8 @@ function alvoDoTransporte(t) {
 }
 
 handle('mcp:list', async (_e, engine) => {
+  // resposta honesta: o Cockpit não configura os conectores de um agente que ele só conversa
+  if (engine === 'acp') return { error: 'Os conectores do agente ACP se configuram no próprio agente, pelo terminal dele (ex.: "gemini mcp").' };
   if (engine === 'codex') {
     const r = await rodar('codex', ['mcp', 'list', '--json'], 45000);
     try {
@@ -2726,6 +2749,7 @@ handle('mcp:list', async (_e, engine) => {
 });
 
 handle('mcp:acao', async (_e, { engine, acao, nome, url, comando }) => {
+  if (engine === 'acp') return { error: 'Adicione pelo terminal do próprio agente ACP.' };
   const bin = engine === 'claude' ? CLAUDE_BIN : 'codex';
   const cru = engine === 'claude' ? CLAUDE_BIN : acharBin('codex');
   // Esta linha vai para o /bin/sh. O JSON.stringify() de antes so poe aspas DUPLAS, e dentro
@@ -2788,6 +2812,13 @@ async function usoDoClaude(segundaTentativa) {
 }
 
 handle('conta:ler', async (_e, engine) => {
+  /* resposta HONESTA em vez de "não consegui ler": a conta é a do próprio agente, configurada
+     no terminal dele. O Cockpit não tem como conferir daqui — se ele pedir login, aparece no
+     painel, com o recado que o acp.js monta a partir dos authMethods anunciados. */
+  if (engine === 'acp') {
+    return { entrou: null, email: '', nome: 'Agente ACP', plano: '', via: '', sessao: null, semana: null, extra: null,
+      motivo: 'A conta é a do próprio agente ACP, configurada no terminal dele; o Cockpit não confere daqui. Se ele pedir login, aparece no painel.' };
+  }
   if (engine === 'claude') {
     let conta = {};
     try { conta = JSON.parse((await rodar(CLAUDE_BIN, ['auth', 'status'], 25000)).out || '{}'); } catch {}
@@ -2852,6 +2883,8 @@ handle('conta:ler', async (_e, engine) => {
 /* so os percentuais do plano, para a faixa em cima da caixa de texto.
    Diferente do conta:ler, nao chama o CLI: e leve o bastante para repetir de minuto em minuto. */
 handle('uso:ler', async (_e, engine) => {
+  // o ACP não tem cota que o Cockpit possa ler: sem esta linha ele subia o Codex à toa
+  if (engine === 'acp') return null;
   if (engine === 'claude') {
     const u = await usoDoClaude();
     if (!u) return null;
@@ -2873,6 +2906,7 @@ handle('uso:ler', async (_e, engine) => {
 });
 
 handle('auth:acao', async (_e, { engine, acao, cwd }) => {
+  if (engine === 'acp') return { error: 'A conta do agente ACP se resolve no terminal: rode o comando dele e entre por lá.' };
   const ehClaude = engine === 'claude';
   const naVps = ehRemoto(cwd);
   const alvo = naVps ? (ehClaude ? 'claude' : 'codex') : (ehClaude ? CLAUDE_BIN : acharBin('codex'));
@@ -4049,8 +4083,116 @@ function attachCodexThread(paneId, threadId, response, settings) {
   emit(paneId, 'sessao', { id: threadId, file: response.thread && response.thread.path || '' });
 }
 
+/* ===================== LEVA 12 — MOTOR ACP (o terceiro motor) =====================
+   ACP = Agent Client Protocol: um JSON-RPC por stdio que vários agentes de código já falam
+   (Gemini CLI com "--acp", OpenCode, Qwen Code, e os adaptadores do Zed para Claude e Codex).
+   Em vez de uma leva de adaptação por agente, o Cockpit fala o protocolo UMA vez e qualquer
+   agente ACP entra pelo mesmo cano: basta o comando que sobe o processo.
+
+   O protocolo e as traduções moram em acp.js (copiado sem alterar, e coberto pelos testes
+   `npm run test:acp`). Aqui só o encaixe com esta tela: as aprovações e a COLA que converte
+   os eventos do ACP nos eventos que o renderer já desenha — nada de cartão novo.
+
+   AVISO HONESTO: nesta máquina não há nenhum agente ACP instalado hoje (nem gemini, nem qwen,
+   nem opencode). O motor entra pronto; quando um deles for instalado, ele roda sem mais nada. */
+const acpMod = require('./acp.js');
+
+/* Pedido de permissão do ACP que não vale mais: responde ao agente (senão ele fica esperando
+   para sempre) e some da lista. Filtra por kind==='acp' DE PROPÓSITO — uma varredura cega
+   mataria as perguntas async/elicitation que o Codex mantém vivas de propósito. */
+function descartarPermissoesAcp(paneId) {
+  for (const [k, a] of [...pendingApprovals]) {
+    if (!a || a.paneId !== paneId || a.kind !== 'acp') continue;
+    pendingApprovals.delete(k);
+    try { acp.responderPermissao(a.paneId, a.rpcId, null); } catch {}
+  }
+}
+
+/* o diff do ACP ({path, antes, depois}) no formato que esta tela já pinta: cartão de diff,
+   botão "Desfazer esta mudança" e "voltar no tempo", tudo de graça. Teto de 40 KB, o mesmo
+   do PEDACO_MAX que o Claude usa — não adianta empurrar arquivo gigante pelo cano do IPC. */
+function edicaoDoAcp(m) {
+  if (!m || !m.path) return null;
+  return {
+    arquivo: String(m.path),
+    novo: m.tipo === 'write-novo',
+    partes: [{ antes: corta(m.antes || ''), depois: corta(m.depois || '') }],
+  };
+}
+
+/* A COLA. O acp.js fala a língua dele; esta função traduz para os eventos que o renderer já
+   entende, sem inventar cartão novo nem mexer na assinatura de nada que o Claude e o Codex
+   usam. Só três eventos precisam de tradução; o resto passa direto. */
+function emitAcp(paneId, kind, data) {
+  const d = data || {};
+  if (kind === 'plano') {
+    // o plano vivo do ACP entra no MESMO cartão do planoCodex, sem cartão novo
+    const steps = (d.itens || []).map((i) => ({
+      step: i.txt,
+      status: i.estado === 'feito' ? 'completed' : i.estado === 'fazendo' ? 'in_progress' : 'pending',
+    }));
+    return emit(paneId, 'plan', { id: 'acp', steps, plan: steps });
+  }
+  if (kind === 'tool-start') {
+    return emit(paneId, 'tool-start', { id: d.id, name: d.name, arg: d.arg, edicao: edicaoDoAcp(d.mudanca), tarefas: null });
+  }
+  if (kind === 'tool-mudanca') {
+    // diff que só chegou DEPOIS do passo terminar: nasce como um passo próprio, senão o
+    // toolStart de mesmo id trocaria o cartão que já está na tela por outro
+    const ed = edicaoDoAcp(d.mudanca);
+    if (!ed) return;
+    return emit(paneId, 'tool-start', { id: String(d.id) + ':dif', name: 'Edit', arg: ed.arquivo, edicao: ed, tarefas: null });
+  }
+  return emit(paneId, kind, d);
+}
+
+const acp = acpMod.criarAcp({
+  emit: emitAcp, spawnBin, buildEnv, matarProcesso, HOME,
+  pastaDados: () => app.getPath('userData'),
+  // autoLiberada de propósito omitida: o default é ()=>false, e o "sempre permitir" desta
+  // tela é do Claude/Codex. Sem isto seria um segundo sistema de liberação, invisível.
+  // pedido de permissão do agente vira o MESMO cartão Permitir/Negar que já existe
+  aoPedirPermissao: (paneId, rpcId, info) => {
+    const key = 'acp_' + paneId + '_' + rpcId;
+    pendingApprovals.set(key, { kind: 'acp', paneId, rpcId });
+    emit(paneId, 'approval', {
+      key, title: info.title || 'O agente quer usar uma ferramenta', detail: info.detail || '', reason: '',
+      tool: info.tool || '', rotulo: info.rotulo || '', mudanca: edicaoDoAcp(info.mudanca),
+    });
+  },
+  aoCair: (paneId) => descartarPermissoesAcp(paneId),
+  // turno acabou com pedido pendurado: mesmo caminho do 'result' do Claude
+  aoFimDoTurno: (paneId) => descartarPermissoesAcp(paneId),
+});
+
+/* R1: leitura/ajuste do painel, sem nada destrutivo — vai pelo handle(), então o iPhone
+   ganha de graça (o processo do agente roda sempre no Mac, seja quem for que peça). */
+handle('acp:config', async (_e, { paneId, modelo } = {}) => {
+  if (modelo) return acp.setModelo(paneId, modelo);
+  return { error: 'nada a fazer' };
+});
+
+/* as conversas do ACP são as que o próprio Cockpit anotou (acp.js), num JSONL por sessão */
+handle('sessions:acp', () => {
+  try { return acp.sessoes(); } catch (e) { return { error: String(e && e.message || e) }; }
+});
+
 handle('pane:start', async (_e, data) => {
   const { paneId, engine, cwd, model, approval, resumeId, effort, billing } = data;
+  /* leva 12.3 — painel ACP. Ramo NOVO na frente de tudo: sem engine==='acp' nada muda.
+     Aqui o "model" é o COMANDO do agente (gemini --acp, npx …claude-code-acp…). */
+  if (engine === 'acp') {
+    if (ehRemoto(cwd)) { emit(paneId, 'note', { text: 'O agente ACP roda no Mac, não na VPS. Escolha uma pasta local neste chat.', error: true }); return false; }
+    // cartão pendurado é do agente ANTERIOR deste painel
+    descartarPermissoesAcp(paneId);
+    /* quem limpa um start que falhou é o próprio acp.js, por identidade: um acp.parar(paneId)
+       aqui derrubaria o SEGUNDO start (dois Enter durante o "Ligando…"). */
+    try { return await acp.start(paneId, { comando: model, cwd, approval, resumeId }); }
+    catch (e) {
+      emit(paneId, 'note', { text: 'Não consegui ligar o agente ACP: ' + String(e && e.message || e).slice(0, 300), error: true });
+      return false;
+    }
+  }
   /* leva 10.5 — chat em worktree. Linha NOVA na FRENTE das duas de baixo, que ficaram intactas:
      sem data.worktree nada muda e o caminho continua sendo exatamente o de sempre. O fork vai
      junto porque um chat pode ser ramo E estar em worktree ao mesmo tempo. */
@@ -4115,6 +4257,7 @@ async function codexApplySettings(paneId, changes) {
     ...(pending ? { requestedSettings: settings, message: 'A escolha será aplicada no próximo envio.' } : {}) };
 }
 handle('pane:settings', async (_e, data) => {
+  if (data.engine === 'acp') return { ok: false, error: 'Estes ajustes pertencem ao Codex.' };
   if (data.engine === 'claude') return { ok: false, error: 'Estes ajustes pertencem ao Codex.' };
   try { return await codexApplySettings(data.paneId, data); }
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
@@ -4122,6 +4265,10 @@ handle('pane:settings', async (_e, data) => {
 
 handle('pane:send', async (_e, data) => {
   const { paneId, engine, text, attachments = data.anexos || [] } = data;
+  /* leva 12.3 — o acp.enviar espera uma lista de CAMINHOS (string); aqui o anexo é objeto.
+     A imagem vai como bloco do protocolo quando o agente anuncia que aceita; o resto vira
+     lista de caminhos no fim do texto, feito pelo próprio acp.js. */
+  if (engine === 'acp') return acp.enviar(paneId, text, (attachments || []).map(a => a && a.path).filter(Boolean));
   if (engine === 'claude') {
     // A interface Claude continua usando o texto com a lista de caminhos.
     const content = claudeAttachmentText(text, attachments);
@@ -4164,6 +4311,7 @@ handle('pane:send', async (_e, data) => {
 });
 
 handle('pane:compactar', async (_e, { paneId, engine }) => {
+  if (engine === 'acp') return { error: 'O agente ACP não tem "compactar" por aqui. Comece uma conversa nova quando ela ficar longa.' };
   if (engine === 'claude') {
     if (!escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/compact' }] } })) return { error: 'sessão fora do ar' };
     return { ok: true };
@@ -4176,6 +4324,7 @@ handle('pane:compactar', async (_e, { paneId, engine }) => {
 
 handle('pane:steer', async (_e, data) => {
   const { paneId, engine, text, attachments = data.anexos || [] } = data;
+  if (engine === 'acp') return { error: 'Neste motor não dá para falar no meio do trabalho. Espere terminar ou clique em parar.' };
   if (engine === 'claude') {
     const content = claudeAttachmentText(text, attachments);
     if (!escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: content }] } })) return { error: 'sessão fora do ar' };
@@ -4192,6 +4341,8 @@ handle('pane:steer', async (_e, data) => {
 });
 
 handle('pane:interrupt', async (_e, { paneId, engine }) => {
+  // o ACP tem cancelamento de verdade (session/cancel): o turno termina com stopReason
+  if (engine === 'acp') { acp.interromper(paneId); return true; }
   if (engine === 'claude') {
     escreverClaude(paneId, { type: 'control_request', request_id: 'i' + Date.now(), request: { subtype: 'interrupt' } });
     return true;
@@ -4203,6 +4354,8 @@ handle('pane:interrupt', async (_e, { paneId, engine }) => {
 });
 
 handle('pane:stop', async (_e, { paneId, engine }) => {
+  // ramo NOVO na frente: mata o processo do agente e devolve o "cancelled" a quem esperava
+  if (engine === 'acp') { descartarPermissoesAcp(paneId); acp.parar(paneId); return true; }
   if (engine === 'claude') claudeStop(paneId);
   else {
     const tid = codex.paneToThread.get(paneId);
@@ -4251,6 +4404,13 @@ handle('pane:stop', async (_e, { paneId, engine }) => {
 handle('pane:approve', (_e, { key, allow, paneId }) => {
   const a = pendingApprovals.get(key);
   if (!a || (paneId !== undefined && a.paneId !== paneId) || typeof allow !== 'boolean') return false;
+  /* leva 12.2 — OBRIGATÓRIO: sem este ramo o clique caía no caminho do Codex, o cartão sumia
+     da tela e o agente ACP ficava pendurado esperando a resposta para sempre. */
+  if (a.kind === 'acp') {
+    const ok = acp.responderPermissao(a.paneId, a.rpcId, allow) !== false;
+    if (ok) pendingApprovals.delete(key);
+    return ok;
+  }
   if (a.kind === 'claude') {
     const sent = escreverClaude(a.paneId, {
       type: 'control_response', response: { request_id: a.reqId, subtype: 'success',
@@ -4270,6 +4430,8 @@ handle('pane:approve', (_e, { key, allow, paneId }) => {
 handle('pane:respond', async (_e, data) => {
   const a = pendingApprovals.get(data.key);
   if (!a || a.paneId !== data.paneId) return { error: 'Esta pergunta já foi encerrada.' };
+  // guarda da leva 12.2: pedido do ACP só sai pelo Permitir/Negar; aqui embaixo é o Codex
+  if (a.kind === 'acp') return { error: 'Este pedido é do agente ACP: responda em Permitir ou Negar.' };
   try {
     if (a.kind === 'async') {
       if (data.action === 'cancel') { pendingApprovals.delete(data.key); return { ok: true }; }
@@ -4445,6 +4607,18 @@ handle('git:diff', async (_e, o) => {
   }
   return texto.slice(0, 120000);
 });
+
+/* ---- 12.5: quais motores existem NESTA maquina ----
+   A tela usa isto pra nao oferecer um motor que nao esta instalado — e pra explicar como
+   instalar, em vez de deixar o painel falhar depois que ele ja mandou a mensagem.
+   R6: acharBin devolve o nome quando nao acha; quem responde "existe?" e o temBin. */
+handle('motores:disponiveis', () => ({
+  claude: fs.existsSync(CLAUDE_BIN) || temBin('claude'),
+  codex: temBin('codex'),
+  // o comando do agente ACP e configuravel: "disponivel" = ha com que rodar o preset padrao
+  // (gemini) ou com que baixar um adaptador (npx)
+  acp: ['gemini', 'npx', 'opencode', 'qwen'].some((b) => temBin(b)),
+}));
 
 /* ---- 10.6: versao instalada x ultima publicada de cada motor ----
    Este radar existe porque o Claude ficou 13 versoes para tras sem ninguem perceber.

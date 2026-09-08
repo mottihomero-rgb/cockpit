@@ -60,6 +60,10 @@
     codexApiConfig: () => Promise.resolve({ error: 'Altere o uso por créditos pelo Mac.' }),
     sessionsClaude: (r) => chamar('sessions:claude', r),
     sessionsCodex: (r) => chamar('sessions:codex', r),
+    /* R2: o app.js e o MESMO arquivo nos dois. Sem estas duas linhas, abrir a coluna do
+       ACP no iPhone morria num TypeError e derrubava o boot da tela inteira. */
+    sessionsAcp: () => chamar('sessions:acp'),
+    acpConfig: (o) => chamar('acp:config', o),
     sessionHistory: (o) => chamar('sessions:history', o),
     sessionTitulo: (o) => chamar('sessions:titulo', o),
     buscarConversas: (o) => chamar('sessions:buscar', o),
@@ -122,6 +126,7 @@
     gitStatus: (o) => chamar('git:status', o),
     gitDiff: (o) => chamar('git:diff', o),
     motoresVersoes: () => chamar('motores:versoes'),
+    motoresDisponiveis: () => chamar('motores:disponiveis'),
     /* leva 11: no telefone ele VÊ quais robôs do Mac pararam (é leitura, vai pelo mesmo cano),
        mas não dispara nenhum — o main nem expõe esse canal ao Wi-Fi (R1). A resposta sai aqui
        na hora, com o tipo certo, senão o app.js (que é o MESMO arquivo nos dois) morreria num

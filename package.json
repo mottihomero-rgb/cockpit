@@ -8,7 +8,8 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac --arm64",
-    "test": "node --test tests/astra-contract.test.cjs"
+    "test": "node --test tests/astra-contract.test.cjs",
+    "test:acp": "node tests/teste-acp.js && node tests/teste-acp-ponte.js"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.15",
@@ -29,6 +30,7 @@
     },
     "files": [
       "main.js",
+      "acp.js",
       "codex-*.js",
       "preload.js",
       "preload-recorte.js",
