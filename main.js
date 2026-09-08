@@ -4546,8 +4546,16 @@ const ROT_CODIGOS = {
      mata a sessão de quem clicou. A segunda linha pega qualquer outra rotina que aponte para o
      Cockpit.app, venha ela com o nome que vier.
    - wa-ponte é o motor de WhatsApp de TODOS os robôs; executor-mac executa tarefa remota;
-     tailscaled é a rede que segura o acesso à VPS. */
-const ROT_NAO_DISPARAR = [/^com\.adsure\.cockpit$/, /wa-ponte/, /executor-mac/, /tailscaled/];
+     tailscaled é a rede que segura o acesso à VPS.
+   - com.adsure.cockpit SEM âncora de propósito: o macOS registra o app ABERTO como um job do
+     runningboard chamado `application.com.adsure.cockpit.<números>`, que a versão ancorada
+     deixava passar (e para esse label não existe plist nenhum, então a segunda trava também
+     não pegava). Sem âncora ele cobre os três: o job do launchd, o app rodando agora e o
+     com.adsure.cockpit-push, o robô que commita e dá push sozinho.
+   - `application.*` é todo programa que o dono está com ABERTO agora (Chrome, Notes, Obsidian,
+     WhatsApp, Terminal). Não é rotina: é app em uso. rotEhDele já trata esse prefixo como
+     "não é dele". */
+const ROT_NAO_DISPARAR = [/com\.adsure\.cockpit/, /^application\./, /wa-ponte/, /executor-mac/, /tailscaled/];
 
 const ROT_SEP_DES = '===COCKPIT-ROT-DESLIGADOS===';
 const ROT_SEP_PL = '===COCKPIT-ROT-PLISTS===';
