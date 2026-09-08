@@ -31,6 +31,7 @@
       "main.js",
       "codex-*.js",
       "preload.js",
+      "preload-recorte.js",
       "plataforma.js",
       "servidor-web.js",
       "package.json",
@@ -53,6 +54,10 @@
       {
         "from": "voz/ditado-vivo",
         "to": "ditado-vivo"
+      },
+      {
+        "from": "voz/ocr-vision",
+        "to": "ocr-vision"
       }
     ],
     "mac": {
@@ -61,7 +66,11 @@
         "dir"
       ],
       "icon": "assets/icon.icns",
-      "identity": null
+      "identity": null,
+      "extendInfo": {
+        "NSCameraUsageDescription": "O Cockpit usa a câmera para você fotografar um rascunho no papel ou um quadro físico e mandar direto para o Claude ou o Codex.",
+        "NSMicrophoneUsageDescription": "O Cockpit usa o microfone para o ditado: você fala e o texto aparece no campo da mensagem."
+      }
     }
   }
 }

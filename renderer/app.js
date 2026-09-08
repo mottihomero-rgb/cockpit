@@ -35,6 +35,10 @@ Object.assign(ICONES, {
   // do app que fala de DESENHAR um caminho. Nao se confunde com 'image' (moldura quadrada
   // com sol e montanha), com 'agentes' (bolinhas) nem com 'pencil' (lapis).
   'quadro': '<rect width="20" height="14" x="2" y="3" rx="2" /> <path d="M12 17v4" /> <path d="M8 21h8" /> <path d="M6 13V9h6" /> <path d="m10 7 2 2-2 2" />',
+  // duas entradas visuais novas. 'crop' sao os dois cantos do recorte (nada a ver com a
+  // moldura do 'image'); 'camera' e a maquininha com a lente, so dela.
+  'crop': '<path d="M6 2v14a2 2 0 0 0 2 2h14" /> <path d="M18 22V8a2 2 0 0 0-2-2H2" />',
+  'camera': '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /> <circle cx="12" cy="13" r="3" />',
 });
 const ico = (n) => '<svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + (ICONES[n] || '') + '</svg>';
 const svgMotor = (eng) => '<svg viewBox="0 0 24 24" class="logo-motor"><path d="' + LOGO[eng === 'codex' ? 'codex' : 'claude'] + '"/></svg>';
@@ -3004,6 +3008,16 @@ function receberEventoPane(ev) {
     case 'tool-end': toolEnd(P, ev.id, ev.output, ev.error, ev.imagens); break;
     // o agente te chamou no meio do trabalho (PushNotification interceptada no main)
     case 'aviso-agente': avisoDoAgente(P, ev.texto); break;
+    /* o recorte da tela ficou pronto no main e virou arquivo: entra como anexo DESTE painel.
+       R4: o recado de sucesso vai por avisoTemp — note() sem `true` nao aparece na tela. */
+    case 'anexo-pronto':
+      anexar(P, [ev.arquivo]).then(() => {
+        if ((P.anexos || []).some((x) => x && x.path === ev.arquivo)) {
+          avisoTemp(P, (ev.origem === 'recorte' ? 'Recorte' : 'Imagem') + ' anexado. Escreva o que quer que ele faça.');
+        }
+        const campo = $('.p-input', P.el); if (campo) campo.focus();
+      });
+      break;
     // rastro do turno: quanto ele consumiu e o diff agregado que o Codex manda pronto
     case 'turno-uso': P.usoTurno = { entrada: ev.entrada || 0, saida: ev.saida || 0 }; break;
     case 'diff-turno': P.diffTurno = ev.diff || ''; break;
@@ -3993,9 +4007,15 @@ function menuAnexo(P) {
     { ic: 'image', nome: 'Enviar imagem', desc: 'png, jpg, webp', act: 'image' },
     { ic: 'folder', nome: 'Adicionar pasta', desc: 'manda o caminho da pasta', act: 'folder' },
     { ic: 'map-pin', nome: 'Pasta deste painel', desc: shortPath(P.cwd), act: 'cwd' },
+    /* Recortar a tela esconde a janela do MAC e abre uma tela preta por cima de tudo la: pelo
+       telefone isso ficaria preso a quilometros de distancia. Por isso o item nem existe la. */
+    ...(window.SEM_ELECTRON ? [] : [{ ic: 'crop', nome: 'Recortar a tela', desc: 'esconde o Cockpit, você arrasta o pedaço e ele vira anexo', act: 'recorte' }]),
+    { ic: 'camera', nome: 'Fotografar', desc: 'pela câmera: rascunho no papel, quadro físico, o que estiver na sua frente', act: 'foto' },
   ];
   for (const i of itens) m.appendChild(elItem(i, async () => {
     if (i.act === 'cwd') return inserirNoInput(P, P.cwd);
+    if (i.act === 'recorte') return recortarTela(P);
+    if (i.act === 'foto') return fotografar(P);
     const files = await window.api.pickFiles(i.act);
     if (files && files.length) {
       if (i.act === 'folder') inserirNoInput(P, files.join(' '));
@@ -4258,6 +4278,150 @@ async function apagarPromptSalvo(P) {
     if (r && r.ok) avisoTemp(P, 'Prompt “' + p.nome + '” apagado.');
     else note(P, 'Não consegui apagar: ' + ((r && r.error) || 'erro'), true);
   }));
+}
+
+/* ================== ENTRADA VISUAL (leva 4) ==================
+   Outras portas alem de digitar: recortar um pedaco da tela, fotografar pela camera e tirar
+   o texto de dentro de uma imagem. Tudo local; o que vira imagem cai em colados/, na mesma
+   faxina de 7 dias do print colado. */
+
+/* ---- recortar a tela: esconde o Cockpit e voce arrasta o pedaco ---- */
+async function recortarTela(P) {
+  fecharMenus();
+  let r = null;
+  try { r = await window.api.recortarTela({ paneId: P.id }); } catch (e) { r = { error: String(e && e.message || e) }; }
+  // o sucesso nao volta por aqui: o recorte chega depois, pelo evento 'anexo-pronto'
+  if (r && r.error) note(P, 'Não consegui recortar: ' + r.error, true);
+}
+
+/* ---- foto pela camera: rascunho no papel, quadro fisico, o que estiver na sua frente ---- */
+async function fotografar(P) {
+  fecharMenus();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    note(P, window.SEM_ELECTRON
+      ? 'O navegador do celular só abre a câmera por endereço seguro (https). Tire a foto pelo Mac.'
+      : 'Este computador não deixa abrir a câmera por aqui.', true);
+    return;
+  }
+  const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
+  modal.classList.remove('hidden');
+  /* Sem estas duas linhas o painel que ja abriu a Conta do Codex fica marcado 'account' para
+     sempre, e um evento rotineiro de conta trocaria o innerHTML NO MEIO — a camera ficaria
+     acesa atras de outra janelinha. */
+  modal.classList.remove('como-menu');
+  modal.dataset.codexSurface = '';
+  cx.className = 'modal-cx foto-cx';
+  cx.onclick = (e) => e.stopPropagation();
+  cx.innerHTML = '<div class="mo-top"><span class="mo-tit">Fotografar</span><button class="mo-x">' + ico('x') + '</button></div>'
+    + '<div class="mo-sub">Enquadre e clique em Tirar. A foto entra como anexo deste painel.</div>'
+    + '<video class="foto-video" autoplay playsinline muted></video>'
+    + '<div class="mo-form"><select id="fotoCam" class="menu-search hidden"></select></div>'
+    + '<div class="mo-rodape"><button class="mo-btn destaque" id="fotoTirar">Tirar</button>'
+    + '<button class="mo-btn" id="fotoCancela">Cancelar</button></div>';
+  const video = $('.foto-video', cx);
+  let trilha = null, fechado = false, vigia = 0;
+  const parar = () => { try { trilha && trilha.getTracks().forEach((t) => t.stop()); } catch {} trilha = null; };
+  const fechar = () => {
+    if (fechado) return;
+    fechado = true;
+    clearInterval(vigia);
+    parar();
+    try { video.srcObject = null; } catch {}
+    P.fecharTerminal = null;     // evita voltar aqui pelo fecharModal, em circulo
+    cx.className = 'modal-cx';   // R9: sem isto a proxima janelinha deste painel sai deformada
+    fecharModal(P);
+  };
+  // o UNICO gancho de fechamento que o Esc do documento respeita (e o ⌘W e o clique no véu)
+  P.fecharTerminal = fechar;
+  modal.onclick = (e) => { if (e.target === modal) fechar(); };
+  $('.mo-x', cx).onclick = fechar;
+  $('#fotoCancela', cx).onclick = fechar;
+  /* Vigia. Se a janelinha for trocada por outra coisa sem passar por aqui, o <video> some da
+     tela e a LUZ DA CÂMERA ficaria acesa sem nada na tela para desligar. Aqui a camera morre,
+     mas a janela que estiver na tela AGORA nao e fechada — ela ja e' de outro dono. */
+  vigia = setInterval(() => {
+    if (video.isConnected) return;
+    clearInterval(vigia);
+    fechado = true;
+    parar();
+    if (P.fecharTerminal === fechar) P.fecharTerminal = null;
+  }, 1000);
+
+  const abrir = async (deviceId) => {
+    parar();
+    try {
+      const nova = await navigator.mediaDevices.getUserMedia({
+        video: deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+          : { width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+      // a caixa fechou enquanto a camera acordava: a trilha atrasada morre aqui mesmo
+      if (fechado) { try { nova.getTracks().forEach((t) => t.stop()); } catch {} return; }
+      trilha = nova; video.srcObject = trilha;
+    } catch (err) {
+      if (fechado) return;
+      const nome = (err && err.name) || '';
+      // a camera lembrada sumiu (o celular foi desconectado): esquece a preferencia e cai na padrao
+      if (deviceId && (nome === 'OverconstrainedError' || nome === 'NotFoundError' || nome === 'NotReadableError')) {
+        // "em uso" e' passageiro: a preferencia fica
+        if (nome !== 'NotReadableError') { cfg.cameraPreferida = ''; window.api.setConfig(cfg); }
+        return abrir(null);
+      }
+      fechar();
+      note(P, nome === 'NotAllowedError' ? 'O Mac não deixou usar a câmera. Libere em Ajustes do Sistema › Privacidade e Segurança › Câmera e abra o Cockpit de novo.'
+        : nome === 'NotFoundError' ? 'Nenhuma câmera encontrada.'
+        : nome === 'NotReadableError' ? 'A câmera está em uso por outro programa.'
+        : 'Não consegui abrir a câmera' + (nome ? ' (' + nome + ')' : '') + '.', true);
+    }
+  };
+  await abrir(cfg.cameraPreferida || null);
+  if (!trilha || fechado) return;
+  // a lista de camaras so aparece quando ha mais de uma (celular ligado como camera, webcam externa)
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+    const sel = $('#fotoCam', cx);
+    if (sel) {
+      sel.innerHTML = '';
+      for (const d of devs) {
+        const o = document.createElement('option');
+        o.value = d.deviceId; o.textContent = d.label || 'Câmera';
+        if (d.deviceId === cfg.cameraPreferida) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.classList.toggle('hidden', devs.length < 2);
+      sel.addEventListener('change', () => { cfg.cameraPreferida = sel.value; window.api.setConfig(cfg); abrir(sel.value); });
+    }
+  } catch {}
+  const bt = $('#fotoTirar', cx);
+  if (bt) bt.onclick = async () => {
+    if (!video.videoWidth) { avisoTemp(P, 'A câmera ainda está acordando. Tente de novo em um segundo.'); return; }
+    const c = document.createElement('canvas');
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    c.getContext('2d').drawImage(video, 0, 0);
+    const dados = c.toDataURL('image/jpeg', 0.92);
+    fechar();   // a luz da camera apaga ANTES de gravar: gravar pode demorar
+    const r = await window.api.imagemSalvar({ dados, prefixo: 'foto' });
+    // R4: sucesso por avisoTemp; note() sem `true` nao apareceria na tela
+    if (r && r.arquivo) { await anexar(P, [r.arquivo]); avisoTemp(P, 'Foto anexada. Escreva o que quer que ele faça.'); }
+    else note(P, 'Não consegui guardar a foto: ' + ((r && r.error) || 'erro'), true);
+  };
+}
+
+/* ---- OCR: o texto que está DENTRO da imagem vai para o campo, editável ---- */
+async function extrairTexto(P, a, bt) {
+  if (a._ocr) return;   // ja esta lendo (a ficha pode ter sido repintada no meio)
+  a._ocr = true;
+  const antes = bt ? bt.textContent : '';
+  if (bt) { bt.textContent = 'lendo…'; bt.disabled = true; }
+  let r = null;
+  try { r = await window.api.ocrLer({ arquivo: a.path }); } catch (e) { r = { error: String(e && e.message || e) }; }
+  a._ocr = false;
+  if (bt && bt.isConnected) { bt.textContent = antes; bt.disabled = false; }
+  // a barra foi repintada no meio da leitura: o botao novo nasceu preso em "lendo…"
+  else if ((P.anexos || []).includes(a)) pintarAnexos(P);
+  // R4: sucesso por avisoTemp; o note() so serve para o erro, e com `true`
+  if (r && r.texto) { inserirNoInput(P, r.texto); avisoTemp(P, 'Texto da imagem colocado no campo. Confira antes de mandar.'); }
+  else note(P, 'Não achei texto nessa imagem' + (r && r.error ? ': ' + r.error : '.'), true);
 }
 
 /* ---- janelinha de conectores, no meio da conversa ---- */
@@ -5540,6 +5704,21 @@ function fichaAnexo(a, comX, aoTirar, P, Pvisor) {
   $('.anx-n', d).textContent = a.nome || a.name || String(a.path || '').split('/').pop() || 'Imagem anexada';
   $('.anx-s', d).textContent = [(a.ext || '').toUpperCase(), tamanhoBonito(a.bytes)].filter(Boolean).join(' · ');
   if (comX) $('.anx-x', d).onclick = () => aoTirar(a);
+  /* Imagem anexada ganha o botao "texto": tira o que esta ESCRITO nela (OCR aqui no Mac, ~1 s)
+     e poe no campo, para ele editar antes de mandar. Chega pelo 5o parametro — e' por ali que
+     a barra de escrever passa o painel — entao o gancho e' o `Pv`, que sabe de que painel a
+     ficha e' nos DOIS caminhos (barra de escrever e mensagem ja mandada), igual ao fork de
+     origem. SVG e' desenho em texto, nao tem o que ler; arquivo da VPS nao mora neste Mac. */
+  const extAnx = String(a.ext || '').toLowerCase();
+  if (Pv && a.path && !NA_VPS(a.path) && extAnx !== 'svg' && IMG_EXT.includes(extAnx)) {
+    const bt = document.createElement('button');
+    bt.className = 'anx-ocr';
+    bt.textContent = a._ocr ? 'lendo…' : 'texto';
+    bt.disabled = !!a._ocr;
+    bt.title = 'Tirar o texto que está dentro desta imagem e pôr no campo';
+    bt.onclick = (e) => { e.stopPropagation(); extrairTexto(Pv, a, bt); };
+    d.appendChild(bt);
+  }
   return d;
 }
 

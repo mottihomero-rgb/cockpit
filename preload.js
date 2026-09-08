@@ -40,6 +40,13 @@ contextBridge.exposeInMainWorld('api', {
   pickPhoto: () => ipcRenderer.invoke('user:pickPhoto'),
   anexoLer: (f) => ipcRenderer.invoke('anexo:ler', f),
   colados: () => ipcRenderer.invoke('clipboard:anexos'),
+  // imagem que a tela gerou (foto da webcam, recorte) vira arquivo em colados/
+  imagemSalvar: (o) => ipcRenderer.invoke('imagem:salvar', o),
+  // recortar a tela: esconde o Cockpit e abre a janela do recorte. Fora do mapa HANDLERS de
+  // proposito (R1) — o iPhone nao pode esconder a janela do Mac
+  recortarTela: (o) => ipcRenderer.invoke('tela:recortar', o),
+  // o texto que está DENTRO de uma imagem (OCR local, pela Vision da Apple)
+  ocrLer: (o) => ipcRenderer.invoke('ocr:ler', o),
   // quadro branco: grava o PNG + o JSON da cena, e guarda/le o rascunho do desenho
   quadroSalvar: (o) => ipcRenderer.invoke('quadro:salvar', o),
   quadroRascunhoGravar: (o) => ipcRenderer.invoke('quadro:rascunhoGravar', o),

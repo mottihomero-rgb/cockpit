@@ -78,6 +78,14 @@
     onErroApp: () => {},
     anexoLer: (f) => chamar('anexo:ler', f),
     colados: () => Promise.resolve({ arquivos: [] }),
+    // foto tirada no telefone tambem vira arquivo: quem grava e o Mac, no mesmo colados/
+    imagemSalvar: (o) => chamar('imagem:salvar', o),
+    /* Recortar a tela esconde a janela do MAC e abre uma tela preta por cima de tudo la. Um
+       toque aqui deixaria isso preso a quilometros de distancia: o main nem expoe o canal, e
+       aqui a resposta sai na hora com o tipo certo. O item nem aparece no menu do telefone. */
+    recortarTela: () => Promise.resolve({ error: 'Recortar a tela só funciona no Mac.' }),
+    // este é só leitura: quem passa a Vision na imagem é o Mac, e o texto volta pelo mesmo cano
+    ocrLer: (o) => chamar('ocr:ler', o),
     // o quadro branco funciona no iPhone/iPad igual ao Mac: quem grava o PNG e o JSON e o Mac
     quadroSalvar: (o) => chamar('quadro:salvar', o),
     quadroRascunhoGravar: (o) => chamar('quadro:rascunhoGravar', o),

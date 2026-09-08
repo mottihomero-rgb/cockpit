@@ -3240,6 +3240,51 @@ handle('quadro:rascunhoLer', () => {
   } catch { return { cena: null, enviadoEm: 0 }; }   // rascunho quebrado nunca derruba a abertura do quadro
 });
 
+/* ---------- imagem que a TELA gerou vira arquivo em colados/ ----------
+   Foto da webcam e recorte da tela nascem como base64 dentro da janela; aqui viram arquivo
+   de verdade, no mesmo lugar do print colado (e com a mesma faxina de 7 dias).
+   O telefone tambem pode gravar: nao ha janela do sistema envolvida, so escrita numa pasta
+   nossa. Em troca, NADA do que chega vira caminho — o nome e montado aqui dentro — e o
+   conteudo e conferido byte a byte, igual ao quadro:salvar. Sem essa conferencia qualquer
+   base64 viraria um ".png" mentiroso.
+   O teto que vale e' o de 6 MB JA DECODIFICADO: e' o tamanho que ainda cabe no quadro de
+   8 MB do WebSocket do telefone (servidor-web.js:101) depois de virar base64 (que engorda um
+   terco). O teto do texto e' so' guarda de memoria — evita decodificar um paredao antes de
+   descobrir que ele nao serve — e por isso fica um pouco ACIMA, senao nunca daria a vez ao
+   outro e a conta de 6 MB seria letra morta. */
+const IMG_MAX_TXT = 9 * 1024 * 1024;
+const IMG_MAX = 6 * 1024 * 1024;
+const SELO_JPG = Buffer.from([0xff, 0xd8, 0xff]);
+function tipoDaImagem(buf) {
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(SELO_PNG)) return 'png';
+  if (buf.length >= 3 && buf.subarray(0, 3).equals(SELO_JPG)) return 'jpg';
+  // WEBP: "RIFF" ....(4 bytes de tamanho).... "WEBP"
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('latin1') === 'RIFF'
+    && buf.subarray(8, 12).toString('latin1') === 'WEBP') return 'webp';
+  return '';
+}
+handle('imagem:salvar', (_e, { dados, prefixo } = {}) => {
+  try {
+    const cru = String(dados || '');
+    if (cru.length > IMG_MAX_TXT) return { error: 'imagem grande demais (o limite é ~6 MB)' };
+    const m = /^data:image\/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=\s]+)$/.exec(cru);
+    if (!m) return { error: 'isso não chegou como imagem' };
+    const bytes = Buffer.from(m[2].replace(/\s+/g, ''), 'base64');
+    if (bytes.length > IMG_MAX) return { error: 'imagem grande demais (o limite é ~6 MB)' };
+    const tipo = tipoDaImagem(bytes);
+    // o que o texto DIZ ser tem de bater com o que os bytes SAO
+    const prometido = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : 'jpg';
+    if (!tipo || tipo !== prometido) return { error: 'isso não é uma imagem de verdade' };
+    const dir = path.join(app.getPath('userData'), 'colados');
+    fs.mkdirSync(dir, { recursive: true });
+    const nome = (String(prefixo || 'imagem').replace(/[^\w-]/g, '').slice(0, 24) || 'imagem')
+      + '-' + Date.now() + '.' + tipo;
+    const destino = path.join(dir, nome);
+    fs.writeFileSync(destino, bytes);
+    return { arquivo: destino };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+});
+
 handle('anexo:ler', (_e, file) => {
   try {
     const st = fs.statSync(file);
@@ -3261,6 +3306,170 @@ handle('dialog:pickFiles', async (_e, kind) => {
   if (kind === 'image') opt.filters = [{ name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'] }];
   const r = await dialog.showOpenDialog(win, opt);
   return r.canceled ? [] : r.filePaths;
+});
+
+/* ===================== recortar a tela =====================
+   Esconde o Cockpit, fotografa a tela onde esta' o mouse (desktopCapturer), abre uma janela
+   sem moldura por cima com essa foto, voce arrasta o retangulo, o pedaco vira PNG em colados/
+   e entra como anexo no painel que pediu. (⇧⌘4 + ⌘V ja funcionava; isto poupa a ida ao
+   clipboard e nao encosta na area de transferencia dele.)
+
+   R1: os quatro canais entram por ipcMain.handle DIRETO, fora do mapa HANDLERS. Se entrassem
+   por handle(), um toque no iPhone esconderia a janela do Mac e deixaria uma tela preta presa
+   por cima de tudo, a quilometros de distancia. */
+const { desktopCapturer, screen, systemPreferences } = require('electron');
+let recorte = null;      // { janela, imagem, paneId, estavaVisivel, boundsW, boundsH, pediuDados }
+let recortando = false;  // entre o pedido e a janela existir (o guarda de cima nao cobre o await)
+/* Este recado precisa dizer as tres coisas: onde liberar, que tem de reabrir o app depois, e
+   que isso volta a acontecer a cada reinstalacao — o Cockpit e assinado na hora do build, e o
+   Mac trata cada assinatura nova como um programa diferente. Sem a ultima frase, ele acha que
+   quebrou. */
+const RECADO_TELA = 'O Mac ainda não deixou o Cockpit fotografar a tela. Libere em Ajustes do Sistema › Privacidade e Segurança › Gravação de Tela (marque o Cockpit), feche e abra o app. Isso é pedido de novo a cada vez que o app é reinstalado.';
+ipcMain.handle('tela:recortar', async (_e, { paneId } = {}) => {
+  if (recorte || recortando) return { error: 'já tem um recorte aberto' };
+  /* No Mac, sem a permissao de Gravacao de Tela o getSources devolve o PAPEL DE PAREDE em
+     silencio — ninguem dá erro, e o recorte sai de uma tela que nao e a dele. A conferencia
+     vem ANTES de esconder a janela; se escondesse primeiro, o app sumiria para dar um recado. */
+  if (process.platform === 'darwin') {
+    let estado = 'granted';
+    try { estado = systemPreferences.getMediaAccessStatus('screen'); } catch {}
+    if (estado !== 'granted') {
+      // o macOS so pergunta quando alguem TENTA capturar: este pedido minusculo faz a caixa aparecer
+      try { desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }).catch(() => {}); } catch {}
+      return { error: RECADO_TELA };
+    }
+  }
+  recortando = true;
+  const estavaVisivel = !!(win && !win.isDestroyed() && win.isVisible());
+  let janela = null;
+  try {
+    const ponto = screen.getCursorScreenPoint();
+    const tela = screen.getDisplayNearestPoint(ponto);
+    const escala = tela.scaleFactor || 1;
+    if (estavaVisivel) win.hide();
+    await new Promise((r) => setTimeout(r, 350));   // a janela precisa sumir de verdade antes da foto
+    const fontes = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: Math.round(tela.size.width * escala), height: Math.round(tela.size.height * escala) },
+    });
+    // so' a tela onde esta' o mouse: cair na primaria em silencio recortava a foto de OUTRO
+    // monitor por cima deste
+    const fonte = fontes.find((f) => String(f.display_id) === String(tela.id));
+    if (!fonte || fonte.thumbnail.isEmpty()) {
+      if (estavaVisivel) win.show();
+      return { error: fontes.length ? 'não achei a tela onde está o mouse (' + fontes.length + (fontes.length === 1 ? ' tela' : ' telas') + ')' : RECADO_TELA };
+    }
+    janela = new BrowserWindow({
+      x: tela.bounds.x, y: tela.bounds.y, width: tela.bounds.width, height: tela.bounds.height,
+      frame: false, alwaysOnTop: true, skipTaskbar: true, resizable: false, movable: false,
+      hasShadow: false, backgroundColor: '#000000', show: false,
+      webPreferences: { preload: path.join(__dirname, 'preload-recorte.js'), contextIsolation: true, nodeIntegration: false },
+    });
+    recorte = { janela, imagem: fonte.thumbnail, paneId, estavaVisivel, boundsW: tela.bounds.width, boundsH: tela.bounds.height, pediuDados: false };
+    janela.setAlwaysOnTop(true, 'screen-saver');
+    // no Mac o recorte tem de valer no Space em que ele estiver, inclusive em cima de um app
+    // em tela cheia — senao a janela nasce num Space vazio e a tela dele nem pisca
+    try { janela.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch {}
+    /* Vigia de 15 s. Cobre os dois jeitos de a janela ficar PRESA: nunca pintar (renderer
+       morreu antes do primeiro quadro) ou pintar preta sem a ponte (preload que nao entrou no
+       pacote). Nos dois casos o Cockpit ficaria escondido atras de uma tela preta sem tecla
+       que responda. Quem desarma e' o pedido da foto, que chega em milissegundos. */
+    const vigia = setTimeout(() => {
+      if (recorte && recorte.janela === janela && !janela.isDestroyed() && !recorte.pediuDados) {
+        anota('recorte preso: fechando pelo vigia de 15 s');
+        try { janela.close(); } catch {}
+      }
+    }, 15000);
+    janela.once('closed', () => clearTimeout(vigia));
+    janela.once('ready-to-show', () => { try { janela.show(); janela.focus(); app.focus({ steal: true }); } catch {} });   // sem flash preto
+    janela.webContents.on('did-fail-load', () => { try { janela.close(); } catch {} });        // sem tela preta presa
+    janela.webContents.on('render-process-gone', () => { try { janela.close(); } catch {} });
+    janela.loadFile(path.join(__dirname, 'renderer', 'recorte.html'));
+    janela.on('closed', () => {
+      const r = recorte; recorte = null;
+      if (r && r.estavaVisivel && win && !win.isDestroyed()) { win.show(); win.focus(); }
+    });
+    return { ok: true };
+  } catch (e) {
+    recorte = null;
+    if (janela) { try { janela.close(); } catch {} }
+    if (estavaVisivel && win && !win.isDestroyed()) win.show();
+    return { error: String(e && e.message || e) };
+  } finally { recortando = false; }
+});
+// so' a janela do recorte fala nestes canais (o preload principal nem os expoe; e' defesa barata)
+const daJanelaDeRecorte = (e) => !!(recorte && recorte.janela && !recorte.janela.isDestroyed() && e.sender === recorte.janela.webContents);
+ipcMain.handle('recorte:dados', (e) => {
+  if (!daJanelaDeRecorte(e)) return null;
+  recorte.pediuDados = true;   // desarma o vigia de 15 s: a janela esta viva e com ponte
+  const tam = recorte.imagem.getSize();
+  return { png: recorte.imagem.toDataURL(), escala: tam.width / (recorte.boundsW || tam.width) };
+});
+ipcMain.handle('recorte:pronto', (e, { x, y, w, h } = {}) => {
+  const r = recorte;
+  if (!r || !daJanelaDeRecorte(e)) return { error: 'sem recorte aberto' };
+  try {
+    // escala REAL da foto (pixels por px de CSS), por eixo, medida na propria imagem — nao no
+    // scaleFactor, que pode divergir entre monitores
+    const tam = r.imagem.getSize();
+    const kx = tam.width / (r.boundsW || tam.width), ky = tam.height / (r.boundsH || tam.height);
+    const rect = {
+      x: Math.max(0, Math.min(tam.width - 1, Math.round(x * kx))), y: Math.max(0, Math.min(tam.height - 1, Math.round(y * ky))),
+      width: Math.max(1, Math.round(w * kx)), height: Math.max(1, Math.round(h * ky)),
+    };
+    rect.width = Math.min(rect.width, tam.width - rect.x); rect.height = Math.min(rect.height, tam.height - rect.y);
+    const png = r.imagem.crop(rect).toPNG();
+    const dir = path.join(app.getPath('userData'), 'colados');
+    fs.mkdirSync(dir, { recursive: true });
+    const destino = path.join(dir, 'recorte-' + Date.now() + '.png');
+    fs.writeFileSync(destino, png);
+    emit(r.paneId, 'anexo-pronto', { arquivo: destino, origem: 'recorte' });
+    try { r.janela.close(); } catch {}
+    return { ok: true, arquivo: destino };
+  } catch (e2) { try { r.janela.close(); } catch {} return { error: String(e2 && e2.message || e2) }; }
+});
+ipcMain.handle('recorte:cancelar', (e) => { const r = recorte; if (r && daJanelaDeRecorte(e)) { try { r.janela.close(); } catch {} } return { ok: true }; });
+
+/* ===================== texto que está DENTRO da imagem (OCR local) =====================
+   Print de erro, foto de um papel, tabela num screenshot: em vez de ele redigitar, o texto
+   sai da imagem e cai no campo, para editar antes de mandar.
+
+   Reescrita, nao port: no fork de origem isto e' PowerShell chamando o Windows.Media.Ocr, que
+   nao existe aqui. No Mac quem le e' a Vision da Apple, num binario Swift proprio
+   (voz/ocr-vision.swift), compilado UMA vez e comitado — mesmo trato do ditado-vivo. Roda
+   AQUI DENTRO: sem rede, sem conta, sem pacote de idioma para instalar, ~1 s.
+   Tambem sai a reducao para 2600 px que o fork fazia: a Vision nao tem esse teto.
+
+   Entra por handle(): e' leitura, e o telefone ja le arquivo deste Mac pelos canais que
+   existem. R7: pasta/arquivo da VPS nao passa por aqui — quem le disco e' este Mac. */
+const OCR_BIN = app.isPackaged
+  ? path.join(process.resourcesPath, 'ocr-vision')
+  : path.join(__dirname, 'voz', 'ocr-vision');
+const OCR_MAX = 40 * 1024 * 1024;
+handle('ocr:ler', async (_e, { arquivo } = {}) => {
+  if (process.platform !== 'darwin') return { error: 'o OCR local só existe no Mac' };
+  const f = String(arquivo || '');
+  if (!f) return { error: 'sem arquivo' };
+  if (ehRemoto(f)) return { error: 'esse arquivo está na VPS; o OCR lê imagem que está aqui no Mac' };
+  const ext = path.extname(f).slice(1).toLowerCase();
+  if (!EXT_IMG.includes(ext) || ext === 'svg') return { error: 'isso não é uma imagem que eu consiga ler' };
+  if (!fs.existsSync(OCR_BIN)) return { error: 'falta o programa de OCR no app' };
+  try {
+    const st = fs.statSync(f);
+    if (!st.isFile()) return { error: 'arquivo não encontrado' };
+    if (st.size > OCR_MAX) return { error: 'imagem grande demais para o OCR' };
+  } catch { return { error: 'arquivo não encontrado' }; }
+  const r = await rodar(OCR_BIN, [f], 45000);
+  const texto = String(r.out || '').replace(/\r/g, '').trim();
+  if (texto) return { texto };
+  const erro = String(r.errout || '').trim();
+  // saiu 0 e sem uma palavra: a imagem simplesmente nao tem texto
+  if (!r.err && !erro) return { error: 'não achei texto nessa imagem' };
+  const motivo = /nao consegui abrir/i.test(erro) ? 'não consegui abrir essa imagem'
+    : /a leitura falhou/i.test(erro) ? 'a leitura da imagem falhou'
+    : erro ? 'o OCR falhou (' + erro.replace(/\s+/g, ' ').slice(0, 120) + ')'
+    : 'o OCR não respondeu em 45 s';
+  return { error: motivo };
 });
 
 /* ======================= janela ======================= */

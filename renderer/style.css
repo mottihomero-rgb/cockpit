@@ -1485,3 +1485,9 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .aviso-agente .ag-ic{flex:none;color:var(--yellow);display:flex;margin-top:2px}
 .aviso-agente .ag-ic .ic{width:13px;height:13px}
 .aviso-agente .ag-txt{user-select:text;min-width:0;overflow-wrap:anywhere}
+/* ---- entrada visual (leva 4): fotografar pela camera e OCR na fichinha do anexo ---- */
+.modal-cx.foto-cx{width:min(760px,calc(100% - 36px))}
+.foto-video{display:block;width:100%;max-height:60vh;background:#000;border-radius:8px;margin:6px 0}
+.anx-ocr{font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid var(--line2);color:var(--fg-dim);margin-left:4px;flex:none}
+.anx-ocr:hover{color:var(--fg);border-color:var(--accent)}
+.anx-ocr:disabled{opacity:.6}
