@@ -2366,6 +2366,12 @@ function marcarFimDoTurno(P) {
 function abrirJanelaLarga(P, titulo) {
   const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
   modal.classList.remove('hidden');
+  /* O .p-modal guarda a marca da ultima superficie que abriu ali (menu, conectores, conta) e
+     ninguem limpa na saida. Sem estas duas linhas, um painel que ja mostrou a Conta do Codex
+     fica marcado 'account' para sempre: ao chegar o evento rotineiro de conta, o laco que
+     repinta a conta trocaria o conteudo DESTA janela por baixo do dono. */
+  modal.classList.remove('como-menu');
+  modal.dataset.codexSurface = '';
   cx.className = 'modal-cx cx-term';
   cx.onclick = (e) => e.stopPropagation();
   const fechar = () => { cx.className = 'modal-cx'; P.fecharTerminal = null; fecharModal(P); };
@@ -2433,6 +2439,11 @@ function mostrarPrintsDoPasso(P, d, imagens) {
     img.addEventListener('click', (e) => { e.stopPropagation(); verImagemGrande(P, src); });
     cx.appendChild(img);
   }
+  /* Com 2+ passos no turno o .exec-card nasce fechado (display:none) e a miniatura nasceria
+     invisivel. Abrir o grupo so' acontece quando CHEGA imagem — caminho que nao existia antes,
+     entao nenhum comportamento antigo muda. */
+  const g = d && d.closest && d.closest('.exec');
+  if (g) g.classList.add('aberto');
   scroll(P);
 }
 function mostrarPrintsDoTurno(P, lista) {
@@ -3199,7 +3210,7 @@ function renderizarHistorico(P, m) {
   } else if (role === 'tool') {
     const id = m.id || 'h' + Math.random(); toolStart(P, id, m.name, m.arg, { edicao: m.edicao, tarefas: m.tarefas });
     if (m.output) toolOutput(P, id, typeof m.output === 'string' ? m.output : JSON.stringify(m.output));
-    toolEnd(P, id, m.output || '', m.error);
+    toolEnd(P, id, m.output || '', m.error, m.imagens);
   } else if (role === 'plan') planoCodex(P, m);
   else if (['generated-image', 'image'].includes(role)) imagemGeradaCodex(P, m);
   else if (role === 'agentes') agentesEvento(P, m);
@@ -5070,6 +5081,8 @@ async function verArquivo(P, caminho) {
   $('.visor-x', v).onclick = fecharVisor;
   $('.visor-abrir', v).innerHTML = ico('upload');
   $('.visor-abrir', v).onclick = () => window.api.openPath(caminho);
+  // repoe o rotulo: ver um print do agente deixa aqui "nao e' um arquivo no Mac"
+  $('.visor-abrir', v).title = 'Abrir no Mac';
   corpo.innerHTML = '<div class="visor-vazio">abrindo…</div>';
 
   const a = await window.api.verArquivo(caminho);
