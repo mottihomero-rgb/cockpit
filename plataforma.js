@@ -23,11 +23,16 @@ const SEP = EH_WIN ? ';' : ':';
    App de janela não herda o PATH do terminal (vale nos dois sistemas), então
    montamos um PATH completo na mão com os lugares onde as ferramentas moram. */
 function pastasExtras() {
+  const dadosCockpit = EH_WIN ? path.join(process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'), 'cockpit')
+    : process.platform === 'darwin' ? path.join(HOME, 'Library', 'Application Support', 'cockpit')
+    : path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, '.config'), 'cockpit');
+  const ferramentasLocais = path.join(dadosCockpit, 'ferramentas', 'node_modules', '.bin');
   if (EH_WIN) {
     const appdata = process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming');
     const local = process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local');
     const pf = process.env.ProgramFiles || 'C:\\Program Files';
     return [
+      ferramentasLocais,
       path.join(HOME, '.local', 'bin'),        // instalador nativo do Claude Code
       path.join(HOME, '.codex', 'bin'),
       path.join(appdata, 'npm'),               // npm install -g
@@ -39,6 +44,7 @@ function pastasExtras() {
     ];
   }
   return [
+    ferramentasLocais,
     path.join(HOME, '.local/bin'),
     path.join(HOME, '.nvm/versions/node/v22.23.1/bin'),
     path.join(HOME, '.codex/bin'),
@@ -66,7 +72,8 @@ function buildEnv() {
 const cacheBin = new Map();
 
 function acharBin(nome) {
-  if (cacheBin.has(nome)) return cacheBin.get(nome);
+  // Uma instalação local feita com o app aberto deve aparecer sem reiniciar.
+  if (cacheBin.has(nome) && cacheBin.get(nome) !== nome) return cacheBin.get(nome);
   const exts = EH_WIN ? ['.exe', '.cmd', '.bat', ''] : [''];
   const pastas = [...pastasExtras(), ...((process.env.PATH || '').split(SEP))];
   let achado = null;

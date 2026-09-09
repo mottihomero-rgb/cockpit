@@ -96,10 +96,12 @@ test('Comandos do Gemini vêm de TOML; contas e ajustes extras não iniciam Code
   assert.deepEqual(m.cli.comandos(), [{ name: 'revisar', desc: 'Revisar o projeto' }]);
   const h = loadMain();
   for (const engine of ['gemini', 'grok']) {
-    assert.equal((await h.call('conta:ler', engine)).entrou, null);
+    assert.equal((await h.call('conta:ler', engine)).entrou, false);
     assert.equal(await h.call('uso:ler', engine), null);
     assert.equal((await h.call('pane:settings', { engine, paneId: 'p' })).ok, false);
-    assert.ok((await h.call('auth:acao', { engine, acao: 'login' })).error);
+    const entrada = await h.call('auth:acao', { engine, acao: 'login' });
+    assert.ok(entrada.terminal.includes(engine));
+    assert.equal(entrada.confereDepois, true);
   }
   assert.equal(h.spawned.length, 0);
 });

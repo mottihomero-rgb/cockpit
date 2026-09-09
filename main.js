@@ -10,6 +10,8 @@ const plataforma = require('./plataforma');
 const { EH_WIN, acharBin, spawnBin, abrirPty, temBin, matarProcesso } = plataforma;
 
 const HOME = os.homedir();
+const contasCli = require('./contas-cli').criarContasCli({ HOME, pastaDados: () => app.getPath('userData'), acharBin, temBin,
+  buildEnv: () => plataforma.buildEnv(), ehWindows: EH_WIN });
 // no Mac o Claude mora sempre no mesmo lugar; no Windows a gente procura
 let CLAUDE_BIN = EH_WIN ? acharBin('claude') : path.join(HOME, '.local/bin/claude');
 
@@ -2819,7 +2821,7 @@ async function usoDoClaude(segundaTentativa) {
 }
 
 handle('conta:ler', async (_e, engine) => {
-  if (engine === 'gemini' || engine === 'grok') return { entrou: null, motivo: 'A conta do ' + engine + ' é configurada no terminal. O Cockpit não consulta a cota dela.' };
+  if (engine === 'gemini' || engine === 'grok') return contasCli.ler(engine);
   /* resposta HONESTA em vez de "não consegui ler": a conta é a do próprio agente, configurada
      no terminal dele. O Cockpit não tem como conferir daqui — se ele pedir login, aparece no
      painel, com o recado que o acp.js monta a partir dos authMethods anunciados. */
@@ -2915,7 +2917,7 @@ handle('uso:ler', async (_e, engine) => {
 });
 
 handle('auth:acao', async (_e, { engine, acao, cwd }) => {
-  if (engine === 'gemini') return { error: 'Entre na conta pelo terminal do Gemini.' };
+  if (engine === 'gemini' || engine === 'grok') return contasCli.acao({ engine, acao, cwd });
   if (motorAcp(engine)) return { error: 'A conta do agente ACP se resolve no terminal: rode o comando dele e entre por lá.' };
   const ehClaude = engine === 'claude';
   const naVps = ehRemoto(cwd);
@@ -4116,7 +4118,7 @@ function matarGrupoExtra(proc) {
     if (timer.unref) timer.unref();
   } else matarProcesso(proc);
 }
-const cli = require('./cli-motors').criarCli({ HOME, emit, spawnBin, acharBin, temBin, buildEnv,
+const cli = require('./cli-motors').criarCli({ HOME, emit, spawnBin, acharBin, temBin, buildEnv: () => contasCli.ambiente('gemini'),
   pastaDados: () => app.getPath('userData'), matarGrupo: matarGrupoExtra });
 handle('sessions:cli', (_e, engine) => engine === 'gemini' ? cli.sessoes()
   : engine === 'grok' ? acp.sessoes().filter(s => /(?:^|[\\/])grok(?:\s|$)/.test(s.comando)).map(s => ({ ...s, engine: 'grok', title: tituloAcp(s) })) : []);

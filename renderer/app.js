@@ -1375,11 +1375,13 @@ function grupoExec(P) {
   if (!g || !g.isConnected) {
     g = document.createElement('div');
     g.className = 'exec';
-    g.innerHTML = '<div class="exec-hd"><span class="exec-nm2"></span>'
-      + '<span class="exec-cv">' + ico('chevron-right') + '</span></div>'
+    g.innerHTML = '<button type="button" class="exec-hd" aria-expanded="false" title="Clique para ver os comandos"><span class="exec-nm2"></span>'
+      + '<span class="exec-cv">' + ico('chevron-right') + '</span></button>'
       + '<div class="exec-card"></div>';
     $('.exec-hd', g).addEventListener('click', () => {
-      g.classList.toggle('aberto');
+      const aberto = g.classList.toggle('aberto');
+      $('.exec-hd', g).setAttribute('aria-expanded', String(aberto));
+      $('.exec-hd', g).title = aberto ? 'Clique para esconder os comandos' : 'Clique para ver os comandos';
       scroll(P);
     });
     P.chat.appendChild(g);
@@ -2801,11 +2803,7 @@ function mostrarPrintsDoPasso(P, d, imagens) {
     img.addEventListener('click', (e) => { e.stopPropagation(); verImagemGrande(P, src); });
     cx.appendChild(img);
   }
-  /* Com 2+ passos no turno o .exec-card nasce fechado (display:none) e a miniatura nasceria
-     invisivel. Abrir o grupo so' acontece quando CHEGA imagem — caminho que nao existia antes,
-     entao nenhum comportamento antigo muda. */
-  const g = d && d.closest && d.closest('.exec');
-  if (g) g.classList.add('aberto');
+  // Receber um print preserva a escolha do usuário: só o clique abre os comandos.
   scroll(P);
 }
 function mostrarPrintsDoTurno(P, lista) {
@@ -4913,13 +4911,14 @@ function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
   cx.innerHTML =
     '<div class="mo-top"><span class="mo-tit"></span><button class="mo-x">' + ico('x') + '</button></div>'
     + '<div class="mo-sub">' + (op.abrirSozinho
-        ? 'O próprio Claude/Codex abre o navegador. <b>Não feche esta janela até terminar lá</b> — fechar aqui cancela a entrada. Se o navegador não abrir, clique em <b>Abrir link</b> aqui embaixo.'
+        ? 'A entrada abre no navegador. <b>Mantenha esta janela aberta até terminar lá.</b> Se o navegador não abrir, clique em <b>Abrir link</b> aqui embaixo.'
         : 'Rodando aqui dentro do Cockpit. Se pedir para escolher ou colar algo, clique na tela preta e digite.') + '</div>'
     + '<div class="term-wrap"><div class="term-tela"></div></div>'
     + '<div class="term-link"><span class="mono"></span><button>Abrir link</button></div>'
     + '<div class="mo-rodape"><button class="mo-btn" id="tmCancela">Cancelar</button>'
     + '<button class="mo-btn destaque" id="tmFecha">Fechar</button></div>';
   $('.mo-tit', cx).textContent = titulo || 'Terminal';
+  if (op.orientacao) $('.mo-sub', cx).textContent = op.orientacao;
 
   const term = new Terminal({
     cols: 92, rows: 22, fontSize: 12, lineHeight: 1.25, cursorBlink: true, scrollback: 4000,
@@ -5442,9 +5441,12 @@ const contaCache = { claude: null, codex: null, acp: null, gemini: null, grok: n
    rodava "codex login". Agora o login e' sempre o do motor daquele cartao, e sem chat
    desse motor a tela diz isso em vez de errar calada. */
 function entrarNaConta(engine) {
-  const P = (focusPane && focusPane.engine === engine)
+  let P = (focusPane && focusPane.engine === engine)
     ? focusPane
     : [...panes.values()].find((q) => q.engine === engine);
+  if (!P && ['gemini', 'grok'].includes(engine)) {
+    P = focusPane || (panes.size < 12 ? novoChatNaAba(engine) : null);
+  }
   if (P) { setFocus(P); contaAcao(P, 'login', engine); return; }
   const recado = 'Abra um chat do ' + nomeDoMotor(engine) + ' para entrar na conta dele.';
   if (focusPane) note(focusPane, recado, true);
@@ -5461,7 +5463,21 @@ async function pintarContaLateral(engine, forcar) {
   /* leva 12.5: o ACP não tem conta que o Cockpit leia — ela é do agente, resolvida no terminal
      dele. Sem este ramo a coluna dizia "Sem conta do Claude neste Mac" num painel que não é
      Claude, e ainda oferecia um botão "Entrar" que não entraria em lugar nenhum. */
-  if (['acp', 'gemini', 'grok'].includes(engine)) {
+  if (['gemini', 'grok'].includes(engine)) {
+    cx.innerHTML = '<div class="sc-vazio sc-conta-extra"><span></span> <button class="sc-link sc-entrar"></button>'
+      + '<button class="sc-link sc-atualizar" title="Conferir conta">Conferir</button></div>';
+    $('span', cx).textContent = c?.entrou === true
+      ? (c.email || 'Entrada salva no ' + nomeDoMotor(engine))
+      : c?.motivo || 'Entre com sua conta do ' + nomeDoMotor(engine) + '.';
+    $('.sc-entrar', cx).textContent = c?.entrou === true ? 'Conta' : 'Entrar';
+    $('.sc-entrar', cx).onclick = () => {
+      if (c?.entrou === true && focusPane) janelaConta(focusPane, engine);
+      else entrarNaConta(engine);
+    };
+    $('.sc-atualizar', cx).onclick = () => pintarContaLateral(engine, true);
+    return;
+  }
+  if (engine === 'acp') {
     cx.innerHTML = '<div class="sc-vazio"></div>';
     $('.sc-vazio', cx).textContent = (c && c.motivo)
       || 'A conta é a do próprio agente ACP, configurada no terminal dele.';
@@ -5523,13 +5539,14 @@ async function pintarContaLateral(engine, forcar) {
    na coluna da esquerda abria a conta do CODEX sempre que o chat em foco fosse do Codex. */
 async function janelaConta(P, motorPedido) {
   fecharMenus();
+  document.body.classList.remove('gaveta');
   const eng = motorPedido || P.engine;
   const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
   modal.classList.remove('hidden');
-  modal.dataset.codexSurface = eng === 'codex' ? 'account' : 'account-claude';
+  modal.dataset.codexSurface = eng === 'codex' ? 'account' : 'account-' + eng;
   modal.onclick = (e) => { if (e.target === modal) fecharModal(P); };
   cx.onclick = (e) => e.stopPropagation();
-  const motor = eng === 'codex' ? 'Codex' : 'Claude';
+  const motor = nomeDoMotor(eng);
   const topo = '<div class="mo-top"><span class="mo-tit">Conta do ' + motor + '</span>'
     + '<button class="mo-x">' + ico('x') + '</button></div>';
   cx.innerHTML = topo + '<div class="mo-carregando">Vendo a conta e o quanto já foi usado…</div>';
@@ -5537,6 +5554,22 @@ async function janelaConta(P, motorPedido) {
 
   const c = await window.api.contaLer(eng);
   if (modal.classList.contains('hidden')) return;
+  if (['gemini', 'grok'].includes(eng)) {
+    cx.innerHTML = topo + '<div class="mo-sub ct-estado-extra"></div>'
+      + '<div class="mo-sub ct-ajuda-extra"></div>'
+      + '<div class="mo-rodape"><button class="mo-btn" id="ctConferir">Conferir conta</button>'
+      + '<button class="mo-btn destaque" id="ctEntrar">Entrar na conta</button></div>';
+    $('.ct-estado-extra', cx).textContent = c?.entrou === true
+      ? 'Entrada salva' + (c.email ? ': ' + c.email : ' no ' + motor) + '.'
+      : c?.motivo || 'A entrada na conta ainda não foi confirmada.';
+    $('.ct-ajuda-extra', cx).textContent = eng === 'gemini'
+      ? 'Use sua conta Google gratuita. O limite de uso é definido pelo Gemini.'
+      : 'Entre com sua conta Grok. O teste gratuito e seus limites são definidos pelo Grok.';
+    $('.mo-x', cx).onclick = () => fecharModal(P);
+    $('#ctConferir', cx).onclick = () => { pintarContaLateral(eng, true); janelaConta(P, eng); };
+    $('#ctEntrar', cx).onclick = () => { fecharModal(P); contaAcao(P, 'login', eng); };
+    return;
+  }
   if (!c || !c.entrou) {
     cx.innerHTML = topo + '<div class="mo-sub">Você não está entrado no ' + motor + ' neste Mac.</div>'
       + '<div class="mo-rodape"><button class="mo-btn" id="ctCodigo">Entrar com código</button>'
@@ -5880,8 +5913,25 @@ async function contaAcao(P, acao, motorPedido) {
   if (r.error) return note(P, 'Não consegui: ' + r.error, true);
   if (acao === 'status') { avisoTemp(P, (r.texto || 'sem resposta').split('\n').slice(0, 4).join(' · ')); return; }
   if (!r.terminal) return;
+  document.body.classList.remove('gaveta');
 
   janelaTerminal(P, r.terminal, r.titulo || 'Conta', async () => {
+    if (['gemini', 'grok'].includes(eng)) {
+      contaCache[eng] = null;
+      await pintarContaLateral(eng, true);
+      const c = contaCache[eng];
+      if (c?.entrou === true) {
+        // Fechar a entrada não pode interromper um trabalho que já está em andamento.
+        for (const q of panes.values()) {
+          if (q.engine !== eng || q.busy) continue;
+          await desligarMotor(q);
+        }
+        avisoTemp(P, 'Entrada salva no ' + nomeDoMotor(eng) + (c.email ? ': ' + c.email : '.'));
+      } else {
+        avisoTemp(P, c?.motivo || 'A entrada ainda não foi confirmada. Termine no navegador e clique em Conferir.');
+      }
+      return;
+    }
     // todo chat do mesmo motor recomeca, senao continua falando pela conta velha
     for (const q of panes.values()) {
       if (q.engine !== eng) continue;
@@ -5900,7 +5950,7 @@ async function contaAcao(P, acao, motorPedido) {
     } else {
       avisoTemp(P, 'A entrada não terminou. Tente de novo e não feche a janela até o navegador confirmar. Se o navegador não abrir, use "entrar com código".', true);
     }
-  }, { abrirSozinho: !!r.esperaLink && !r.naVps });
+  }, { abrirSozinho: !!r.esperaLink && !r.naVps, orientacao: r.orientacao });
 }
 
 function avisoTemp(P, texto) {
@@ -7702,7 +7752,7 @@ function torreVisivel() {
   const v = $('.side-view[data-view="torre"]'), lat = $('#sidebar');
   return !!v && !v.classList.contains('hidden') && !!lat && !lat.classList.contains('hidden');
 }
-const nomeMotor = (e) => (e === 'codex' ? 'Codex' : 'Claude');
+const nomeMotor = (e) => ({ claude: 'Claude', codex: 'Codex', acp: 'ACP', gemini: 'Gemini', grok: 'Grok' }[e] || 'IA');
 
 /* O estado sai do MESMO lugar que a tela usa, para os dois nunca discordarem: a tarja de
    permissão (`.pane-perm` sem `hidden`), as perguntas do Codex (`P.questions`), o `P.busy` e a
@@ -8028,7 +8078,7 @@ async function pintarRotinas(forcar) {
     : total + (total === 1 ? ' rotina' : ' rotinas') + ' · '
       + (falhas.length
         ? falhas.length + (falhas.length === 1 ? ' sua parou de funcionar' : ' suas pararam de funcionar')
-        : (falhasDoSistema ? 'nenhuma das suas falhou' : 'todas rodaram sem erro'))
+        : (falhasDoSistema ? 'nenhuma falha identificada nas suas' : 'nenhuma falha identificada'))
       + (falhasDoSistema ? ' · ' + falhasDoSistema + ' do sistema também' : '')
       + (rotinasCache.velha ? ' · lista antiga: não consegui atualizar' : '');
 

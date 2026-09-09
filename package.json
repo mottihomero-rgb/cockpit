@@ -8,7 +8,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac --arm64",
-    "test": "node --test tests/astra-contract.test.cjs tests/port-final.test.cjs tests/web-mobile.test.cjs",
+    "test": "node --test tests/astra-contract.test.cjs tests/port-final.test.cjs tests/web-mobile.test.cjs tests/contas-cli.test.cjs",
     "test:acp": "node tests/teste-acp.js && node tests/teste-acp-ponte.js"
   },
   "dependencies": {
@@ -32,6 +32,7 @@
       "main.js",
       "acp.js",
       "cli-motors.js",
+      "contas-cli.js",
       "codex-*.js",
       "preload.js",
       "preload-recorte.js",

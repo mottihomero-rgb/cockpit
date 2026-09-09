@@ -98,6 +98,7 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .side-view{display:flex;flex-direction:column;height:100%;overflow:hidden}
 .side-head{height:26px;flex:none;display:flex;align-items:center;justify-content:space-between;
   padding:0 6px 0 11px;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--fg-fraco)}
+.side-ajuda{flex:none;margin:0;padding:3px 11px 10px;font-size:11.5px;line-height:1.5;color:var(--fg-dim)}
 #projName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mini{font-size:11px;padding:2px 7px;border-radius:4px;color:var(--fg-dim);text-transform:none;letter-spacing:0}
 .mini:hover{background:var(--hover2);color:var(--fg)}
@@ -971,9 +972,11 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 .exec{padding:2px 18px 8px;display:flex;flex-direction:column;align-items:flex-start}
 .msg.bot.emenda{padding-top:0}
 .exec-hd{display:inline-flex;align-items:center;gap:4px;max-width:100%;
+  padding:0;border:0;background:transparent;font-family:inherit;text-align:left;
   font-size:13px;line-height:20px;color:var(--fg-dim);cursor:pointer;
   border-radius:4px;user-select:none;animation:entrapasso .25s ease-out}
 .exec-hd:hover{color:var(--fg-strong)}
+.exec-hd:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @keyframes entrapasso{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:none}}
 .exec-cv{flex:none;display:flex;opacity:.7;transition:transform .15s ease}
 .exec-cv .ic{width:12px;height:12px;stroke-width:2}
@@ -1006,10 +1009,7 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
   font:12px/1.6 var(--mono);color:var(--fg-fraco);user-select:text}
 .exec-out:empty{display:none}
 
-/* um comando so: sem cartao, igual a web */
-.exec.solo>.exec-hd{display:none}
-.exec.solo>.exec-card{display:flex;margin-top:0;box-shadow:none;border-radius:0}
-.exec.solo>.exec-card>.exec-it{padding:0}
+/* Um comando e grupos com prints também ficam fechados até o clique. */
 
 /* seletor: entra no trabalho ou espera na fila */
 .p-modoenvio{width:auto;padding:0 8px;gap:5px;font-size:10.5px;color:var(--fg-fraco);
@@ -1290,6 +1290,8 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .side-conta{flex:none;padding:6px 10px 7px;border-bottom:1px solid var(--line)}
 .sc-vazio{font-size:11.5px;color:var(--fg-dim);line-height:1.5}
 .sc-link{color:var(--accent);text-decoration:underline;font-size:11.5px}
+.sc-conta-extra{overflow-wrap:anywhere}
+.sc-atualizar{margin-left:8px}
 .sc-cab{display:flex;align-items:center;gap:7px;cursor:pointer;padding:0 0 5px}
 .sc-cab:hover .sc-n{color:var(--accent)}
 .sc-av{width:16px;height:16px;flex:none;display:grid;place-items:center}

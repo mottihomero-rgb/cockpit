@@ -585,7 +585,8 @@ function criarAcp(dep) {
 
   async function subir(st, bin, args, opts) {
     const paneId = st.paneId;
-    const env = buildEnv();
+    const env = opts.authMethod === 'cached_token'
+      ? require('./contas-cli').ambienteSemChaves('grok', buildEnv()) : buildEnv();
     // a chave vale pro comando INTEIRO ("npx @google/gemini-cli --acp" tambem e' gemini)
     if (/gemini/i.test(st.comando) && !env.GEMINI_API_KEY && !env.GOOGLE_API_KEY) {
       const chave = lerChaveGemini(HOME);
@@ -674,7 +675,7 @@ function criarAcp(dep) {
       const msg = String(e && e.message || e);
       // sem login: tenta o metodo por chave se houver chave no ambiente; senao explica
       const porChave = metodosAuth.find((a) => /api[-_]?key/i.test(String(a.id || '')));
-      if (/auth/i.test(msg) && porChave && (env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.ANTHROPIC_API_KEY || env.OPENAI_API_KEY)) {
+      if (!opts.authMethod && /auth/i.test(msg) && porChave && (env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.ANTHROPIC_API_KEY || env.OPENAI_API_KEY)) {
         await mandar(st, 'authenticate', { methodId: porChave.id }, 60000);
         aberta = await abrirSessao();
       } else if (/auth/i.test(msg)) {
