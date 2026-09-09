@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { StringDecoder } = require('string_decoder');
-function criarCli({ HOME, emit, spawnBin, acharBin, temBin, buildEnv, pastaDados, matarGrupo }) {
+function criarCli({ HOME, emit, spawnBin, acharBin, temBin, buildEnv, pastaDados, matarGrupo, aoConfirmarConta, aoFalharConta }) {
 const CLIS = { gemini: { nome: 'Gemini', bin: 'gemini', conversas: true, comandos: true,
   pastaSessoes: () => path.join(HOME, '.gemini', 'tmp') } };
 const headRead = (file, max) => { try { return fs.readFileSync(file, 'utf8').slice(0, max); } catch { return ''; } };
@@ -215,6 +215,7 @@ function evento(st, ev) {
   } else if (ev.type === 'tool_result') {
     emit(st.paneId, 'tool-end', { id: ev.tool_id || ev.id, output: cliTexto(ev.output) || JSON.stringify(ev.output || ''), error: ev.status === 'error' || !!ev.error });
   } else if (ev.type === 'error' || (ev.type === 'result' && ev.status === 'error')) {
+    if (st.runtime === 'agy' && /auth|credentials|login|UNAUTHENTICATED|401/i.test(String(ev.message || ev.error?.message || ev.error || ''))) aoFalharConta?.();
     st.erro = motivo(ev.message || ev.error?.message || ev.error);
     emit(st.paneId, 'note', { text: st.erro, error: true });
     st.avisou = true;
@@ -266,7 +267,10 @@ function eventoAntigravity(st, ev) {
     }
     if (r.status && r.status !== 'SUCCESS') {
       evento(st, { type: 'error', message: r.error || 'O Gemini terminou com estado ' + r.status + '.' });
-    } else evento(st, { type: 'result', stats: r.usage || {} });
+    } else {
+      if (r.status === 'SUCCESS') aoConfirmarConta?.();
+      evento(st, { type: 'result', stats: r.usage || {} });
+    }
   }
 }
 function parar(paneId, manter) {
@@ -346,7 +350,10 @@ function enviar(paneId, texto, anexos = []) {
     fim = true;
     ler(decoder.end()); if (buf.trim()) { try { evento(st, JSON.parse(buf)); } catch {} }
     st.proc = null; fecharFala(st);
-    if ((code !== 0 || error) && !st.avisou) emit(paneId, 'note', { text: motivo(error?.message || st.erro), error: true });
+    if ((code !== 0 || error) && !st.avisou) {
+      if (st.runtime === 'agy' && /auth|credentials|login|UNAUTHENTICATED|401/i.test(error?.message || st.erro)) aoFalharConta?.();
+      emit(paneId, 'note', { text: motivo(error?.message || st.erro), error: true });
+    }
     emit(paneId, 'turn-end', {});
   };
   proc.stdout.on('data', d => { if (paineis.get(paneId) === st && st.proc === proc) ler(decoder.write(d)); });

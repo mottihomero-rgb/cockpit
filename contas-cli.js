@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const CHAVES = {
-  gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_GENAI_USE_GCA', 'GOOGLE_APPLICATION_CREDENTIALS'],
+  gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_GENAI_USE_GCA', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_GEMINI_BASE_URL'],
   grok: ['XAI_API_KEY', 'GROK_CODE_XAI_API_KEY', 'GROK_API_KEY'],
 };
 function ambienteSemChaves(engine, base) {
@@ -21,9 +21,27 @@ function lerJson(file) {
 const aspas = value => "'" + String(value).replace(/'/g, "'\\''") + "'";
 
 function criarContasCli({ HOME, pastaDados, acharBin, temBin, buildEnv, ehWindows = process.platform === 'win32' }) {
+  const arquivoAcessoAgy = () => path.join(pastaDados(), 'contas-cli', 'agy-acesso.json');
+  function confirmar(engine) {
+    if (engine !== 'gemini' || !temBin('agy')) return;
+    const arquivo = arquivoAcessoAgy();
+    fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+    fs.writeFileSync(arquivo, JSON.stringify({ runtime: 'agy', confirmadoEm: Date.now() }) + '\n', { mode: 0o600 });
+  }
+  function invalidar(engine) {
+    if (engine !== 'gemini') return;
+    try { fs.unlinkSync(arquivoAcessoAgy()); } catch {}
+  }
   function ambiente(engine, base = buildEnv()) {
     const env = ambienteSemChaves(engine, base);
     if (engine !== 'gemini') return env;
+    if (temBin('agy')) {
+      // O agy usa seu próprio login oficial no Chaveiro. Não recebe credenciais
+      // nem ajustes de autenticação do antigo Gemini CLI.
+      delete env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
+      delete env.GEMINI_DEFAULT_AUTH_TYPE;
+      return env;
+    }
     const raiz = path.join(pastaDados(), 'contas-cli');
     const arquivo = path.join(raiz, 'gemini-conta-google.json');
     // Mantém as políticas existentes e muda apenas a autenticação deste processo.
@@ -45,8 +63,20 @@ function criarContasCli({ HOME, pastaDados, acharBin, temBin, buildEnv, ehWindow
   }
 
   function ler(engine) {
-    const instalado = temBin(engine), gemini = engine === 'gemini';
+    const gemini = engine === 'gemini', agy = gemini && temBin('agy');
+    const instalado = temBin(agy ? 'agy' : engine);
     let email = '', nome = '', salva = false, usandoApi = false;
+    if (agy) {
+      const prova = lerJson(arquivoAcessoAgy());
+      const confirmada = prova.runtime === 'agy' && Number.isFinite(prova.confirmadoEm) && prova.confirmadoEm > 0;
+      return { entrou: confirmada ? true : null, instalado, salvaLocalmente: confirmada, email: '', nome: 'Conta Google',
+        via: 'Google Antigravity', plano: '', gratuito: true, sessao: null, semana: null, extra: null,
+        confirmadoEm: confirmada ? prova.confirmadoEm : null,
+        motivo: confirmada ? 'Acesso do Gemini confirmado neste Mac pelo Antigravity. O serviço confere o acesso em cada conversa.'
+          : 'O Gemini usa o Antigravity. Entre com sua conta Google; o acesso será confirmado na primeira resposta.',
+        limiteNota: 'Usa a cota gratuita do Gemini no Antigravity. Nenhuma chave de API é usada.',
+      };
+    }
     if (gemini) {
       const contas = lerJson(path.join(HOME, '.gemini', 'google_accounts.json'));
       email = typeof contas.active === 'string' ? contas.active : '';
@@ -81,12 +111,17 @@ function criarContasCli({ HOME, pastaDados, acharBin, temBin, buildEnv, ehWindow
     if (acao === 'status') return { conta, texto: JSON.stringify({ loggedIn: conta.entrou, email: conta.email, estado: conta.salvaLocalmente ? 'salvo' : 'pendente' }) };
     if (!conta.instalado) return { error: conta.motivo };
     if (!['login', 'trocar', 'trocarCodigo', 'codigo', 'logout'].includes(acao)) return { error: 'Ação de conta desconhecida.' };
-    const gemini = engine === 'gemini';
+    const gemini = engine === 'gemini', agy = gemini && temBin('agy');
     const env = ambiente(engine);
     const pastaLogin = path.join(pastaDados(), 'contas-cli', 'login');
     fs.mkdirSync(pastaLogin, { recursive: true });
-    const comando = [acharBin(engine)];
-    if (gemini) {
+    const comando = [acharBin(agy ? 'agy' : engine)];
+    if (agy) {
+      if (['logout', 'trocar', 'trocarCodigo'].includes(acao)) {
+        comando.push('--prompt-interactive', '/logout');
+        invalidar('gemini');
+      }
+    } else if (gemini) {
       if (acao === 'logout') comando.push('--prompt-interactive', '/auth logout');
       else if (acao === 'trocar' || acao === 'trocarCodigo') comando.push('--prompt-interactive', '/auth');
     } else {
@@ -95,8 +130,8 @@ function criarContasCli({ HOME, pastaDados, acharBin, temBin, buildEnv, ehWindow
       if (acao === 'trocarCodigo' || acao === 'codigo') comando.push('--device-auth');
     }
     // Só os nomes das variáveis são retirados; nenhum segredo entra na linha do terminal.
-    const ajustes = gemini ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: env.GEMINI_CLI_SYSTEM_SETTINGS_PATH, GEMINI_DEFAULT_AUTH_TYPE: 'oauth-personal' } : {};
-    if (gemini && (acao === 'codigo' || acao === 'trocarCodigo')) ajustes.NO_BROWSER = 'true';
+    const ajustes = gemini && !agy ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: env.GEMINI_CLI_SYSTEM_SETTINGS_PATH, GEMINI_DEFAULT_AUTH_TYPE: 'oauth-personal' } : {};
+    if (gemini && !agy && (acao === 'codigo' || acao === 'trocarCodigo')) ajustes.NO_BROWSER = 'true';
     let terminal;
     if (ehWindows) {
       const quote = value => '"' + String(value).replace(/"/g, '""') + '"';
@@ -113,10 +148,10 @@ function criarContasCli({ HOME, pastaDados, acharBin, temBin, buildEnv, ehWindow
     }
     return { terminal, titulo: (acao === 'logout' ? 'Sair do ' : 'Entrar no ') + (gemini ? 'Gemini' : 'Grok'),
       esperaLink: acao !== 'logout', confereDepois: true, naVps: false,
-      orientacao: gemini ? 'Entre com sua conta Google no navegador. Depois da confirmação, feche este terminal.'
+      orientacao: gemini ? 'Entre com sua conta Google no navegador. Se aparecer um código, cole neste terminal. Feche o terminal somente depois da confirmação.'
         : 'Entre com sua conta Grok no navegador. O login volta para o Cockpit ao terminar.',
     };
   }
-  return { ler, acao, ambiente };
+  return { ler, acao, ambiente, confirmar, invalidar };
 }
 module.exports = { criarContasCli, ambienteSemChaves };

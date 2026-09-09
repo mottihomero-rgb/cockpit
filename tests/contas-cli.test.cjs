@@ -7,12 +7,12 @@ const path = require('node:path');
 const { criarContasCli, ambienteSemChaves } = require('../contas-cli');
 const { loadMain } = require('./main-harness.cjs');
 
-function montar(t) {
+function montar(t, agy = false) {
   const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'cockpit-contas-'));
   t.after(() => fs.rmSync(HOME, { recursive: true, force: true }));
   const dados = path.join(HOME, 'dados');
   const contas = criarContasCli({ HOME, pastaDados: () => dados,
-    acharBin: engine => '/Programa do usuário/' + engine, temBin: () => true,
+    acharBin: engine => '/Programa do usuário/' + engine, temBin: bin => bin !== 'agy' || agy,
     buildEnv: () => ({ PATH: '/bin', GEMINI_API_KEY: 'segredo-google', XAI_API_KEY: 'segredo-xai' }),
   });
   const salvar = (file, content) => { const destino = path.join(HOME, file); fs.mkdirSync(path.dirname(destino), { recursive: true }); fs.writeFileSync(destino, JSON.stringify(content)); return destino; };
@@ -67,11 +67,25 @@ test('Estado via IPC não chama modelo nem trata falta de login como conta conec
   const h = loadMain();
   for (const engine of ['gemini', 'grok']) {
     const c = await h.call('conta:ler', engine);
-    assert.equal(c.instalado, true); assert.equal(c.entrou, false);
+    assert.equal(c.instalado, true); assert.equal(c.entrou, engine === 'gemini' ? null : false);
     const status = await h.call('auth:acao', { engine, acao: 'status' });
-    assert.equal(JSON.parse(status.texto).loggedIn, false);
+    assert.equal(JSON.parse(status.texto).loggedIn, engine === 'gemini' ? null : false);
   }
   assert.equal(h.spawned.length, 0); assert.equal(h.violations.length, 0);
+});
+
+test('Antigravity ignora conta Gemini legada, confirma por resposta real e invalida no logout', t => {
+  const m = montar(t, true);
+  m.salvar('.gemini/google_accounts.json', { active: 'conta-legada@example.com' });
+  assert.equal(m.contas.ler('gemini').entrou, null);
+  assert.equal(m.contas.ler('gemini').email, '');
+  const env = m.contas.ambiente('gemini', { GEMINI_API_KEY: 'segredo', GEMINI_DEFAULT_AUTH_TYPE: 'oauth-personal' });
+  assert.equal(env.GEMINI_API_KEY, undefined); assert.equal(env.GEMINI_DEFAULT_AUTH_TYPE, undefined);
+  assert.match(m.contas.acao({ engine: 'gemini', acao: 'login' }).terminal, /agy'/);
+  m.contas.confirmar('gemini'); assert.equal(m.contas.ler('gemini').entrou, true);
+  const logout = m.contas.acao({ engine: 'gemini', acao: 'logout' });
+  assert.match(logout.terminal, /'\/logout'/);
+  assert.equal(m.contas.ler('gemini').entrou, null);
 });
 
 test('Ambiente Grok remove caminhos de chave cobrados e não altera o ambiente original', () => {

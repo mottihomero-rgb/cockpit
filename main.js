@@ -4119,7 +4119,8 @@ function matarGrupoExtra(proc) {
   } else matarProcesso(proc);
 }
 const cli = require('./cli-motors').criarCli({ HOME, emit, spawnBin, acharBin, temBin, buildEnv: () => contasCli.ambiente('gemini'),
-  pastaDados: () => app.getPath('userData'), matarGrupo: matarGrupoExtra });
+  pastaDados: () => app.getPath('userData'), matarGrupo: matarGrupoExtra,
+  aoConfirmarConta: () => contasCli.confirmar('gemini'), aoFalharConta: () => contasCli.invalidar('gemini') });
 handle('sessions:cli', (_e, engine) => engine === 'gemini' ? cli.sessoes()
   : engine === 'grok' ? acp.sessoes().filter(s => /(?:^|[\\/])grok(?:\s|$)/.test(s.comando)).map(s => ({ ...s, engine: 'grok', title: tituloAcp(s) })) : []);
 
