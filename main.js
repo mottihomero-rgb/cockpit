@@ -4677,7 +4677,7 @@ handle('git:diff', async (_e, o) => {
 handle('motores:disponiveis', () => ({
   claude: fs.existsSync(CLAUDE_BIN) || temBin('claude'),
   codex: temBin('codex'),
-  gemini: temBin('gemini'), grok: temBin('grok'),
+  gemini: temBin('agy') || temBin('gemini'), grok: temBin('grok'),
   // o comando do agente ACP e configuravel: "disponivel" = ha com que rodar o preset padrao
   // (gemini) ou com que baixar um adaptador (npx)
   acp: ['gemini', 'npx', 'opencode', 'qwen'].some((b) => temBin(b)),

@@ -161,7 +161,7 @@ const melhorAgenteAcp = () => {
   return bom ? bom.id : '';
 };
 
-const MODELOS_GEMINI = [{ id: '', nome: 'Padrão do Gemini', desc: 'Usa o modelo configurado no Gemini CLI', efforts: [], padrao: true }];
+const MODELOS_GEMINI = [{ id: '', nome: 'Padrão do Gemini', desc: 'Usa o Gemini da sua conta Google', efforts: [], padrao: true }];
 const MODELOS_GROK = [{ id: '', nome: 'Padrão do Grok', desc: 'Usa o modelo configurado no Grok', efforts: [], padrao: true }];
 function modelosDe(P) {
   if (P.engine === 'gemini') return MODELOS_GEMINI;

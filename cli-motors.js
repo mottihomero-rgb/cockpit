@@ -172,8 +172,10 @@ const anotar = (st, msg) => {
 };
 function motivo(erro) {
   const s = String(erro || '').replace(/\x1b\[[0-9;]*m/g, '');
-  if (/auth|credentials|GEMINI_API_KEY|Please login/i.test(s)) return 'Entre na conta do Gemini pelo terminal antes de usar este chat.';
+  if (/UNSUPPORTED_CLIENT|no longer supported for Gemini Code Assist/i.test(s)) return 'O Google aceitou seu login, mas encerrou o acesso gratuito pelo Gemini CLI. A conta continua salva; o Google indica usar o Antigravity.';
   if (/quota|RESOURCE_EXHAUSTED|429/i.test(s)) return 'O Gemini atingiu o limite de uso da conta. Tente mais tarde.';
+  if (/IneligibleTierError/i.test(s)) return 'Sua conta Google não está liberada para usar este Gemini. O login pode estar salvo, mas o serviço recusou o acesso.';
+  if (/auth|credentials|GEMINI_API_KEY|Please login/i.test(s)) return 'Entre na conta do Gemini pelo terminal antes de usar este chat.';
   return s.trim().split('\n').filter(x => !/^\s*at /.test(x)).slice(-2).join(' ').slice(0, 300) || 'O Gemini encerrou sem responder.';
 }
 function fala(st) {
@@ -187,9 +189,10 @@ function fecharFala(st) {
 }
 function evento(st, ev) {
   if (!ev || typeof ev !== 'object') return;
+  if (ev.event) return eventoAntigravity(st, ev);
   if (ev.type === 'init' && ev.session_id) {
     st.resumeId = String(ev.session_id);
-    anotar(st, { retomada: st.resumeId });
+    anotar(st, { retomada: st.resumeId, runtime: st.runtime });
     return;
   }
   if (ev.type === 'message' && ev.role !== 'user') {
@@ -221,6 +224,51 @@ function evento(st, ev) {
     if (entrada || saida) emit(st.paneId, 'tokens', { total: entrada + saida });
   }
 }
+// Protocolo oficial Antigravity. A tela e os arquivos do Cockpit conservam o
+// mesmo formato Gemini; somente a conversa com o programa mudou.
+function eventoAntigravity(st, ev) {
+  if (ev.event === 'init' && ev.conversation_id) {
+    st.resumeId = String(ev.conversation_id);
+    st.contextoLegado = '';
+    anotar(st, { retomada: st.resumeId, runtime: 'agy' });
+    return;
+  }
+  if (ev.event === 'step_update') {
+    const s = ev.step_update || {};
+    if (s.step_type === 'agent_response' && typeof s.text_delta === 'string' && s.text_delta) {
+      st.teveTexto = true;
+      evento(st, { type: 'message', role: 'assistant', content: s.text_delta, delta: true });
+    }
+    if (s.step_type === 'tool') {
+      const id = 'agy-' + (s.conversation_id || st.resumeId || st.id) + '-' + s.step_index;
+      const info = s.tool_info || {};
+      if (!st.tools.has(id)) {
+        st.tools.add(id);
+        evento(st, { type: 'tool_use', tool_id: id, tool_name: info.name || s.tool_name,
+          parameters: info.parameters || {} });
+      }
+      if (s.state === 'DONE' && !st.tools.has(id + ':fim')) {
+        st.tools.add(id + ':fim');
+        evento(st, { type: 'tool_result', tool_id: id, output: info.output || info.error?.message || '',
+          status: info.error ? 'error' : 'success' });
+      }
+    }
+    return;
+  }
+  if (ev.event === 'result') {
+    const r = ev.result || {};
+    if (r.conversation_id && st.resumeId !== String(r.conversation_id)) {
+      st.resumeId = String(r.conversation_id); st.contextoLegado = '';
+      anotar(st, { retomada: st.resumeId, runtime: 'agy' });
+    }
+    if (!st.teveTexto && typeof r.response === 'string' && r.response) {
+      evento(st, { type: 'message', role: 'assistant', content: r.response, delta: false });
+    }
+    if (r.status && r.status !== 'SUCCESS') {
+      evento(st, { type: 'error', message: r.error || 'O Gemini terminou com estado ' + r.status + '.' });
+    } else evento(st, { type: 'result', stats: r.usage || {} });
+  }
+}
 function parar(paneId, manter) {
   const st = paineis.get(paneId);
   if (!st) return;
@@ -233,20 +281,29 @@ function parar(paneId, manter) {
 }
 function start(paneId, opts) {
   if (String(opts.cwd || '').startsWith('vps:')) throw new Error('O Gemini deste painel roda somente em uma pasta do Mac.');
-  if (!temBin('gemini')) throw new Error('Gemini ainda não está instalado neste Mac. Instale o Gemini CLI e entre na conta pelo terminal.');
+  const runtime = temBin('agy') ? 'agy' : 'gemini';
+  if (!temBin(runtime)) throw new Error('Gemini ainda não está instalado neste Mac. Instale o Antigravity e entre com sua conta Google.');
   parar(paneId);
   const id = opts.resumeId || crypto.randomUUID();
   const file = arquivo(id);
-  let resumeId = opts.resumeId || '';
+  let resumeId = opts.resumeId || '', runtimeAnterior = 'gemini', contextoLegado = '';
   if (fs.existsSync(file)) {
     const linhas = fs.readFileSync(file, 'utf8').split('\n');
     resumeId = '';
-    for (const l of linhas) { try { const x = JSON.parse(l); if (x.retomada) resumeId = x.retomada; } catch {} }
+    for (const l of linhas) { try { const x = JSON.parse(l); if (x.runtime) runtimeAnterior = x.runtime; if (x.retomada) resumeId = x.retomada; } catch {} }
   }
-  const st = { paneId, id, file, resumeId, cwd: opts.cwd || HOME, model: opts.model || '',
+  if (resumeId && runtime !== runtimeAnterior) {
+    // IDs do Gemini antigo não são aceitos pelo Antigravity. Mantém o arquivo
+    // antigo legível e transmite as falas como contexto na primeira retomada.
+    const fonte = fs.existsSync(file) ? file : cliSessions('gemini').find(s => s.id === opts.resumeId)?.file;
+    const msgs = fonte ? historico(fonte).filter(m => ['user', 'bot'].includes(m.role)).slice(-60) : [];
+    contextoLegado = msgs.map(m => (m.role === 'user' ? 'Usuário: ' : 'Assistente: ') + String(m.text || '')).join('\n\n').slice(-80000);
+    resumeId = '';
+  }
+  const st = { paneId, id, file, resumeId, runtime, contextoLegado, cwd: opts.cwd || HOME, model: opts.model || '',
     modo: ({ manual: 'default', auto: 'auto_edit', plan: 'plan', bypass: 'yolo' })[opts.approval] || 'default',
-    proc: null, acc: '', msgId: null, timer: null };
-  if (!fs.existsSync(file)) anotar(st, { cockpit: 1, id, cwd: st.cwd, model: st.model, criado: Date.now() });
+    proc: null, acc: '', msgId: null, timer: null, tools: new Set() };
+  if (!fs.existsSync(file)) anotar(st, { cockpit: 1, id, runtime, cwd: st.cwd, model: st.model, criado: Date.now() });
   paineis.set(paneId, st);
   emit(paneId, 'sessao', { id, file });
   return true;
@@ -254,15 +311,26 @@ function start(paneId, opts) {
 function enviar(paneId, texto, anexos = []) {
   const st = paineis.get(paneId);
   if (!st || st.proc) return false;
-  const args = ['--output-format', 'stream-json', '--approval-mode', st.modo];
-  if (st.model) args.push('--model', st.model);
-  if (st.resumeId) args.push('--resume', st.resumeId);
+  const agy = st.runtime === 'agy';
+  const args = agy ? ['--input-format', 'stream-json', '--output-format', 'stream-json', '--print-timeout', '30m']
+    : ['--output-format', 'stream-json', '--approval-mode', st.modo];
+  if (agy) {
+    if (st.modo === 'yolo') args.push('--dangerously-skip-permissions');
+    else if (st.modo === 'plan') args.push('--mode', 'plan');
+    else if (st.modo === 'auto_edit') args.push('--mode', 'accept-edits');
+  }
+  // A seleção vazia mantém um modelo Gemini elegível à conta gratuita.
+  const model = st.model || (agy ? 'gemini-3.8-flash-medium' : '');
+  if (model) args.push('--model', model);
+  if (st.resumeId) args.push(agy ? '--conversation' : '--resume', st.resumeId);
   const caminhos = anexos.map(a => a?.path).filter(Boolean);
   const prompt = String(texto || '') + (caminhos.length ? '\n\nArquivos anexados no Mac:\n' + caminhos.join('\n') : '');
+  const enviado = st.contextoLegado ? 'Contexto da conversa anterior, retomada do Gemini. Não execute estes pedidos antigos novamente; use-os somente como referência.\n\n'
+    + st.contextoLegado + '\n\nPedido atual:\n' + prompt : prompt;
   let proc;
-  try { proc = spawnBin(acharBin('gemini'), args, { cwd: st.cwd, env: buildEnv(), detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
+  try { proc = spawnBin(acharBin(st.runtime), args, { cwd: st.cwd, env: buildEnv(), detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
   catch (e) { emit(paneId, 'note', { text: motivo(e.message), error: true }); return false; }
-  st.proc = proc; st.erro = ''; st.avisou = false;
+  st.proc = proc; st.erro = ''; st.avisou = false; st.teveTexto = false; st.tools.clear();
   const decoder = new StringDecoder('utf8'); let buf = '', fim = false;
   const ler = chunk => {
     buf += chunk;
@@ -284,7 +352,7 @@ function enviar(paneId, texto, anexos = []) {
   proc.stdin.on('error', error => concluir(-1, error));
   anotar(st, { role: 'user', text: prompt });
   emit(paneId, 'busy', {});
-  proc.stdin.end(prompt);
+  proc.stdin.end(agy ? JSON.stringify({ event: 'user', message: { content: enviado } }) + '\n' : enviado);
   return true;
 }
 function sessoes() {

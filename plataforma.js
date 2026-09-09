@@ -27,11 +27,13 @@ function pastasExtras() {
     : process.platform === 'darwin' ? path.join(HOME, 'Library', 'Application Support', 'cockpit')
     : path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, '.config'), 'cockpit');
   const ferramentasLocais = path.join(dadosCockpit, 'ferramentas', 'node_modules', '.bin');
+  const ferramentasNativas = path.join(dadosCockpit, 'ferramentas', 'bin');
   if (EH_WIN) {
     const appdata = process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming');
     const local = process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local');
     const pf = process.env.ProgramFiles || 'C:\\Program Files';
     return [
+      ferramentasNativas,
       ferramentasLocais,
       path.join(HOME, '.local', 'bin'),        // instalador nativo do Claude Code
       path.join(HOME, '.codex', 'bin'),
@@ -44,6 +46,7 @@ function pastasExtras() {
     ];
   }
   return [
+    ferramentasNativas,
     ferramentasLocais,
     path.join(HOME, '.local/bin'),
     path.join(HOME, '.nvm/versions/node/v22.23.1/bin'),

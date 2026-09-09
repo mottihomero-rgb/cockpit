@@ -9,11 +9,11 @@ const { PassThrough } = require('node:stream');
 const { criarCli } = require('../cli-motors');
 const { loadMain } = require('./main-harness.cjs');
 
-function montar(t, instalado = true) {
+function montar(t, instalado = true, runtime = 'gemini') {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cockpit-gemini-'));
   const eventos = [], processos = [], mortos = [];
   const cli = criarCli({ HOME: home, pastaDados: () => path.join(home, 'app'),
-    temBin: () => instalado, acharBin: () => '/fake/bin/gemini', buildEnv: () => ({}),
+    temBin: bin => instalado && bin === runtime, acharBin: bin => '/fake/bin/' + bin, buildEnv: () => ({}),
     emit: (paneId, kind, data) => eventos.push({ paneId, kind, ...data }),
     matarGrupo: p => mortos.push(p),
     spawnBin: (bin, args, options) => {
@@ -30,6 +30,17 @@ test('Gemini ausente e pasta VPS falham antes de criar processo', t => {
   assert.throws(() => m.cli.start('p', { cwd: m.home }), /não está instalado/);
   assert.throws(() => m.cli.start('p', { cwd: 'vps:/projeto' }), /Mac/);
   assert.equal(m.processos.length, 0);
+});
+
+test('Gemini explica encerramento do acesso gratuito sem pedir login de novo', t => {
+  const m = montar(t);
+  m.cli.start('p', { cwd: m.home }); m.cli.enviar('p', 'teste');
+  const r = m.processos[0];
+  r.p.stderr.write('Error authenticating: IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals. reasonCode: UNSUPPORTED_CLIENT');
+  r.p.emit('close', 1);
+  const erro = m.eventos.find(e => e.kind === 'note' && e.error);
+  assert.match(erro.text, /encerrou o acesso gratuito/);
+  assert.doesNotMatch(erro.text, /pelo terminal antes/);
 });
 
 test('Gemini transmite pasta, modo e anexo pelo stdin, com grupo de processos próprio', t => {
