@@ -286,7 +286,7 @@ function start(paneId, opts) {
   parar(paneId);
   const id = opts.resumeId || crypto.randomUUID();
   const file = arquivo(id);
-  let resumeId = opts.resumeId || '', runtimeAnterior = 'gemini', contextoLegado = '';
+  let resumeId = opts.resumeId || '', runtimeAnterior = 'gemini', contextoLegado = '', mensagensLegado = [];
   if (fs.existsSync(file)) {
     const linhas = fs.readFileSync(file, 'utf8').split('\n');
     resumeId = '';
@@ -297,13 +297,17 @@ function start(paneId, opts) {
     // antigo legível e transmite as falas como contexto na primeira retomada.
     const fonte = fs.existsSync(file) ? file : cliSessions('gemini').find(s => s.id === opts.resumeId)?.file;
     const msgs = fonte ? historico(fonte).filter(m => ['user', 'bot'].includes(m.role)).slice(-60) : [];
+    mensagensLegado = msgs;
     contextoLegado = msgs.map(m => (m.role === 'user' ? 'Usuário: ' : 'Assistente: ') + String(m.text || '')).join('\n\n').slice(-80000);
     resumeId = '';
   }
   const st = { paneId, id, file, resumeId, runtime, contextoLegado, cwd: opts.cwd || HOME, model: opts.model || '',
     modo: ({ manual: 'default', auto: 'auto_edit', plan: 'plan', bypass: 'yolo' })[opts.approval] || 'default',
     proc: null, acc: '', msgId: null, timer: null, tools: new Set() };
-  if (!fs.existsSync(file)) anotar(st, { cockpit: 1, id, runtime, cwd: st.cwd, model: st.model, criado: Date.now() });
+  if (!fs.existsSync(file)) {
+    anotar(st, { cockpit: 1, id, runtime, cwd: st.cwd, model: st.model, criado: Date.now() });
+    for (const m of mensagensLegado) anotar(st, { role: m.role, text: m.text, legado: true });
+  }
   paineis.set(paneId, st);
   emit(paneId, 'sessao', { id, file });
   return true;
@@ -365,7 +369,7 @@ function sessoes() {
     const meta = linhas[0], user = linhas.find(m => m.role === 'user');
     if (!meta?.cockpit || !user) continue;
     const retomada = linhas.filter(m => m.retomada).pop()?.retomada;
-    const existente = out.findIndex(s => s.id === retomada);
+    const existente = out.findIndex(s => s.id === retomada || s.id === meta.id);
     if (existente >= 0) out.splice(existente, 1);
     out.push({ engine: 'gemini', id: meta.id, file, cwd: meta.cwd, when: fs.statSync(file).mtimeMs, title: String(user.text).replace(/\s+/g, ' ').slice(0, 120) });
   } } catch {}

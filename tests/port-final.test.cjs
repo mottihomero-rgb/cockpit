@@ -43,6 +43,56 @@ test('Gemini explica encerramento do acesso gratuito sem pedir login de novo', t
   assert.doesNotMatch(erro.text, /pelo terminal antes/);
 });
 
+test('Antigravity envia JSON, respeita modo e mostra texto incremental sem duplicar o resultado', t => {
+  const m = montar(t, true, 'agy');
+  m.cli.start('p', { cwd: m.home, approval: 'plan' }); m.cli.enviar('p', 'Olá');
+  const r = m.processos[0];
+  assert.equal(r.bin, '/fake/bin/agy');
+  assert.ok(r.args.includes('--input-format')); assert.ok(r.args.includes('--mode'));
+  assert.ok(r.args.includes('plan')); assert.ok(!r.args.includes('--approval-mode'));
+  assert.deepEqual(JSON.parse(r.texto), { event: 'user', message: { content: 'Olá' } });
+  m.mandar(r, { event: 'init', conversation_id: 'agy-real' });
+  m.mandar(r, { event: 'step_update', step_update: { step_type: 'agent_response', state: 'ACTIVE', text_delta: 'conexão ' } });
+  m.mandar(r, { event: 'step_update', step_update: { step_type: 'agent_response', state: 'DONE', text_delta: 'confirmada.' } });
+  m.mandar(r, { event: 'result', result: { conversation_id: 'agy-real', status: 'SUCCESS', response: 'conexão confirmada.', usage: { input_tokens: 12, output_tokens: 3 } } });
+  r.p.emit('close', 0);
+  assert.equal(m.eventos.filter(e => e.kind === 'text-final').at(-1).text, 'conexão confirmada.');
+  assert.equal(m.eventos.filter(e => e.kind === 'turn-end').length, 1);
+  assert.equal(m.eventos.find(e => e.kind === 'tokens').total, 15);
+  m.cli.enviar('p', 'Continue');
+  assert.equal(m.processos[1].args[m.processos[1].args.indexOf('--conversation') + 1], 'agy-real');
+});
+
+test('Antigravity traduz ferramenta recebida só no DONE e erros do serviço', t => {
+  const m = montar(t, true, 'agy');
+  m.cli.start('p', { cwd: m.home }); m.cli.enviar('p', 'teste'); const r = m.processos[0];
+  const ev = { event: 'step_update', step_update: { conversation_id: 'id', step_index: 4, state: 'DONE', step_type: 'tool', tool_name: 'run_command', tool_info: { parameters: { CommandLine: 'git status' }, output: 'saída' } } };
+  m.mandar(r, ev); m.mandar(r, ev);
+  assert.equal(m.eventos.filter(e => e.kind === 'tool-start').length, 1);
+  assert.equal(m.eventos.filter(e => e.kind === 'tool-end').length, 1);
+  m.mandar(r, { event: 'result', result: { status: 'ERROR', error: 'quota exhausted' } }); r.p.emit('close', 1);
+  assert.equal(m.eventos.filter(e => e.kind === 'note' && e.error).length, 1);
+  assert.match(m.eventos.find(e => e.kind === 'note').text, /limite de uso/);
+});
+
+test('Retomada Gemini antiga no Antigravity mantém histórico e não transmite ID incompatível', t => {
+  const m = montar(t, true, 'agy');
+  const arquivo = path.join(m.home, 'app/gemini/antiga.jsonl'); fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+  fs.writeFileSync(arquivo, [
+    { cockpit: 1, id: 'antiga', cwd: m.home }, { retomada: 'gemini-antigo' },
+    { role: 'user', text: 'Minha empresa é Adsure.' }, { role: 'bot', text: 'Entendido.' },
+  ].map(x => JSON.stringify(x)).join('\n') + '\n');
+  m.cli.start('p', { cwd: m.home, resumeId: 'antiga' }); m.cli.enviar('p', 'Qual empresa?');
+  const r = m.processos[0]; assert.ok(!r.args.includes('--conversation'));
+  assert.match(JSON.parse(r.texto).message.content, /Minha empresa é Adsure/);
+  m.mandar(r, { event: 'init', conversation_id: 'novo-agy' });
+  m.mandar(r, { event: 'result', result: { status: 'SUCCESS', response: 'Adsure.' } }); r.p.emit('close', 0);
+  m.cli.parar('p'); m.cli.start('p2', { cwd: m.home, resumeId: 'antiga' }); m.cli.enviar('p2', 'Continue');
+  const r2 = m.processos[1]; assert.ok(r2.args.includes('novo-agy'));
+  assert.equal(JSON.parse(r2.texto).message.content, 'Continue');
+  assert.ok(m.cli.historico(arquivo).some(x => x.text === 'Minha empresa é Adsure.'));
+});
+
 test('Gemini transmite pasta, modo e anexo pelo stdin, com grupo de processos próprio', t => {
   const m = montar(t);
   m.cli.start('p', { cwd: m.home, approval: 'manual', model: 'modelo-escolhido' });
