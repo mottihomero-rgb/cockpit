@@ -1654,12 +1654,12 @@ handle('sessao:renomear', async (_e, { engine, id, nome }) => {
 const PEDIDO_NOME = 'Voce da nome a conversas de trabalho. Responda SO o nome, no formato '
   + '"<tipo de trabalho> <projeto>", 2 palavras (3 so se o projeto tiver 2 palavras), em portugues do Brasil. '
   + 'PROJETO = o sistema, app, site, produto, campanha ou cliente em que se trabalha. '
-  + 'TIPO = a natureza geral do trabalho: Alteracoes, Conserto, Criacao, Campanha, Pagina, Relatorio, '
-  + 'Analise, Pesquisa, Copy, Transcricao, Organizacao. '
+  + 'TIPO = a natureza geral do trabalho: Alterações, Conserto, Criação, Campanha, Página, Relatório, '
+  + 'Análise, Pesquisa, Copy, Transcrição, Organização. Escreva com acento. '
   + 'NUNCA use o detalhe de um pedido (botao, cor, destaque, nome, logo, borda, orcamento): a conversa '
   + 'vai receber outros pedidos sobre o mesmo projeto e o nome tem que continuar valendo. '
   + 'Sem pontuacao, sem aspas, sem explicacao. '
-  + 'Formato de exemplo (nao copie as palavras): "Alteracoes Planilha", "Conserto Site Loja", "Campanha Curso Ingles".';
+  + 'Formato de exemplo (nao copie as palavras): "Alterações Planilha", "Conserto Site Loja", "Campanha Curso Ingles".';
 handle('sessao:nomeCurto', async (_e, { texto, mensagens, pasta }) => {
   const lista = (Array.isArray(mensagens) && mensagens.length ? mensagens : [texto])
     .map(m => String(m || '').replace(/\s+/g, ' ').trim().slice(0, 400)).filter(Boolean);
