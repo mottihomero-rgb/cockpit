@@ -138,21 +138,11 @@ const MODELOS_CLAUDE = [
     efforts: ['low','medium','high'], padraoEffort: 'high' },
 ];
 let MODELOS_CODEX = null;   // vem do proprio Codex
-let ASTRA_API_STATUS = null;
-const ASTRA_API_ID = 'api:gpt-6-astra';
+/* O "Astra por créditos" (chave da API da OpenAI) saiu da tela em 11/09/2026. Ninguém mais
+   escolhe um modelo 'api:…', então estas duas ficam só para um painel antigo que ainda o traga
+   salvo não mandar o prefixo para o Codex. */
 const modeloPorCreditos = (id) => String(id || '').startsWith('api:');
 const modeloSemOrigem = (id) => modeloPorCreditos(id) ? String(id).slice(4) : id;
-
-function itemAstraApi() {
-  const s = ASTRA_API_STATUS;
-  let desc = 'Configure a chave e ligue os créditos nos Ajustes';
-  if (s && s.configured && !s.enabled) desc = 'Chave guardada, mas os créditos estão desligados';
-  if (s && s.configured && s.enabled) desc = 'API ligada, com limite mensal de US$ ' + Number(s.capUsd || 10).toFixed(0);
-  return {
-    id: ASTRA_API_ID, nome: 'GPT-6 Astra · créditos', desc,
-    efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'xhigh', porCreditos: true,
-  };
-}
 
 /* leva 12.4 — no painel ACP o "modelo" é o COMANDO que sobe o agente. Cada agente que fala o
    protocolo entra por aqui: o Cockpit não precisa saber nada sobre ele além da linha de comando.
@@ -194,7 +184,7 @@ function modelosDe(P) {
   // do Codex e trocar de motor.
   const base = (MODELOS_CODEX && MODELOS_CODEX.length) ? MODELOS_CODEX
     : [{ id: '', nome: 'padrão do Codex', desc: 'o que está no seu config', efforts: ['low','medium','high','xhigh'], padraoEffort: 'medium' }];
-  return [...base, itemAstraApi()];
+  return base;
 }
 function modeloAtual(P) {
   const ms = modelosDe(P);
@@ -3294,10 +3284,7 @@ function receberEventoPane(ev) {
       P.tokens = ev.total || 0;
       pintarTokens(P);
       break;
-    case 'api-usage':
-      ASTRA_API_STATUS = { ...(ASTRA_API_STATUS || {}), ...ev };
-      pintarAstra();
-      break;
+    case 'api-usage': break;   // era o contador do Astra por créditos, que saiu da tela
     case 'janela': P.janela = ev.total; pintarTokens(P); break;
     case 'agentes': agentesEvento(P, ev); break;
     case 'voz': vozEvento(P, ev); break;
@@ -4283,17 +4270,6 @@ async function menuModelos(P) {
       const faltando = P.engine === 'acp' && !agenteAcpTem(mo);
       m.appendChild(elItem({ nome: mo.nome, desc: mo.desc + (faltando ? ' · não está instalado neste Mac' : ''), on: mo.id === P.model }, async () => {
         const vaiPorCreditos = modeloPorCreditos(mo.id);
-        if (vaiPorCreditos) {
-          const s = await carregarStatusAstra(true);
-          if (!s || !s.configured || !s.enabled) {
-            alert('O Astra por créditos está desligado. Abra Ajustes, guarde a chave da OpenAI e ligue o botão de créditos.');
-            return;
-          }
-          if (Number(s.remainingUsd || 0) <= 0) {
-            alert('O limite mensal de créditos foi atingido. Ajuste o teto antes de usar.');
-            return;
-          }
-        }
         const mudouOrigem = modeloPorCreditos(P.model) !== vaiPorCreditos;
         P.model = mo.id;
         const ef = esforcosDe(P);
@@ -7692,81 +7668,67 @@ $$('.tema-bt').forEach(b => b.addEventListener('click', async () => {
   await window.api.setConfig(cfg);
 }));
 
-function dinheiroAstra(v) {
-  return 'US$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-function planoTemAstra() {
-  return !!(MODELOS_CODEX && MODELOS_CODEX.some(m => /^gpt-6-astra(?:$|-)/i.test(String(m.id || ''))));
-}
-function pintarAstra() {
-  const s = ASTRA_API_STATUS;
-  const plano = $('#astraPlano');
-  if (plano) {
-    if (!MODELOS_CODEX) { plano.textContent = window.SEM_ELECTRON ? 'Plano: veja no Mac' : 'Vendo seu plano…'; plano.classList.remove('ok'); }
-    else if (planoTemAstra()) { plano.textContent = 'Liberado no plano'; plano.classList.add('ok'); }
-    else { plano.textContent = 'Plano ainda aguardando'; plano.classList.remove('ok'); }
+/* (i) dos Ajustes: um balão só, preso ao body, porque a coluna dos ajustes rola e cortaria
+   um balão desenhado dentro dela. Mouse mostra; no celular (sem mouse) o toque liga e desliga. */
+const SVG_INFO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
+let dicaEl = null, dicaDono = null;
+function mostrarDica(bt) {
+  if (!dicaEl) {
+    dicaEl = document.createElement('div');
+    dicaEl.className = 'dica'; dicaEl.setAttribute('role', 'tooltip'); dicaEl.id = 'dicaAjustes';
+    document.body.appendChild(dicaEl);
   }
-  if (!s) return;
-  const chk = $('#chkAstraApi'), cap = $('#astraCap'), uso = $('#astraUso'), status = $('#astraStatus');
-  if (chk) chk.checked = !!s.enabled;
-  if (cap) cap.value = Number(s.capUsd || 10);
-  if (uso) uso.textContent = dinheiroAstra(s.spentUsd) + ' usados de ' + dinheiroAstra(s.capUsd);
-  if (status) {
-    status.classList.remove('ok', 'erro');
-    if (!s.configured) status.textContent = 'Sem chave da API. O uso por créditos está desligado.';
-    else if (!s.enabled) status.textContent = 'Chave guardada com segurança. Créditos desligados.';
-    else {
-      status.textContent = s.testMessage || 'Créditos ligados dentro do limite mensal.';
-      if (s.testStatus === 'pronto') status.classList.add('ok');
-      else if (s.testStatus === 'erro') status.classList.add('erro');
-    }
-  }
+  if (dicaDono && dicaDono !== bt) dicaDono.classList.remove('aberto');
+  dicaDono = bt;
+  bt.classList.add('aberto');
+  bt.setAttribute('aria-describedby', 'dicaAjustes');
+  dicaEl.textContent = bt.dataset.dica || '';
+  dicaEl.classList.remove('on');
+  dicaEl.style.left = '0px'; dicaEl.style.top = '0px';
+  // mede já no tamanho final e só depois posiciona: embaixo do (i); sem espaço, em cima
+  const r = bt.getBoundingClientRect(), d = dicaEl.getBoundingClientRect(), m = 8;
+  const x = Math.max(m, Math.min(r.left - 10, innerWidth - d.width - m));
+  let y = r.bottom + 6;
+  if (y + d.height > innerHeight - m) y = Math.max(m, r.top - d.height - 6);
+  dicaEl.style.left = x + 'px'; dicaEl.style.top = y + 'px';
+  requestAnimationFrame(() => dicaEl && dicaEl.classList.add('on'));
 }
-async function carregarStatusAstra(forcar) {
-  if (!forcar && ASTRA_API_STATUS) return ASTRA_API_STATUS;
-  try { ASTRA_API_STATUS = await window.api.codexApiStatus(); }
-  catch { ASTRA_API_STATUS = null; }
-  pintarAstra();
-  return ASTRA_API_STATUS;
+function esconderDica() {
+  if (dicaEl) dicaEl.classList.remove('on');
+  if (dicaDono) { dicaDono.classList.remove('aberto'); dicaDono.removeAttribute('aria-describedby'); }
+  dicaDono = null;
 }
+$$('.settings .info').forEach(bt => {
+  bt.innerHTML = SVG_INFO;
+  bt.addEventListener('mouseenter', () => mostrarDica(bt));
+  bt.addEventListener('mouseleave', esconderDica);
+  bt.addEventListener('focus', () => mostrarDica(bt));
+  bt.addEventListener('blur', esconderDica);
+  // clique não alterna: com mouse o balão já está aberto e sumiria no clique
+  bt.addEventListener('click', (e) => { e.stopPropagation(); if (dicaDono !== bt) mostrarDica(bt); });
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && dicaDono) esconderDica(); });
+document.addEventListener('click', () => { if (dicaDono) esconderDica(); });
+if ($('.settings')) $('.settings').addEventListener('scroll', esconderDica, { passive: true });
 
-if ($('#chkAstraApi')) $('#chkAstraApi').addEventListener('change', async (e) => {
-  const antes = ASTRA_API_STATUS && ASTRA_API_STATUS.enabled;
-  const r = await window.api.codexApiConfig({ enabled: e.target.checked, capUsd: Number($('#astraCap').value || 10) });
-  if (r && r.error) { e.target.checked = !!antes; alert(r.error); return; }
-  ASTRA_API_STATUS = r; pintarAstra();
-});
-if ($('#astraCap')) $('#astraCap').addEventListener('change', async () => {
-  const r = await window.api.codexApiConfig({ capUsd: Number($('#astraCap').value || 10) });
-  if (r && r.error) { alert(r.error); return; }
-  ASTRA_API_STATUS = r; pintarAstra();
-});
-async function guardarAstraDaTela() {
-  const campo = $('#astraKey');
-  const chave = campo && campo.value.trim();
-  if (!chave) { alert('Cole primeiro a chave da OpenAI.'); return; }
-  const r = await window.api.codexApiKey(chave);
-  if (r && r.error) { alert(r.error); return; }
-  campo.value = '';
-  ASTRA_API_STATUS = await window.api.codexApiTest();
-  pintarAstra();
+/* caminho numa linha só, cortado pelo começo; o <bdi> segura a barra inicial no lugar */
+function pintarCaminho(el, p) {
+  if (!el) return;
+  el.textContent = '';
+  const b = document.createElement('bdi');
+  b.textContent = p || '—';
+  el.appendChild(b);
+  el.title = p || '';
 }
-if ($('#btnAstraSalvar')) $('#btnAstraSalvar').addEventListener('click', guardarAstraDaTela);
-if ($('#astraKey')) $('#astraKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') guardarAstraDaTela(); });
-if ($('#btnAstraTestar')) $('#btnAstraTestar').addEventListener('click', async () => {
-  const r = await window.api.codexApiTest();
-  if (r && r.error) { alert(r.error); return; }
-  ASTRA_API_STATUS = r; pintarAstra();
-});
-if ($('#btnAstraChave')) $('#btnAstraChave').addEventListener('click', () => window.api.openUrl('https://platform.openai.com/api-keys'));
-if ($('#btnAstraCredito')) $('#btnAstraCredito').addEventListener('click', () => window.api.openUrl('https://platform.openai.com/settings/organization/billing/overview'));
 
 async function pintarWeb(st) {
   const box = $('#webInfo');
   if (!box) return;                      // no telefone essa parte dos ajustes nem existe
   if (!st || !st.ligado) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
-  box.innerHTML = 'No iPhone, abra: <b class="mono">' + st.endereco + '</b><br>Senha: <b class="mono">' + st.senha + '</b>';
+  box.innerHTML = '<b></b><br>Senha <b></b>';
+  const [end, senha] = box.querySelectorAll('b');
+  end.textContent = st.endereco || ''; senha.textContent = st.senha || '';
 }
 if ($('#chkWeb')) {
   $('#chkWeb').addEventListener('change', async (e) => {
@@ -7846,7 +7808,7 @@ $('#btnFotoTirar').addEventListener('click', async () => {
 $('#btnDefCwd').addEventListener('click', async () => {
   const p = await window.api.pickFolder(cfg.defCwd || HOME);
   if (!p) return;
-  cfg.defCwd = p; await window.api.setConfig(cfg); $('#defCwd').textContent = p;
+  cfg.defCwd = p; await window.api.setConfig(cfg); pintarCaminho($('#defCwd'), p);
 });
 
 document.querySelectorAll('.act').forEach(b => b.addEventListener('click', () => {
@@ -8823,7 +8785,7 @@ document.addEventListener('keydown', (e) => {
   HOME = await window.api.home();
   cfg = await window.api.getConfig();
   cfg.defCwd = cfg.defCwd || HOME;
-  $('#defCwd').textContent = cfg.defCwd;
+  pintarCaminho($('#defCwd'), cfg.defCwd);
   $('#chkRobos').checked = !!cfg.verRobos;
   if ($('#chkAtalhosGlobais')) {
     $('#chkAtalhosGlobais').checked = !!cfg.atalhosGlobais;
@@ -8838,7 +8800,7 @@ document.addEventListener('keydown', (e) => {
     else {
       try {
         const pasta = await window.api.inboxPasta();
-        $('#inboxPasta').textContent = pasta || '—';
+        pintarCaminho($('#inboxPasta'), pasta);
         $('#btnInboxAbrir').addEventListener('click', () => { if (pasta) window.api.openPath(pasta); });
       } catch (_) {}
     }
@@ -8875,15 +8837,13 @@ document.addEventListener('keydown', (e) => {
   }
   aplicarTema(cfg.tema);
   document.body.classList.toggle('foco', !!cfg.foco);   // o modo foco continua como ele deixou
-  $('#verLine').textContent = 'Cockpit 1.0 · uma aba por projeto, chats lado a lado dentro dela';
+  $('#verLine').textContent = 'Cockpit 1.0';
   repintarAvatares();
   const noTelefone = !!window.SEM_ELECTRON;
-  carregarStatusAstra(true);
   // leva 12.5: o radar de motores instalados, sem segurar o boot e sem derrubar nada se falhar
   if (window.api.motoresDisponiveis) window.api.motoresDisponiveis().then(m => { MOTORES_OK = m || null; }).catch(() => {});
   if (!noTelefone) window.api.codexModels().then(ms => {
     if (ms && ms.length) { MODELOS_CODEX = ms; for (const P of panes.values()) if (P.engine === 'codex') fillModels(P); }
-    pintarAstra();
   });
   // icones da tela de conversa nova
   for (const eng of MOTORES_VISIVEIS) $('#naIc' + CAIXA_MOTOR[eng]).innerHTML = svgMotor(eng);

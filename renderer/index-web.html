@@ -148,58 +148,50 @@
     </div>
     <div class="side-view hidden" data-view="settings">
       <div class="side-head"><span>Ajustes</span></div>
+      <!-- Cada bloco é só título + controle. A explicação mora no (i) do título: o app.js
+           mostra o texto de data-dica ao passar o mouse (no celular, ao tocar). -->
       <div class="settings">
-        <label>GPT-6 Astra</label>
-        <div class="astra-card">
-          <div class="astra-top"><b>Astra</b><span id="astraPlano">Vendo seu plano…</span></div>
-          <p class="astra-status" id="astraStatus">Vendo a opção por créditos…</p>
-          <label class="chave astra-toggle"><input type="checkbox" id="chkAstraApi" disabled><span>Permitir uso por créditos</span></label>
-          <div class="astra-limite"><span>Limite mensal</span><span>US$ <input id="astraCap" type="number" value="10" disabled></span></div>
-          <div class="astra-uso" id="astraUso">US$ 0,00 usados</div>
-          <p class="hint astra-nota">Por segurança, chave e créditos só podem ser alterados no Mac.</p>
-          <input class="astra-key hidden" id="astraKey" type="password" disabled>
-          <div class="astra-acoes hidden"><button id="btnAstraSalvar">Guardar chave</button><button id="btnAstraTestar">Testar</button></div>
-          <div class="astra-links hidden"><button id="btnAstraChave">Criar chave</button><button id="btnAstraCredito">Adicionar créditos</button></div>
-        </div>
-
-        <label>Tema</label>
-        <div class="temas">
-          <button class="tema-bt" data-tema="escuro"><span class="tema-am esc"></span>Escuro</button>
-          <button class="tema-bt" data-tema="claro"><span class="tema-am cla"></span>Claro</button>
-          <button class="tema-bt" data-tema="jornal"><span class="tema-am jor"></span>Jornal</button>
-        </div>
-
-        <label>Sua foto</label>
-        <div class="foto-linha">
-          <div class="foto-prev" id="fotoPrev"></div>
-          <div class="foto-btns">
-            <button class="btn-wide" id="btnFoto">Escolher foto</button>
-            <button class="btn-wide" id="btnFotoTirar">Tirar</button>
+        <section class="aj">
+          <div class="aj-tit">Tema</div>
+          <div class="temas">
+            <button class="tema-bt" data-tema="escuro"><span class="tema-am esc"></span>Escuro</button>
+            <button class="tema-bt" data-tema="claro"><span class="tema-am cla"></span>Claro</button>
+            <button class="tema-bt" data-tema="jornal"><span class="tema-am jor"></span>Jornal</button>
           </div>
-        </div>
+        </section>
 
-        <label>Pasta padrão dos painéis novos</label>
-        <div class="path-box" id="defCwd">—</div>
-        <button class="btn-wide" id="btnDefCwd">Escolher</button>
+        <section class="aj">
+          <div class="aj-tit">Sua foto</div>
+          <div class="foto-linha">
+            <div class="foto-prev" id="fotoPrev"></div>
+            <div class="foto-btns">
+              <button class="btn-wide" id="btnFoto">Escolher foto</button>
+              <button class="btn-wide" id="btnFotoTirar">Remover</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="aj">
+          <div class="aj-tit">Pasta inicial<button class="info" type="button" aria-label="Como funciona" data-dica="É a pasta onde os chats novos começam a trabalhar."></button></div>
+          <div class="path-box" id="defCwd">—</div>
+          <button class="btn-wide" id="btnDefCwd">Trocar pasta</button>
+        </section>
+
         <!-- leva 6: o caminho MUDA entre rodar por npm start (pasta "cockpit") e o app
              instalado (pasta "Cockpit"). Nenhum script pode cravar: é daqui que se copia.
              No telefone este bloco é escondido pelo app.js — a pasta é do Mac. -->
-        <div id="inboxBloco">
-          <label>Caixa de entrada</label>
-          <p class="hint">Arquivo <span class="mono">.txt</span>/<span class="mono">.md</span> (áudio já transcrito, recado) ou imagem que cair nesta pasta vira um aviso no topo da tela com o botão “usar”. É por aqui que o celular e os robôs mandam coisa para cá.</p>
+        <section class="aj" id="inboxBloco">
+          <div class="aj-tit">Caixa de entrada<button class="info" type="button" aria-label="Como funciona" data-dica="Texto (.txt ou .md) ou imagem que cair nesta pasta vira um aviso no topo da tela, com o botão “usar”. É por aqui que o celular e os robôs mandam coisas para cá."></button></div>
           <div class="path-box" id="inboxPasta">—</div>
-          <button class="btn-wide" id="btnInboxAbrir">Abrir a pasta</button>
-        </div>
+          <button class="btn-wide" id="btnInboxAbrir">Abrir pasta</button>
+        </section>
 
-        <label>Lista de conversas</label>
-        <label class="chave"><input type="checkbox" id="chkRobos"><span>Mostrar também as conversas dos robôs</span></label>
-        <p class="hint">Desligado, a lista traz só o que você conversou aqui ou no VSCode. Ligado, entram também as do robô do WhatsApp e dos agendados.</p>
+        <section class="aj">
+          <div class="aj-tit">Conversas<button class="info" type="button" aria-label="Como funciona" data-dica="Ligado, a lista mostra também as conversas do robô do WhatsApp e dos robôs agendados. Desligado, mostra só as suas."></button></div>
+          <label class="chave"><input type="checkbox" id="chkRobos"><span>Mostrar robôs</span></label>
+        </section>
 
-        <div class="sep"></div>
-        <p class="hint"><b>Acesso total ligado.</b> Os painéis enxergam o Mac inteiro, não só a pasta escolhida. A pasta serve só como ponto de partida.</p>
-        <p class="hint">Codex usa a sua conta e config do <span class="mono">~/.codex</span>. Claude usa o Claude Code que já está instalado, com suas skills e memória.</p>
-        <div class="sep"></div>
-        <p class="hint mono" id="verLine"></p>
+        <div class="aj-rodape"><span id="verLine">Cockpit</span><button class="info" type="button" aria-label="Sobre" data-dica="Acesso total ligado: os chats enxergam o Mac inteiro. A pasta escolhida é só o ponto de partida. O Codex usa a sua conta dele. O Claude usa o Claude Code já instalado, com suas skills e memória."></button></div>
       </div>
     </div>
   </aside>

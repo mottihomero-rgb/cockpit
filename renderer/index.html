@@ -134,73 +134,61 @@
     </div>
     <div class="side-view hidden" data-view="settings">
       <div class="side-head"><span>Ajustes</span></div>
+      <!-- Cada bloco é só título + controle. A explicação mora no (i) do título: o app.js
+           mostra o texto de data-dica ao passar o mouse (no celular, ao tocar). -->
       <div class="settings">
-        <label>Usar no iPhone</label>
-        <label class="chave"><input type="checkbox" id="chkWeb"><span>Deixar o Cockpit aberto no Wi-Fi</span></label>
-        <div id="webInfo" class="hint hidden"></div>
-        <p class="hint">No iPhone, conecte o Tailscale e abra o endereço no Safari. Toque em Compartilhar › Adicionar à Tela de Início e ative Abrir como App da Web. Suas conversas e históricos são os mesmos do Mac. Mantenha o Mac ligado.</p>
+        <section class="aj">
+          <div class="aj-tit">Celular<button class="info" type="button" aria-label="Como funciona" data-dica="No iPhone, ligue o Tailscale e abra o endereço abaixo no Safari. Depois toque em Compartilhar › Adicionar à Tela de Início. As conversas são as mesmas do Mac, então deixe o Mac ligado."></button></div>
+          <label class="chave"><input type="checkbox" id="chkWeb"><span>Liberar acesso</span></label>
+          <div id="webInfo" class="web-info hidden"></div>
+        </section>
 
-        <label>GPT-6 Astra</label>
-        <div class="astra-card">
-          <div class="astra-top"><b>Astra</b><span id="astraPlano">Vendo seu plano…</span></div>
-          <p class="astra-status" id="astraStatus">Vendo a opção por créditos…</p>
-          <label class="chave astra-toggle"><input type="checkbox" id="chkAstraApi"><span>Permitir uso por créditos</span></label>
-          <div class="astra-limite"><span>Limite mensal</span><span>US$ <input id="astraCap" type="number" min="1" max="10000" step="1" value="10"></span></div>
-          <div class="astra-uso" id="astraUso">US$ 0,00 usados</div>
-          <input class="astra-key" id="astraKey" type="password" autocomplete="off" spellcheck="false" placeholder="Cole a chave sk-…">
-          <div class="astra-acoes">
-            <button id="btnAstraSalvar">Guardar chave</button>
-            <button id="btnAstraTestar">Testar</button>
+        <section class="aj">
+          <div class="aj-tit">Tema</div>
+          <div class="temas">
+            <button class="tema-bt" data-tema="escuro"><span class="tema-am esc"></span>Escuro</button>
+            <button class="tema-bt" data-tema="claro"><span class="tema-am cla"></span>Claro</button>
+            <button class="tema-bt" data-tema="jornal"><span class="tema-am jor"></span>Jornal</button>
           </div>
-          <div class="astra-links">
-            <button id="btnAstraChave">Criar chave</button>
-            <button id="btnAstraCredito">Adicionar créditos</button>
+        </section>
+
+        <section class="aj">
+          <div class="aj-tit">Sua foto</div>
+          <div class="foto-linha">
+            <div class="foto-prev" id="fotoPrev"></div>
+            <div class="foto-btns">
+              <button class="btn-wide" id="btnFoto">Escolher foto</button>
+              <button class="btn-wide" id="btnFotoTirar">Remover</button>
+            </div>
           </div>
-          <p class="hint astra-nota">Desligado, nenhum crédito da API é usado. O Astra do seu plano continua separado.</p>
-        </div>
+        </section>
 
-        <label>Tema</label>
-        <div class="temas">
-          <button class="tema-bt" data-tema="escuro"><span class="tema-am esc"></span>Escuro</button>
-          <button class="tema-bt" data-tema="claro"><span class="tema-am cla"></span>Claro</button>
-          <button class="tema-bt" data-tema="jornal"><span class="tema-am jor"></span>Jornal</button>
-        </div>
+        <section class="aj">
+          <div class="aj-tit">Pasta inicial<button class="info" type="button" aria-label="Como funciona" data-dica="É a pasta onde os chats novos começam a trabalhar."></button></div>
+          <div class="path-box" id="defCwd">—</div>
+          <button class="btn-wide" id="btnDefCwd">Trocar pasta</button>
+        </section>
 
-        <label>Sua foto</label>
-        <div class="foto-linha">
-          <div class="foto-prev" id="fotoPrev"></div>
-          <div class="foto-btns">
-            <button class="btn-wide" id="btnFoto">Escolher foto</button>
-            <button class="btn-wide" id="btnFotoTirar">Tirar</button>
-          </div>
-        </div>
-
-        <label>Pasta padrão dos painéis novos</label>
-        <div class="path-box" id="defCwd">—</div>
-        <button class="btn-wide" id="btnDefCwd">Escolher</button>
-        <label>Voz</label>
-        <label class="chave"><input type="checkbox" id="chkAtalhosGlobais"><span>Atalho global de ditar (vale com o Cockpit atrás): <span class="mono">⌃⌥Espaço</span></span></label>
-        <p class="hint">Desligado por padrão: um atalho global toma a combinação de todos os outros programas enquanto o Cockpit estiver aberto. Ligado, aperte de onde estiver que a janela vem para a frente e o microfone liga no chat em foco. Comandos falados durante o ditado: “manda”, “cancela”, “apaga isso”, “próximo painel”.</p>
-        <p class="hint hidden" id="atalhosAviso"></p>
+        <section class="aj">
+          <div class="aj-tit">Voz<button class="info" type="button" aria-label="Como funciona" data-dica="Ligado, aperte ⌃⌥Espaço em qualquer programa: o Cockpit vem para a frente e o microfone liga. Enquanto fala, diga “manda” para enviar, “cancela” para parar, “apaga isso” ou “próximo painel”."></button></div>
+          <label class="chave"><input type="checkbox" id="chkAtalhosGlobais"><span>Atalho de voz</span></label>
+          <p class="hint hidden" id="atalhosAviso"></p>
+        </section>
 
         <!-- leva 6: o caminho MUDA entre rodar por npm start (pasta "cockpit") e o app
              instalado (pasta "Cockpit"). Nenhum script pode cravar: é daqui que se copia. -->
-        <div id="inboxBloco">
-          <label>Caixa de entrada</label>
-          <p class="hint">Arquivo <span class="mono">.txt</span>/<span class="mono">.md</span> (áudio já transcrito, recado) ou imagem que cair nesta pasta vira um aviso no topo da tela com o botão “usar”. É por aqui que o celular e os robôs mandam coisa para cá.</p>
+        <section class="aj" id="inboxBloco">
+          <div class="aj-tit">Caixa de entrada<button class="info" type="button" aria-label="Como funciona" data-dica="Texto (.txt ou .md) ou imagem que cair nesta pasta vira um aviso no topo da tela, com o botão “usar”. É por aqui que o celular e os robôs mandam coisas para cá."></button></div>
           <div class="path-box" id="inboxPasta">—</div>
-          <button class="btn-wide" id="btnInboxAbrir">Abrir a pasta</button>
-        </div>
+          <button class="btn-wide" id="btnInboxAbrir">Abrir pasta</button>
+        </section>
 
-        <label>Lista de conversas</label>
-        <label class="chave"><input type="checkbox" id="chkRobos"><span>Mostrar também as conversas dos robôs</span></label>
-        <p class="hint">Desligado, a lista traz só o que você conversou aqui ou no VSCode. Ligado, entram também as do robô do WhatsApp e dos agendados.</p>
+        <section class="aj">
+          <div class="aj-tit">Conversas<button class="info" type="button" aria-label="Como funciona" data-dica="Ligado, a lista mostra também as conversas do robô do WhatsApp e dos robôs agendados. Desligado, mostra só as suas."></button></div>
+          <label class="chave"><input type="checkbox" id="chkRobos"><span>Mostrar robôs</span></label>
+        </section>
 
-        <div class="sep"></div>
-        <p class="hint"><b>Acesso total ligado.</b> Os painéis enxergam o Mac inteiro, não só a pasta escolhida. A pasta serve só como ponto de partida.</p>
-        <p class="hint">Codex usa a sua conta e config do <span class="mono">~/.codex</span>. Claude usa o Claude Code que já está instalado, com suas skills e memória.</p>
-        <div class="sep"></div>
-        <p class="hint mono" id="verLine"></p>
+        <div class="aj-rodape"><span id="verLine">Cockpit</span><button class="info" type="button" aria-label="Sobre" data-dica="Acesso total ligado: os chats enxergam o Mac inteiro. A pasta escolhida é só o ponto de partida. O Codex usa a sua conta dele. O Claude usa o Claude Code já instalado, com suas skills e memória."></button></div>
       </div>
     </div>
   </aside>
