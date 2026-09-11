@@ -277,11 +277,12 @@ function pintarAba(A) {
   $('.aba-proj', A.el).textContent = nomeProjeto(A.cwd);
   $('.aba-tit', A.el).textContent = (naVps ? 'VPS · ' : '') + (n === 0 ? 'sem chat' : (n === 1 ? '1 chat' : n + ' chats'));
   A.el.title = shortPath(A.cwd) + '\n' + (n === 1 ? '1 chat aberto' : n + ' chats abertos');
-  // a bolinha da aba mostra se algum chat dela esta trabalhando
+  // a bolinha da aba mostra se algum chat dela esta trabalhando — inclusive quando só os
+  // agentes em segundo plano seguem rodando e o turno do chat já acabou
   let estado = 'off';
   for (const pid of A.ordem) {
     const P = panes.get(pid); if (!P) continue;
-    if (P.busy) { estado = 'busy'; break; }
+    if (P.busy || agTrabalhando(P)) { estado = 'busy'; break; }
     if (P.started) estado = 'idle';
   }
   $('.aba-dot', A.el).className = 'aba-dot dot ' + estado;
@@ -332,7 +333,7 @@ function ativarAbaProjeto(A) {
 async function fecharAba(A) {
   if (!A) return;
   // mesma regra do chat: fechar a aba inteira com trabalho rodando dentro pergunta antes
-  const ocupados = A.ordem.map(id => panes.get(id)).filter(q => q && q.busy).length;
+  const ocupados = A.ordem.map(id => panes.get(id)).filter(q => q && (q.busy || agTrabalhando(q))).length;
   if (ocupados) {
     const q = ocupados === 1 ? 'um chat desta aba está trabalhando' : ocupados + ' chats desta aba estão trabalhando';
     if (!confirm('Tem ' + q + '.\n\nFechar a aba joga fora o que eles estão fazendo. Fechar mesmo assim?')) return;
@@ -1311,7 +1312,7 @@ async function closePane(id, semPerguntar) {
   const P = panes.get(id); if (!P) return;
   // o quadro branco e dono de um chat: fechar o chat por tras deixaria o desenho orfao
   if (window.Quadro && window.Quadro.aberto && window.Quadro.aberto()) { try { window.Quadro.fechar(); } catch (_) {} }
-  if (P.busy && !semPerguntar) {
+  if ((P.busy || agTrabalhando(P)) && !semPerguntar) {
     const nome = (P.titulo || '').trim().slice(0, 40) || 'este chat';
     if (!confirm('O ' + nomeDoMotor(P.engine) + ' está trabalhando em “' + nome + '”.\n\nFechar agora joga fora o que ele está fazendo. Fechar mesmo assim?')) return;
   }
@@ -3347,6 +3348,7 @@ function receberEventoPane(ev) {
       // para a caixa em vez de sumir.
       if (P.queued) { const q = P.queued; P.queued = null; devolverFilaAoCampo(P, q); }
       escondePerm(P);
+      agMotorCaiu(P);
       setDot(P, 'off'); pararTrabalho(P); limparPassos(P); limparContinuar(P);
       // se o aviso de "esta conversa nao existe mais" acabou de sair, nao repetir outro recado
       // dizendo a mesma coisa com outras palavras
@@ -5240,9 +5242,54 @@ function agentesEvento(P, ev) {
     t.fim = ev.em || Date.now();
     if (ev.resumo) t.resumo = ev.resumo;
     if (ev.uso) t.uso = ev.uso;
+  } else if (ev.ev === 'lista') {
+    /* background_tasks_changed: a lista COMPLETA do que ainda roda em segundo plano (troca, não
+       soma). É ela que diz quando o trabalho acabou de verdade. Entram só agentes e workflows:
+       um servidor ligado em segundo plano (local_bash) não é trabalho e deixaria a aba piscando
+       para sempre; e o CLI marca como `ambient` o que não deve contar como atividade. */
+    const antes = A.vivos ? A.vivos.size : 0;
+    A.vivos = new Set((ev.tarefas || [])
+      .filter(t => t && t.task_id && !t.ambient && AG_TIPO_TRABALHO.test(t.task_type || ''))
+      .map(t => t.task_id));
+    // quando o último termina, o CLI costuma acordar o chat logo em seguida para ler o resultado:
+    // uma folga curta evita a bolinha apagar e acender de novo nesse meio-tempo
+    if (antes && !A.vivos.size) {
+      A.folgaAte = Date.now() + 2500;
+      setTimeout(() => agRepintarAba(P), 2600);
+    }
   }
   pintarBotaoAgentes(P);
+  agRepintarAba(P);
   if (agPaneAberto === P) agAgendarDesenho();
+}
+
+/* A bolinha amarela da aba lá em cima continua piscando enquanto houver agente ou workflow
+   rodando, mesmo depois que o turno do chat acabou (aí o chat em si já não mostra nada). */
+const AG_TIPO_TRABALHO = /agent|workflow|teammate/i;
+const AG_FINAL = new Set(['pronto', 'parado', 'erro', 'failed', 'completed', 'killed', 'stopped']);
+function agTrabalhando(P) {
+  const A = P && P.ag; if (!A) return false;
+  // o Claude manda a lista oficial; o Codex não, então ali vale o estado de cada tarefa
+  if (A.vivos) return A.vivos.size > 0 || Date.now() < (A.folgaAte || 0);
+  for (const t of A.tarefas.values())
+    if (!t.fim && !AG_FINAL.has(t.estado) && AG_TIPO_TRABALHO.test(t.classe || 'agent')) return true;
+  return false;
+}
+// só repinta a aba quando muda de verdade: os avisos de andamento chegam várias vezes por segundo
+function agRepintarAba(P) {
+  const trab = agTrabalhando(P);
+  if (trab === !!P.agTrab) return;
+  P.agTrab = trab;
+  const Ab = abaDe(P); if (Ab) pintarAba(Ab);
+}
+// o motor caiu: o que rodava em segundo plano morreu com ele, então não pode seguir piscando
+function agMotorCaiu(P) {
+  const A = P && P.ag; if (!A) return;
+  for (const t of A.tarefas.values()) if (!t.fim && !AG_FINAL.has(t.estado)) { t.estado = 'parado'; t.fim = Date.now(); }
+  if (A.vivos) A.vivos.clear();
+  A.folgaAte = 0;
+  pintarBotaoAgentes(P);
+  agRepintarAba(P);
 }
 
 // quantos estao trabalhando NESTE momento: e o numero que aparece grudado no botao
