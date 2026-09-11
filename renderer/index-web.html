@@ -56,9 +56,6 @@
     </button>
     <!-- leva 12.4: o terceiro motor. Qualquer agente que fale o Agent Client Protocol
          (Gemini CLI, Qwen, OpenCode, os adaptadores do Zed) entra por este mesmo cano. -->
-    <button class="act ic-acp" data-view="hacp" title="Conversas do ACP (agentes genéricos)">
-      <svg viewBox="0 0 24 24" class="logo-motor" id="svgAcp"></svg>
-    </button>
     <button class="act ic-gemini" data-view="hgemini" title="Conversas do Gemini">
       <svg viewBox="0 0 24 24" class="logo-motor" id="svgGemini"></svg>
     </button>
@@ -111,7 +108,6 @@
       <input class="side-busca" data-busca="acp" placeholder="Buscar conversa…">
       <!-- faixa de grupos de conversa (leva 8): desenhada por pintarAbasGrupo -->
       <div class="grp-abas" data-grupos="acp"></div>
-      <button class="new-chat" data-new="acp"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
       <div class="hist" id="histAcp"></div>
     </div>
     <div class="side-view hidden" data-view="hgemini">
@@ -219,11 +215,19 @@
     <div class="na-motores">
       <button class="na-motor on" data-motor="claude">
         <span class="na-ico" id="naIcClaude"></span>
-        <span class="na-n">Claude Code</span>
+        <span class="na-n">Claude</span>
       </button>
       <button class="na-motor" data-motor="codex">
         <span class="na-ico" id="naIcCodex"></span>
         <span class="na-n">Codex</span>
+      </button>
+      <button class="na-motor" data-motor="gemini">
+        <span class="na-ico" id="naIcGemini"></span>
+        <span class="na-n">Gemini</span>
+      </button>
+      <button class="na-motor" data-motor="grok">
+        <span class="na-ico" id="naIcGrok"></span>
+        <span class="na-n">Grok</span>
       </button>
     </div>
 
@@ -287,10 +291,11 @@
 <template id="tplPane">
   <section class="pane">
     <header class="pane-hd">
-      <div class="p-chave" title="Trocar entre Claude e Codex">
+      <div class="p-chave" role="group" aria-label="Escolher assistente">
         <button class="ch-lado" data-motor="claude"><span></span>Claude</button>
         <button class="ch-lado" data-motor="codex"><span></span>Codex</button>
-        <span class="ch-bolha"></span>
+        <button class="ch-lado" data-motor="gemini"><span></span>Gemini</button>
+        <button class="ch-lado" data-motor="grok"><span></span>Grok</button>
       </div>
       <button class="p-cwd" title="Trocar pasta deste painel"></button>
       <!-- leva 10.4: branch do git desta pasta; some sozinho fora de repositório -->

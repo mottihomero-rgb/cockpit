@@ -25,7 +25,17 @@ const LOGO = {
 // leva 12: plugue do ACP (protocolo aberto, sem marca de ninguém): dois pinos, corpo e cabo
 LOGO.acp = 'M9 2h2v5h2V2h2v5h2a1 1 0 0 1 1 1v3a6 6 0 0 1-5 5.92V22h-2v-5.08A6 6 0 0 1 6 11V8a1 1 0 0 1 1-1h2V2z';
 
-Object.assign(LOGO, { gemini: 'M12 1C11 8 8 11 1 12c7 1 10 4 11 11 1-7 4-10 11-11C16 11 13 8 12 1z', grok: 'M5 3h4l10 18h-4L5 3zm12 0h3L7 21H4L17 3z' });
+// Vetores oficiais, guardados em renderer/logos/. Sem buscar imagens pela rede.
+const LOGOS_MARCA = {
+  "gemini": {
+    "viewBox": "0 0 65 65",
+    "conteudo": "<path d=\"M57.8647 29.0109C52.865 26.8587 48.4905 23.9061 44.7393 20.1567C40.99 16.4074 38.0373 12.031 35.8851 7.03132C35.0589 5.11516 34.395 3.14552 33.886 1.12608C33.72 0.465846 33.128 0.00109863 32.4475 0.00109863C31.7669 0.00109863 31.1749 0.465846 31.009 1.12608C30.4999 3.14552 29.836 5.11332 29.0098 7.03132C26.8576 12.031 23.905 16.4074 20.1556 20.1567C16.4063 23.9061 12.0299 26.8587 7.03022 29.0109C5.11406 29.8371 3.14442 30.501 1.12498 31.0101C0.464747 31.176 0 31.768 0 32.4486C0 33.1291 0.464747 33.7211 1.12498 33.8871C3.14442 34.3961 5.11222 35.06 7.03022 35.8862C12.0299 38.0384 16.4045 40.9911 20.1556 44.7404C23.9068 48.4897 26.8576 52.8661 29.0098 57.8658C29.836 59.782 30.4999 61.7516 31.009 63.771C31.1749 64.4313 31.7669 64.896 32.4475 64.896C33.128 64.896 33.72 64.4313 33.886 63.771C34.395 61.7516 35.0589 59.7838 35.8851 57.8658C38.0373 52.8661 40.99 48.4916 44.7393 44.7404C48.4886 40.9911 52.865 38.0384 57.8647 35.8862C59.7809 35.06 61.7505 34.3961 63.7699 33.8871C64.4302 33.7211 64.8949 33.1291 64.8949 32.4486C64.8949 31.768 64.4302 31.176 63.7699 31.0101C61.7505 30.501 59.7827 29.8371 57.8647 29.0109Z\" fill=\"white\" /><mask id=\"cockpit-gemini-mask0_10859_4895\" style=\"mask-type:alpha\" maskUnits=\"userSpaceOnUse\" x=\"0\" y=\"0\" width=\"65\" height=\"65\"><path d=\"M32.4473 0C33.1278 0 33.7197 0.464783 33.8857 1.125C34.3947 3.14441 35.0586 5.11414 35.8848 7.03027C38.0369 12.0299 40.99 16.406 44.7393 20.1553C48.4903 23.9045 52.8647 26.8576 57.8643 29.0098C59.7821 29.8359 61.7502 30.4998 63.7695 31.0088C64.4297 31.1748 64.8944 31.7668 64.8945 32.4473C64.8945 33.1278 64.4298 33.7198 63.7695 33.8857C61.7502 34.3947 59.7803 35.0586 57.8643 35.8848C52.8646 38.037 48.4885 40.99 44.7393 44.7393C40.99 48.4904 38.037 52.8646 35.8848 57.8643C35.0586 59.7822 34.3947 61.7502 33.8857 63.7695C33.7198 64.4298 33.1278 64.8945 32.4473 64.8945C31.7668 64.8944 31.1748 64.4297 31.0088 63.7695C30.4998 61.7502 29.8359 59.7803 29.0098 57.8643C26.8576 52.8647 23.9063 48.4885 20.1553 44.7393C16.4041 40.99 12.0299 38.0369 7.03027 35.8848C5.1123 35.0586 3.14441 34.3947 1.125 33.8857C0.464783 33.7197 0 33.1278 0 32.4473C8.67651e-05 31.7668 0.464826 31.1748 1.125 31.0088C3.14442 30.4998 5.11413 29.836 7.03027 29.0098C12.03 26.8575 16.406 23.9046 20.1553 20.1553C23.9046 16.406 26.8575 12.03 29.0098 7.03027C29.836 5.11229 30.4998 3.14442 31.0088 1.125C31.1748 0.464826 31.7668 8.67651e-05 32.4473 0Z\" fill=\"black\" /><path d=\"M32.4473 0C33.1278 0 33.7197 0.464783 33.8857 1.125C34.3947 3.14441 35.0586 5.11414 35.8848 7.03027C38.0369 12.0299 40.99 16.406 44.7393 20.1553C48.4903 23.9045 52.8647 26.8576 57.8643 29.0098C59.7821 29.8359 61.7502 30.4998 63.7695 31.0088C64.4297 31.1748 64.8944 31.7668 64.8945 32.4473C64.8945 33.1278 64.4298 33.7198 63.7695 33.8857C61.7502 34.3947 59.7803 35.0586 57.8643 35.8848C52.8646 38.037 48.4885 40.99 44.7393 44.7393C40.99 48.4904 38.037 52.8646 35.8848 57.8643C35.0586 59.7822 34.3947 61.7502 33.8857 63.7695C33.7198 64.4298 33.1278 64.8945 32.4473 64.8945C31.7668 64.8944 31.1748 64.4297 31.0088 63.7695C30.4998 61.7502 29.8359 59.7803 29.0098 57.8643C26.8576 52.8647 23.9063 48.4885 20.1553 44.7393C16.4041 40.99 12.0299 38.0369 7.03027 35.8848C5.1123 35.0586 3.14441 34.3947 1.125 33.8857C0.464783 33.7197 0 33.1278 0 32.4473C8.67651e-05 31.7668 0.464826 31.1748 1.125 31.0088C3.14442 30.4998 5.11413 29.836 7.03027 29.0098C12.03 26.8575 16.406 23.9046 20.1553 20.1553C23.9046 16.406 26.8575 12.03 29.0098 7.03027C29.836 5.11229 30.4998 3.14442 31.0088 1.125C31.1748 0.464826 31.7668 8.67651e-05 32.4473 0Z\" fill=\"url(#cockpit-gemini-paint0_linear_10859_4895)\" /></mask><g mask=\"url(#cockpit-gemini-mask0_10859_4895)\"><g filter=\"url(#cockpit-gemini-filter0_f_10859_4895)\"><ellipse cx=\"14.4072\" cy=\"16.9504\" rx=\"14.4072\" ry=\"16.9504\" transform=\"matrix(0.942341 0.334654 -0.334652 0.942342 -8.09058 13.9664)\" fill=\"#FFE432\" /></g><g filter=\"url(#cockpit-gemini-filter1_f_10859_4895)\"><ellipse cx=\"27.4329\" cy=\"2.5869\" rx=\"18.6516\" ry=\"19.0617\" fill=\"#FC413D\" /></g><g filter=\"url(#cockpit-gemini-filter2_f_10859_4895)\"><ellipse cx=\"18.9512\" cy=\"57.3856\" rx=\"19.4934\" ry=\"25.2529\" transform=\"rotate(-2.79865 18.9512 57.3856)\" fill=\"#00B95C\" /></g><g filter=\"url(#cockpit-gemini-filter3_f_10859_4895)\"><ellipse cx=\"18.9512\" cy=\"57.3856\" rx=\"19.4934\" ry=\"25.2529\" transform=\"rotate(-2.79865 18.9512 57.3856)\" fill=\"#00B95C\" /></g><g filter=\"url(#cockpit-gemini-filter4_f_10859_4895)\"><ellipse cx=\"20.0204\" cy=\"56.2114\" rx=\"19.1065\" ry=\"21.0345\" transform=\"rotate(-31.3178 20.0204 56.2114)\" fill=\"#00B95C\" /></g><g filter=\"url(#cockpit-gemini-filter5_f_10859_4895)\"><ellipse cx=\"67.391\" cy=\"25.3267\" rx=\"18.3463\" ry=\"17.6668\" fill=\"#3186FF\" /></g><g filter=\"url(#cockpit-gemini-filter6_f_10859_4895)\"><ellipse cx=\"21.222\" cy=\"22.3842\" rx=\"21.222\" ry=\"22.3842\" transform=\"matrix(0.795985 0.605316 -0.605314 0.795987 -2.85815 -7.53723)\" fill=\"#FBBC04\" /></g><g filter=\"url(#cockpit-gemini-filter7_f_10859_4895)\"><ellipse cx=\"24.4687\" cy=\"22.6039\" rx=\"24.4687\" ry=\"22.6039\" transform=\"matrix(0.824033 0.566542 -0.566539 0.824035 40.1882 0.315002)\" fill=\"#3186FF\" /></g><g filter=\"url(#cockpit-gemini-filter8_f_10859_4895)\"><path d=\"M54.9838 -2.33625C57.8168 1.51558 54.1765 9.00477 46.8529 14.3913C39.5293 19.7779 31.2957 21.022 28.4627 17.1702C25.6296 13.3184 29.27 5.82919 36.5935 0.442635C43.9171 -4.94392 52.1507 -6.18807 54.9838 -2.33625Z\" fill=\"#749BFF\" /></g><g filter=\"url(#cockpit-gemini-filter9_f_10859_4895)\"><ellipse cx=\"19.9023\" cy=\"3.35597\" rx=\"27.9712\" ry=\"17.3877\" transform=\"rotate(-42.848 19.9023 3.35597)\" fill=\"#FC413D\" /></g><g filter=\"url(#cockpit-gemini-filter10_f_10859_4895)\"><ellipse cx=\"13.5831\" cy=\"46.7501\" rx=\"14.9887\" ry=\"8.71667\" transform=\"rotate(35.592 13.5831 46.7501)\" fill=\"#FFEE48\" /></g></g><defs><filter id=\"cockpit-gemini-filter0_f_10859_4895\" x=\"-19.8236\" y=\"13.1523\" width=\"39.2739\" height=\"43.2171\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"2.45965\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter1_f_10859_4895\" x=\"-15.001\" y=\"-40.257\" width=\"84.8677\" height=\"85.6878\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"11.8911\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter2_f_10859_4895\" x=\"-20.7758\" y=\"11.9273\" width=\"79.454\" height=\"90.9166\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"10.1086\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter3_f_10859_4895\" x=\"-20.7758\" y=\"11.9273\" width=\"79.454\" height=\"90.9166\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"10.1086\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter4_f_10859_4895\" x=\"-19.8449\" y=\"15.459\" width=\"79.7306\" height=\"81.5048\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"10.1086\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter5_f_10859_4895\" x=\"29.8324\" y=\"-11.5524\" width=\"75.1172\" height=\"73.7582\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"9.60613\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter6_f_10859_4895\" x=\"-38.5827\" y=\"-16.2526\" width=\"78.1352\" height=\"78.7578\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"8.70591\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter7_f_10859_4895\" x=\"8.1068\" y=\"-5.96578\" width=\"78.877\" height=\"77.5394\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"7.77473\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter8_f_10859_4895\" x=\"13.5873\" y=\"-18.4881\" width=\"56.2718\" height=\"51.8102\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"6.95694\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter9_f_10859_4895\" x=\"-15.5259\" y=\"-31.297\" width=\"70.8565\" height=\"69.3059\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"5.87598\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><filter id=\"cockpit-gemini-filter10_f_10859_4895\" x=\"-14.1676\" y=\"20.9644\" width=\"55.5015\" height=\"51.5714\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\"><feFlood flood-opacity=\"0\" result=\"BackgroundImageFix\" /><feBlend mode=\"normal\" in=\"SourceGraphic\" in2=\"BackgroundImageFix\" result=\"shape\" /><feGaussianBlur stdDeviation=\"7.27253\" result=\"effect1_foregroundBlur_10859_4895\" /></filter><linearGradient id=\"cockpit-gemini-paint0_linear_10859_4895\" x1=\"18.4474\" y1=\"43.4202\" x2=\"52.1528\" y2=\"15.0035\" gradientUnits=\"userSpaceOnUse\"><stop stop-color=\"#4893FC\" /><stop offset=\"0.27\" stop-color=\"#4893FC\" /><stop offset=\"0.776981\" stop-color=\"#969DFF\" /><stop offset=\"1\" stop-color=\"#BD99FE\" /></linearGradient></defs>"
+  },
+  "grok": {
+    "viewBox": "56 56 400 400",
+    "conteudo": "<path d=\"M210.484 312.759L343.465 210.383C349.984 205.364 359.302 207.322 362.408 215.117C378.758 256.231 371.454 305.64 338.925 339.563C306.397 373.487 261.137 380.927 219.768 363.983L174.577 385.803C239.394 432.008 318.104 420.581 367.289 369.251C406.303 328.564 418.386 273.104 407.088 223.091L407.19 223.198C390.807 149.726 411.218 120.359 453.03 60.3072C454.02 58.8833 455.01 57.4595 456 56L400.978 113.382V113.204L210.45 312.794\" /><path d=\"M183.042 337.641C136.519 291.294 144.54 219.567 184.236 178.203C213.59 147.59 261.683 135.096 303.666 153.464L348.755 131.75C340.632 125.627 330.221 119.042 318.275 114.414C264.277 91.2407 199.63 102.774 155.735 148.516C113.513 192.549 100.236 260.254 123.036 318.027C140.069 361.206 112.148 391.748 84.0229 422.575C74.0561 433.503 64.0553 444.431 56 456L183.007 337.677\" />"
+  }
+};
 const ICONES = {"hand": "<path d=\"M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2\" /> <path d=\"M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2\" /> <path d=\"M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8\" /> <path d=\"M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15\" />", "code-xml": "<path d=\"m18 16 4-4-4-4\" /> <path d=\"m6 8-4 4 4 4\" /> <path d=\"m14.5 4-5 16\" />", "clipboard-list": "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /> <path d=\"M12 11h4\" /> <path d=\"M12 16h4\" /> <path d=\"M8 11h.01\" /> <path d=\"M8 16h.01\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "unlock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 9.9-1\" />", "upload": "<path d=\"M12 3v12\" /> <path d=\"m17 8-5-5-5 5\" /> <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "folder": "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "eraser": "<path d=\"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21\" /> <path d=\"m5.082 11.09 8.828 8.828\" />", "sparkles": "<path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\" /> <path d=\"M20 2v4\" /> <path d=\"M22 4h-4\" /> <circle cx=\"4\" cy=\"20\" r=\"2\" />", "brain": "<path d=\"M12 18V5\" /> <path d=\"M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4\" /> <path d=\"M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5\" /> <path d=\"M17.997 5.125a4 4 0 0 1 2.526 5.77\" /> <path d=\"M18 18a4 4 0 0 0 2-7.464\" /> <path d=\"M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517\" /> <path d=\"M6 18a4 4 0 0 1-2-7.464\" /> <path d=\"M6.003 5.125a4 4 0 0 0-2.526 5.77\" />", "sliders-horizontal": "<path d=\"M10 5H3\" /> <path d=\"M12 19H3\" /> <path d=\"M14 3v4\" /> <path d=\"M16 17v4\" /> <path d=\"M21 12h-9\" /> <path d=\"M21 19h-5\" /> <path d=\"M21 5h-7\" /> <path d=\"M8 10v4\" /> <path d=\"M8 12H3\" />", "lock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />", "arrow-left-right": "<path d=\"M8 3 4 7l4 4\" /> <path d=\"M4 7h16\" /> <path d=\"m16 21 4-4-4-4\" /> <path d=\"M20 17H4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "plug": "<path d=\"M12 22v-5\" /> <path d=\"M15 8V2\" /> <path d=\"M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z\" /> <path d=\"M9 8V2\" />", "key-round": "<path d=\"M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z\" /> <circle cx=\"16.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "log-out": "<path d=\"m16 17 5-5-5-5\" /> <path d=\"M21 12H9\" /> <path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "file-code": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 12.5 8 15l2 2.5\" /> <path d=\"m14 12.5 2 2.5-2 2.5\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "braces": "<path d=\"M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1\" /> <path d=\"M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1\" />", "terminal": "<path d=\"M12 19h8\" /> <path d=\"m4 17 6-6-6-6\" />", "file": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" />", "refresh-cw": "<path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" /> <path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\" /> <path d=\"M8 16H3v5\" />", "circle-help": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\" /> <path d=\"M12 17h.01\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "panel-left": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" /> <path d=\"M9 3v18\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "arrow-up": "<path d=\"m5 12 7-7 7 7\" /> <path d=\"M12 19V5\" />", "square": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" />", "rotate-cw": "<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" />", "circle": "<circle cx=\"12\" cy=\"12\" r=\"10\" />", "minus": "<path d=\"M5 12h14\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "search": "<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />", "server": "<rect width=\"20\" height=\"8\" x=\"2\" y=\"2\" rx=\"2\" /> <rect width=\"20\" height=\"8\" x=\"2\" y=\"14\" rx=\"2\" /> <path d=\"M6 6h.01\" /> <path d=\"M6 18h.01\" />", "star": "<path d=\"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z\" />"};
 /* icones que faltavam para as coisas novas (copiar, ditar, mandar nos dois, guardar no vault) */
 Object.assign(ICONES, {
@@ -48,15 +58,24 @@ Object.assign(ICONES, {
   'camera': '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /> <circle cx="12" cy="13" r="3" />',
 });
 const ico = (n) => '<svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + (ICONES[n] || '') + '</svg>';
-/* [EDITA leva 12.4] `LOGO[eng] || LOGO.claude`: dá no MESMO para claude e codex, e abre lugar
-   para o terceiro motor. Sem isto o painel do ACP desenharia o logo do Claude. */
-const svgMotor = (eng) => '<svg viewBox="0 0 24 24" class="logo-motor"><path d="' + (LOGO[eng] || LOGO.claude) + '"/></svg>';
+let logoMotorSeq = 0;
+function conteudoLogoMotor(eng) {
+  const marca = LOGOS_MARCA[eng];
+  // Máscaras e filtros do Gemini precisam de IDs únicos em cada lugar da tela.
+  return marca ? marca.conteudo.replaceAll('cockpit-gemini-', 'cockpit-gemini-' + (++logoMotorSeq) + '-')
+    : '<path d="' + (LOGO[eng] || LOGO.claude) + '"/>';
+}
+const svgMotor = (eng) => '<svg viewBox="' + (LOGOS_MARCA[eng]?.viewBox || '0 0 24 24')
+  + '" class="logo-motor" aria-hidden="true">' + conteudoLogoMotor(eng) + '</svg>';
 /* leva 12.4: um lugar só para o nome e para a caixa lateral de cada motor. Antes cada ponto
    escrevia à mão `engine === 'claude' ? '#histClaude' : '#histCodex'` — ou seja, QUALQUER motor
    que não fosse o Claude escrevia na coluna do Codex, e o ACP APAGARIA a lista do Codex. */
 const NOME_MOTOR = { claude: 'Claude', codex: 'Codex', acp: 'ACP', gemini: 'Gemini', grok: 'Grok' };
 const nomeDoMotor = (eng) => NOME_MOTOR[eng] || 'Claude';
 const MOTORES = ['claude', 'codex', 'acp', 'gemini', 'grok'];
+// ACP continua no histórico antigo; as escolhas novas são marcas, não protocolos.
+const MOTORES_VISIVEIS = ['claude', 'codex', 'gemini', 'grok'];
+const motorVisivel = (eng) => MOTORES_VISIVEIS.includes(eng) ? eng : 'codex';
 const CAIXA_MOTOR = { claude: 'Claude', codex: 'Codex', acp: 'Acp', gemini: 'Gemini', grok: 'Grok' };
 const caixaHist = (eng) => document.getElementById('hist' + (CAIXA_MOTOR[eng] || 'Claude'));
 /* estado guardado por motor: nascendo com os três, um "++" numa chave que não existe deixa de
@@ -640,7 +659,7 @@ function newPane(opts = {}) {
     larguraColuna: Math.max(0, Math.min(2400, Number(opts.larguraColuna) || 0)),
     pesoAltura: Math.max(.1, Math.min(10, Number(opts.pesoAltura) || 1)),
     plano: normalizarPlano(opts.plano), planoAberto: opts.planoAberto !== false,
-    engine: opts.engine || cfg.lastEngine || 'codex',
+    engine: opts.engine || motorVisivel(cfg.lastEngine),
     cwd: opts.cwd || A.cwd,                // a pasta e a da aba
     model: opts.model || '',
     started: false, busy: false, queued: null, filaMsgs: [], hist: [], passarContexto: null,
@@ -659,7 +678,7 @@ function newPane(opts = {}) {
   panes.set(id, P);
   observarAlturaPainel(P);
 
-  // interruptor Claude / Codex
+  // Os quatro assistentes ficam disponíveis em qualquer painel.
   $$('.ch-lado', el).forEach(bt => {
     $('span', bt).innerHTML = svgMotor(bt.dataset.motor);
     bt.addEventListener('click', () => trocarMotor(P, bt.dataset.motor));
@@ -1096,10 +1115,34 @@ async function restaurarAbasCorpo(salvas) {
   return true;
 }
 
+function motorIndisponivelNaPasta(engine, cwd) {
+  return engine === 'gemini' && NA_VPS(cwd)
+    ? 'O Gemini está disponível neste Mac. Escolha uma pasta do Mac para usar o Gemini.' : '';
+}
+function avisarInstalacaoMotor(P) {
+  if (!NA_VPS(P.cwd) && ['gemini', 'grok'].includes(P.engine) && MOTORES_OK?.[P.engine] === false) {
+    note(P, nomeDoMotor(P.engine) + ' ainda não está instalado neste Mac. Instale o programa e entre na conta pelo terminal para usar este chat.', true);
+  }
+}
+function menuMotores(P) {
+  const m = novoMenu(P);
+  m.appendChild(tituloPopup('Escolher assistente'));
+  for (const engine of MOTORES_VISIVEIS) {
+    const item = elItem({ nome: nomeDoMotor(engine), on: P.engine === engine,
+      desc: motorIndisponivelNaPasta(engine, P.cwd) }, () => trocarMotor(P, engine));
+    $('.mi-ic', item).innerHTML = svgMotor(engine);
+    m.appendChild(item);
+  }
+}
+
 async function trocarMotor(P, novo) {
   // P.trocando trava o clique repetido: sem ele, clicar rapido nos dois lados fazia o segundo
   // clique ser engolido em silencio, e uma mensagem enviada nesse meio-tempo subia o motor errado.
-  if (novo === P.engine || P.trocando) return;
+  if (!MOTORES_VISIVEIS.includes(novo) || novo === P.engine || P.trocando) return;
+  if (motorIndisponivelNaPasta(novo, P.cwd)) {
+    avisoTemp(P, motorIndisponivelNaPasta(novo, P.cwd), true);
+    return;
+  }
   // trocar de motor reinicia o chat: o microfone não pode ficar ditando por cima da troca
   vozSoltar(P);
   const antigo = nomeDoMotor(P.engine);   // [EDITA 12.4] mesma coisa nos dois de sempre; o ACP deixa de virar "Claude"
@@ -1114,6 +1157,8 @@ async function trocarMotor(P, novo) {
   // motores vem pelo contexto montado logo abaixo, nao pelo id do motor antigo.
   limparPlano(P); limparSugestoes(P);
   P.engine = novo; P.started = false; P.model = '';
+  // Modelos e comandos anunciados pelo agente antigo não pertencem ao próximo motor.
+  P.acpInfo = null; P.acpComandos = []; P.acpModo = '';
   P.effectiveSettings = null; P.settingsPending = false;
   P.collaborationMode = estavaPlanejando ? 'plan' : 'default';
   if (novo === 'codex' && P.mode === 'plan') P.mode = 'manual';
@@ -1139,7 +1184,8 @@ async function trocarMotor(P, novo) {
     // mudou, ele confia e escreve na hora; se estas duas linhas ficassem depois, a primeira
     // mensagem saia sem a conversa anterior e a seguinte levava tudo colado, fora de hora.
     if (P.hist.length) P.passarContexto = montarContexto(P);
-    marcaTroca(P, antigo, novo === 'codex' ? 'Codex' : 'Claude');
+    marcaTroca(P, antigo, nomeDoMotor(novo));
+    avisarInstalacaoMotor(P);
     try { await window.api.paneStop({ paneId: P.id, engine: velho }); } catch {}
   } finally {
     P.trocando = false;
@@ -1204,7 +1250,14 @@ function fillModels(P) {
   $('.p-model', P.el).innerHTML = ico('brain') + '<span>' + modeloAtual(P).nome + '</span>';
   pintarControlesCodex(P);
 }
-function posicionarChave() {}   // o destaque do lado ativo é só CSS
+function posicionarChave(P) {
+  const faixa = $('.p-chave', P.el);
+  const ativo = $('.ch-lado[data-motor="' + P.engine + '"]', faixa);
+  if (!ativo || !faixa.clientWidth) return;
+  const f = faixa.getBoundingClientRect(), a = ativo.getBoundingClientRect();
+  if (a.left < f.left) faixa.scrollLeft -= f.left - a.left;
+  else if (a.right > f.right) faixa.scrollLeft += a.right - f.right;
+}
 
 function paintEngine(P) {
   const vazio = $('.pe-logo', P.el);
@@ -1212,14 +1265,15 @@ function paintEngine(P) {
   posicionarChave(P);
   P.el.classList.toggle('eng-codex', P.engine === 'codex');
   P.el.classList.toggle('eng-claude', P.engine === 'claude');
-  // leva 12.4: a paleta do terceiro motor, e o interruptor de 2 lados some por CSS neste painel
+  // O protocolo ACP permanece apenas nas sessões antigas.
   P.el.classList.toggle('eng-acp', P.engine === 'acp');
   for (const e of ['gemini', 'grok']) P.el.classList.toggle('eng-' + e, P.engine === e);
   let etiqueta = $('.motor-extra', P.el);
-  if (['acp', 'gemini', 'grok'].includes(P.engine)) {
-    if (!etiqueta) { etiqueta = document.createElement('span'); etiqueta.className = 'motor-extra'; $('.pane-hd', P.el).prepend(etiqueta); }
+  if (P.engine === 'acp') {
+    if (!etiqueta) { etiqueta = document.createElement('span'); etiqueta.className = 'motor-extra'; $('.p-chave', P.el).after(etiqueta); }
     etiqueta.textContent = nomeDoMotor(P.engine);
   } else if (etiqueta) etiqueta.remove();
+  $$('.ch-lado', P.el).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.motor === P.engine)));
   pintarControlesCodex(P);
 }
 function setFocus(P) {
@@ -4400,7 +4454,7 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Modelo', ic: 'brain', nome: 'Trocar modelo…', tag: modeloAtual(P).nome, act: () => menuModelos(P) },
     { sec: 'Modelo', ic: 'sliders-horizontal', nome: 'Esforço', tag: EF_PT[P.effort] || P.effort, act: () => menuModelos(P) },
     { sec: 'Modelo', ic: 'lock', nome: 'Modos de permissão', tag: modoDe(P).nome, act: () => menuModos(P) },
-    { sec: 'Modelo', ic: 'arrow-left-right', nome: 'Trocar de motor', tag: nomeDoMotor(P.engine), desc: 'continua a mesma conversa com o outro', act: () => trocarMotor(P, P.engine === 'codex' ? 'claude' : 'codex') },
+    { sec: 'Modelo', ic: 'arrow-left-right', nome: 'Trocar de motor', tag: nomeDoMotor(P.engine), desc: 'escolher Claude, Codex, Gemini ou Grok', act: () => menuMotores(P) },
     // Eram cinco linhas aqui (trocar conta, entrar com codigo, logout, conta, ver conta) e as
     // cinco levavam ao mesmo lugar. Ficou UMA: a janela da conta ja tem todos esses botoes.
     { sec: 'Conta', ic: 'user', nome: 'conta', desc: 'quem está entrado, limite de uso, trocar ou sair' + (NA_VPS(P.cwd) ? ' · na VPS' : ''), act: () => janelaConta(P) },
@@ -7243,6 +7297,9 @@ async function openSession(s, el) {
 }
 
 async function novaConversa(engine) {
+  engine = motorVisivel(engine);
+  const motivo = motorIndisponivelNaPasta(engine, abaAtiva?.cwd || focusPane?.cwd);
+  if (motivo) { if (focusPane) avisoTemp(focusPane, motivo, true); return; }
   const P = panes.size < 12 ? novoChatNaAba(engine) : focusPane;
   if (!P) return;
   document.body.classList.remove('gaveta');   // no celular, sai da lista e mostra a conversa nova
@@ -7257,19 +7314,7 @@ async function novaConversa(engine) {
   P.effectiveSettings = null; P.settingsPending = false;
   P.blocks.clear(); P.tools.clear(); voltarVazio(P); pintarNome(P);
   fillModels(P); paintEngine(P); setDot(P, 'off'); setFocus(P);
-  /* leva 12.5: honestidade na hora certa. Sem nenhum agente ACP nesta máquina o painel nascia
-     bonito e só falhava depois de ele escrever a primeira mensagem. R4: com `true`, aparece. */
-  if (engine === 'acp') {
-    // já nasce no agente que EXISTE aqui, em vez de no preset que falharia
-    const bom = melhorAgenteAcp();
-    if (bom && bom !== P.model) { P.model = bom; fillModels(P); }
-    if (MOTORES_OK && !MOTORES_OK.acp) {
-      note(P, 'Nenhum agente ACP está instalado neste Mac. Instale um (ex.: npm i -g @google/gemini-cli) e este painel passa a funcionar sem mais nada.', true);
-    }
-  }
-  if (['gemini', 'grok'].includes(engine) && MOTORES_OK && !MOTORES_OK[engine]) {
-    note(P, nomeDoMotor(engine) + ' ainda não está instalado neste Mac. Instale o programa e entre na conta pelo terminal para usar este chat.', true);
-  }
+  avisarInstalacaoMotor(P);
   marcarAbertas();          // a conversa que estava aqui deixou de estar aberta
   $('.p-input', P.el).focus();
 }
@@ -7486,7 +7531,7 @@ const naEstado = { motor: 'claude', pasta: '', onde: 'mac' };
 
 function telaNovaAba(obrigatoria) {
   const el = $('#novaAba');
-  naEstado.motor = (cfg.lastEngine === 'codex') ? 'codex' : 'claude';
+  naEstado.motor = motorVisivel(cfg.lastEngine);
   naEstado.pasta = '';
   naEstado.onde = 'mac';
   naPintar();
@@ -7503,17 +7548,19 @@ function fecharNovaAba() {
 
 function naPintar() {
   const naVps = naEstado.onde === 'vps';
+  const motivo = motorIndisponivelNaPasta(naEstado.motor, naVps ? 'vps:/' : '');
+  $('#naOk').disabled = !!motivo;
   $$('.na-motor').forEach(b => b.classList.toggle('on', b.dataset.motor === naEstado.motor));
   $$('.na-onde').forEach(b => b.classList.toggle('on', b.dataset.onde === naEstado.onde));
   $('#naPasta').classList.toggle('hidden', naVps);
   $('#naRemoto').classList.toggle('hidden', !naVps);
   $('#naEscolhida').classList.toggle('hidden', naVps || !naEstado.pasta);
   $('#naPastaNome').textContent = naEstado.pasta ? shortPath(naEstado.pasta) : '';
-  $('#naDica').textContent = naVps
+  $('#naDica').textContent = motivo || (naVps
     ? 'Ele roda dentro da VPS, na conta e no disco de lá.'
     : (naEstado.pasta
         ? 'Ele começa dentro dessa pasta, mas continua enxergando o Mac inteiro.'
-        : 'Sem pasta escolhida, ele abre no Mac inteiro.');
+        : 'Sem pasta escolhida, ele abre no Mac inteiro.'));
   $('#naDois').classList.toggle('hidden', false);
   $('.na-cx').style.setProperty('--accent', 'var(--' + naEstado.motor + ')');
 }
@@ -7532,6 +7579,7 @@ function naPintarAtalhos() {
 }
 
 function naConfirmar(dois) {
+  if (!dois && motorIndisponivelNaPasta(naEstado.motor, naEstado.onde === 'vps' ? 'vps:/' : '')) { naPintar(); return; }
   let cwd;
   if (naEstado.onde === 'vps') {
     const p = ($('#naCaminho').value || '').trim() || '/opt/adsure';
@@ -7550,6 +7598,7 @@ function naConfirmar(dois) {
     return;
   }
   const P = newPane({ engine: naEstado.motor, aba: A });
+  avisarInstalacaoMotor(P);
   cfg.lastEngine = naEstado.motor; window.api.setConfig(cfg);
   setTimeout(() => $('.p-input', P.el).focus(), 80);
 }
@@ -7561,7 +7610,11 @@ function novoChatNaAba(engine) {
     if (focusPane) avisoTemp(focusPane, 'Já são 12 chats abertos. Feche um para abrir outro.', true);
     return;
   }
-  const P = newPane({ engine: engine || (focusPane && focusPane.engine) || cfg.lastEngine || 'claude', aba: abaAtiva });
+  engine = motorVisivel(engine || (focusPane && focusPane.engine) || cfg.lastEngine);
+  const motivo = motorIndisponivelNaPasta(engine, abaAtiva.cwd);
+  if (motivo) { if (focusPane) avisoTemp(focusPane, motivo, true); return; }
+  const P = newPane({ engine, aba: abaAtiva });
+  avisarInstalacaoMotor(P);
   igualarChats();
   setTimeout(() => $('.p-input', P.el).focus(), 60);
   return P;
@@ -8324,7 +8377,7 @@ function abrirVistaLateral(v) {
    Nao passa pelo clique do icone de proposito: aquele caminho repinta a conta com
    forcar=true, e um "auth status" novo a cada aperto de ⌘P e lento e sem motivo. */
 function abrirBuscaDeConversa() {
-  const eng = (focusPane && focusPane.engine === 'codex') ? 'codex' : 'claude';
+  const eng = focusPane ? focusPane.engine : motorVisivel(cfg.lastEngine);
   const v = 'h' + eng;
   $('#sidebar').classList.remove('hidden'); $('#dragbar').classList.remove('hidden');
   $$('.side-view').forEach(x => x.classList.toggle('hidden', x.dataset.view !== v));
@@ -8714,11 +8767,13 @@ document.addEventListener('keydown', (e) => {
 
 /* ============ boot ============ */
 (async function boot() {
-  $('#svgClaude').innerHTML = '<path d="' + LOGO.claude + '"/>';
-  $('#svgCodex').innerHTML = '<path d="' + LOGO.codex + '"/>';
-  // leva 12.4: o plugue do ACP na barrinha da esquerda (guardado: o HTML antigo não o tem)
-  for (const e of ['gemini', 'grok']) { const svg = document.getElementById('svg' + CAIXA_MOTOR[e]); if (svg) svg.innerHTML = '<path d="' + LOGO[e] + '"/>'; }
-  if ($('#svgAcp')) $('#svgAcp').innerHTML = '<path d="' + LOGO.acp + '"/>';
+  for (const engine of MOTORES) {
+    const svg = document.getElementById('svg' + CAIXA_MOTOR[engine]);
+    if (!svg) continue;
+    svg.setAttribute('viewBox', LOGOS_MARCA[engine]?.viewBox || '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.innerHTML = conteudoLogoMotor(engine);
+  }
   HOME = await window.api.home();
   cfg = await window.api.getConfig();
   cfg.defCwd = cfg.defCwd || HOME;
@@ -8785,8 +8840,7 @@ document.addEventListener('keydown', (e) => {
     pintarAstra();
   });
   // icones da tela de conversa nova
-  $('#naIcClaude').innerHTML = svgMotor('claude');
-  $('#naIcCodex').innerHTML = svgMotor('codex');
+  for (const eng of MOTORES_VISIVEIS) $('#naIc' + CAIXA_MOTOR[eng]).innerHTML = svgMotor(eng);
   $('#naDoisA').innerHTML = svgMotor('claude');
   $('#naDoisB').innerHTML = svgMotor('codex');
   $('.na-pasta-ic').innerHTML = ico('folder-open');

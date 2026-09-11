@@ -158,13 +158,9 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .pane.focus{background:var(--bg-foco)}
 .pane.eng-codex{--accent:var(--codex)}
 .pane.eng-claude{--accent:var(--claude)}
-/* leva 12.4: o terceiro motor. O interruptor da cabeceira tem DOIS lados (Claude e Codex);
-   num painel ACP nenhum dos dois e o motor de verdade, entao ele some por CSS em vez de
-   virar um terceiro lado — a saida do painel ACP e o "Trocar de motor" dentro do cerebro. */
 .pane.eng-acp{--accent:var(--acp)}
-.pane.eng-acp .p-chave{display:none}
 
-.pane-hd{height:34px;flex:none;display:flex;align-items:center;gap:7px;padding:0 8px;
+.pane-hd{height:auto;min-height:34px;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:3px 7px;padding:5px 8px;
   background:var(--bg3);border-bottom:1px solid var(--line);font-size:11.5px}
 .pane.focus .pane-hd{background:var(--bg4)}
 .p-engine{color:var(--accent);font-weight:600;font-size:11.5px;padding:2px 3px;border-radius:4px}
@@ -174,12 +170,12 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .p-cwd{color:var(--fg-dim);font:11px var(--mono);padding:2px 6px;border-radius:4px;
   max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .p-cwd:hover{background:var(--hover);color:var(--fg)}
-.p-spacer{flex:1}
+.p-spacer{flex:1;min-width:28px;min-height:24px}
 .p-tokens{color:var(--fg-fraco);font-size:10.5px;white-space:nowrap;display:flex;align-items:center;gap:5px}
 .p-tokens b{font-weight:500;color:var(--fg-fraco)}
 .tok-bar{width:34px;height:4px;border-radius:2px;background:var(--bg4);overflow:hidden}
 .tok-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
-.p-close{width:20px;height:20px;border-radius:4px;color:var(--fg-dim);font-size:11px}
+.p-close{flex:none;width:24px;height:24px;border-radius:4px;color:var(--fg-dim);font-size:11px}
 .p-close:hover{background:var(--erro-fundo);color:#fff}
 .dot{width:7px;height:7px;border-radius:50%;flex:none}
 .dot.off{background:var(--fg-fraco)}.dot.idle{background:var(--green)}
@@ -649,7 +645,7 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 .msg-role .av{padding:3px}
 .msg.bot .av{background:transparent;color:var(--accent);width:17px;height:17px;padding:0}
 .pe-logo{width:30px;height:30px;background:none;border-radius:0;color:var(--accent)}
-.act .logo-motor{width:20px;height:20px}
+.act .logo-motor{width:20px;height:20px;fill:currentColor;stroke:none}
 
 /* ícones de traço, sem emoji */
 .ic{width:1em;height:1em;display:block;flex:none;vertical-align:-0.12em}
@@ -1019,23 +1015,20 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 .pane.ocupado .p-modoenvio{color:var(--accent);border-color:var(--line2)}
 .envio-nota{padding:2px 18px 8px;font-size:11px;color:var(--fg-fraco)}
 
-/* interruptor Claude / Codex */
+/* Faixa própria para os quatro assistentes: nomes completos, inclusive em chats estreitos. */
 .p-chave{position:relative;display:flex;align-items:center;background:var(--fundo-fundo);
-  border:1px solid var(--line);border-radius:8px;padding:2px;gap:1px;flex:none}
-.ch-lado{position:relative;z-index:2;display:flex;align-items:center;gap:5px;
-  padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600;color:var(--fg-fraco);
-  transition:color .18s}
-.ch-lado span{width:11px;height:11px;display:block;opacity:.55;transition:opacity .18s}
+  border:1px solid var(--line);border-radius:8px;padding:2px;gap:1px;flex:0 0 100%;min-width:0;
+  max-width:100%;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin}
+.ch-lado{position:relative;display:flex;align-items:center;gap:5px;flex:none;white-space:nowrap;
+  padding:4px 9px;border-radius:6px;font-size:11px;font-weight:600;color:var(--fg-fraco);
+  background:transparent;transition:background .18s,color .18s}
+.ch-lado span{flex:none;width:13px;height:13px;display:block;opacity:.85;transition:opacity .18s}
 .ch-lado span svg{width:100%;height:100%;fill:currentColor}
-.ch-lado:hover{color:var(--fg-dim)}
-.pane.eng-claude .ch-lado[data-motor="claude"],
-.pane.eng-codex .ch-lado[data-motor="codex"]{color:var(--sobre-accent)}
-.pane.eng-claude .ch-lado[data-motor="claude"] span,
-.pane.eng-codex .ch-lado[data-motor="codex"] span{opacity:1}
-.ch-bolha{display:none}
-.ch-lado{background:transparent;transition:background .18s,color .18s}
-.pane.eng-claude .ch-lado[data-motor="claude"],
-.pane.eng-codex .ch-lado[data-motor="codex"]{background:var(--accent)}
+.ch-lado:hover{color:var(--fg);background:var(--hover)}
+.ch-lado[aria-pressed="true"]{color:var(--sobre-accent);background:var(--accent)}
+.ch-lado[aria-pressed="true"] span{opacity:1}
+.ch-lado:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.pane-hd .p-git{max-width:110px}
 
 /* botão de resumir a conversa, com o anel de quanto já encheu */
 .p-compactar{display:grid;place-items:center;width:26px;height:24px;border-radius:7px;
@@ -1191,13 +1184,15 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .na-tit{font-size:18px;font-weight:600;color:var(--fg-strong);margin-bottom:20px}
 .na-rot{font-size:10.5px;color:var(--fg-dim);text-transform:uppercase;letter-spacing:.7px;
   text-align:left;margin-bottom:8px}
-.na-motores{display:flex;gap:10px;margin-bottom:18px}
+.na-motores{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-bottom:18px}
 .na-motor{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 8px;
   background:var(--bg3);border:1.5px solid var(--line);border-radius:10px;transition:.13s}
 .na-motor:hover{background:var(--bg4)}
 .na-motor.on{border-color:var(--accent);background:var(--bg4)}
 .na-motor[data-motor="claude"]{--accent:var(--claude)}
 .na-motor[data-motor="codex"]{--accent:var(--codex)}
+.na-motor[data-motor="gemini"]{--accent:var(--gemini)}
+.na-motor[data-motor="grok"]{--accent:var(--grok)}
 .na-motor.on .na-ico{color:var(--accent)}
 .na-ico{width:28px;height:28px;display:grid;place-items:center;color:var(--fg-dim)}
 .na-ico svg{width:100%;height:100%;fill:currentColor}
@@ -1219,6 +1214,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .na-ok{width:100%;margin-top:18px;padding:11px;border-radius:9px;background:var(--accent);
   color:var(--sobre-accent);font-size:13.5px;font-weight:600}
 .na-ok:hover{filter:brightness(1.08)}
+.na-ok:disabled{opacity:.5;cursor:not-allowed}
 .na-dica{font-size:11px;color:var(--fg-fraco);margin-top:9px;line-height:1.45}
 .na-dois{width:100%;margin-top:14px;padding-top:13px;border-top:1px solid var(--line);
   display:flex;align-items:center;justify-content:center;gap:7px;font-size:12px;color:var(--fg-dim)}
@@ -1713,11 +1709,9 @@ html[data-tema="claro"] { --gemini:#3168c9; --grok:#565069; }
 html[data-tema="jornal"] { --gemini:#268bd2; --grok:#586e75; }
 .act.ic-gemini{color:var(--gemini)}
 .pane.eng-gemini,.side-view[data-view="hgemini"]{--accent:var(--gemini)}
-.pane.eng-gemini .p-chave{display:none}
 .hist-item.aberta.ab-gemini{outline-color:var(--gemini)}
 .act.ic-grok{color:var(--grok)}
 .pane.eng-grok,.side-view[data-view="hgrok"]{--accent:var(--grok)}
-.pane.eng-grok .p-chave{display:none}
 .hist-item.aberta.ab-grok{outline-color:var(--grok)}
 
 /* Organização das conversas, 11/09. Título e quadro mantêm o desenho anterior. */
@@ -1751,5 +1745,7 @@ html[data-tema="jornal"] { --gemini:#268bd2; --grok:#586e75; }
 .p-sugs{display:flex;gap:6px;flex-wrap:wrap;padding:0 2px 6px}
 .sug-chip{font-size:11.5px;color:var(--fg-dim);border:1px dashed var(--line2);border-radius:999px;padding:3px 11px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
 .sug-chip:hover{color:var(--fg);border-color:var(--accent);border-style:solid;background:var(--hover)}
-@container (max-width:340px){.pl-corpo{max-height:72px}.modo-nome{display:none}.pane-hd{gap:4px}.p-cwd{max-width:70px}}
+@container (max-width:340px){.pl-corpo{max-height:72px}.modo-nome{display:none}.pane-hd{gap:4px}.p-cwd{max-width:140px}}
 @media(max-height:600px){.pl-corpo,.empilhado .pl-corpo{max-height:48px}}
+
+@media(max-width:380px){.na-motores{grid-template-columns:repeat(2,minmax(0,1fr))}.na-motor{flex-direction:row;justify-content:center;padding:10px 6px}.na-ico{width:20px;height:20px}}
