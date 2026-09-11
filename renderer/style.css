@@ -1704,9 +1704,9 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 
 /* Motores adicionais, mantendo os mesmos tamanhos e componentes do Cockpit. */
 .motor-extra{color:var(--accent);font-size:12px;font-weight:600;white-space:nowrap;padding:0 7px}
-:root { --gemini:#87a9fa; --grok:#bcbac8; }
-html[data-tema="claro"] { --gemini:#3168c9; --grok:#565069; }
-html[data-tema="jornal"] { --gemini:#268bd2; --grok:#586e75; }
+:root { --gemini:#67b88a; --grok:#bcbac8; }
+html[data-tema="claro"] { --gemini:#287a4c; --grok:#565069; }
+html[data-tema="jornal"] { --gemini:#39764b; --grok:#586e75; }
 .act.ic-gemini{color:var(--gemini)}
 .pane.eng-gemini,.side-view[data-view="hgemini"]{--accent:var(--gemini)}
 .hist-item.aberta.ab-gemini{outline-color:var(--gemini)}
