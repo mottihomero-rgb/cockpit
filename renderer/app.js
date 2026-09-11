@@ -1275,6 +1275,7 @@ function paintEngine(P) {
   } else if (etiqueta) etiqueta.remove();
   $$('.ch-lado', P.el).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.motor === P.engine)));
   pintarControlesCodex(P);
+  if (P === focusPane) pintarCorFoco();
 }
 function setFocus(P) {
   if (!P) return;
@@ -1288,6 +1289,15 @@ function setFocus(P) {
   atualizarGit(P);   // leva 10.4: o chip do git segue o chat que está em foco
   $('#tbTitle').textContent = shortPath(P.cwd) + '  ·  ' + nomeDoMotor(P.engine);
   const pn = $('#projName'); if (pn) pn.textContent = nomePasta(P.cwd);
+  pintarCorFoco();
+}
+/* A borda das abas do topo segue a cor da IA do chat em foco (laranja no Claude, azul no
+   Codex, verde no Gemini). Le o --accent ja resolvido do chat, entao tema novo vale sozinho. */
+function pintarCorFoco() {
+  const P = focusPane;
+  const cor = P && getComputedStyle(P.el).getPropertyValue('--accent').trim();
+  if (cor) document.documentElement.style.setProperty('--cor-foco', cor);
+  else document.documentElement.style.removeProperty('--cor-foco');
 }
 /* Fechar um chat que esta TRABALHANDO joga a resposta fora e mata o comando no meio. Com o
    mouse ainda da pra perceber; com Cmd+W e um teclado no automatico, nao. Entao so pergunta
@@ -3078,7 +3088,8 @@ async function send(P) {
   guardarPrompt(text);              // pra trazer de volta com a seta pra cima
   P.navHist = undefined;
   const bolha = userMsg(P, text, anexos);
-  if (!P.titulo) { P.titulo = nomeDaConversa(P, text, anexos); pintarNome(P); nomearCurto(P, text); }
+  if (!P.titulo) { P.titulo = nomeDaConversa(P, text, anexos); pintarNome(P); nomearCurto(P); }
+  else if (P.nomeCurto && !P.nomeManual && [2, 4, 8].includes(mensagensDele(P).length)) nomearCurto(P);
   P.quadroColado = null;
 
   if (!P.started) {
@@ -4105,14 +4116,20 @@ function renomearAqui(P) {
   inp.addEventListener('blur', () => fim(true));
 }
 
+function mensagensDele(P) {
+  return (P.hist || []).filter(h => h.quem === 'Você' && h.texto).map(h => String(h.texto));
+}
 /* O nome provisorio (comeco da frase) aparece na hora; a IA troca por ate 3 palavras sobre o
-   assunto. So troca se ninguem mexeu no nome enquanto ela pensava. */
-async function nomearCurto(P, text) {
-  if (P.nomeManual || !text || !window.api.nomeCurto) return;
-  const provisorio = P.titulo;
+   assunto. Na 2a, 4a e 8a mensagem ela olha a conversa toda de novo: quem pede varias
+   alteracoes no mesmo projeto quer "Alteracoes Cockpit", nao o nome do 1o pedido.
+   So troca se ninguem mexeu no nome enquanto ela pensava. */
+async function nomearCurto(P) {
+  const msgs = mensagensDele(P);
+  if (P.nomeManual || !msgs.length || !window.api.nomeCurto) return;
+  const antes = P.titulo;
   let nome = '';
-  try { nome = await window.api.nomeCurto({ texto: text }); } catch {}
-  if (!nome || P.nomeManual || P.titulo !== provisorio) return;
+  try { nome = await window.api.nomeCurto({ mensagens: msgs.slice(-10), pasta: nomePasta(P.cwd) }); } catch {}
+  if (!nome || P.nomeManual || P.titulo !== antes) return;
   P.titulo = nome; P.nomeCurto = true; pintarNome(P); savePanes();
   salvarNomeCurto(P);
 }
@@ -4120,8 +4137,8 @@ async function nomearCurto(P, text) {
    mensagem o id da conversa ainda nao existe: o fim do turno chama de novo. */
 function salvarNomeCurto(P) {
   const id = P.sessaoId || P.resumeId;
-  if (!P.nomeCurto || P.nomeManual || !id || P.nomeCurtoSalvo === id) return;
-  P.nomeCurtoSalvo = id;
+  if (!P.nomeCurto || P.nomeManual || !id || P.nomeCurtoSalvo === id + '|' + P.titulo) return;
+  P.nomeCurtoSalvo = id + '|' + P.titulo;
   window.api.renomear({ engine: P.engine, id, nome: P.titulo }).catch(() => {});
 }
 
@@ -7666,6 +7683,7 @@ const btPasta = $('#btnPickFolder');
 if (btPasta) btPasta.addEventListener('click', () => { if (abaAtiva) trocarPastaDaAba(abaAtiva); });
 function aplicarTema(t) {
   document.documentElement.setAttribute('data-tema', t || 'escuro');
+  pintarCorFoco();
   $$('.tema-bt').forEach(b => b.classList.toggle('on', b.dataset.tema === (t || 'escuro')));
 }
 $$('.tema-bt').forEach(b => b.addEventListener('click', async () => {

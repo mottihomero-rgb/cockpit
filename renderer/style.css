@@ -1124,9 +1124,11 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
   color:var(--fg-dim);cursor:pointer;-webkit-app-region:no-drag;
   /* sem isto vale o 1.55 do body e as duas linhas nao cabem nos 44px: a de baixo era cortada */
   line-height:1.2;
-  --aba-cor:var(--aba-neon)}
+  --aba-cor:var(--cor-foco, var(--aba-neon));
+  border-color:color-mix(in srgb, var(--aba-cor) 40%, var(--line2))}
 .aba:hover{background:var(--bg3)}
-.aba.ativa{background:var(--bg3);color:var(--fg-strong);border-color:var(--aba-cor)}
+.aba.ativa{background:var(--bg3);color:var(--fg-strong);border-color:var(--aba-cor);
+  box-shadow:0 0 0 1px var(--aba-cor)}
 
 /* .aba-ic sozinho tambem e usado no fantasma do arraste (com icone dentro) */
 .aba-ic{flex:none;display:grid;place-items:center}
