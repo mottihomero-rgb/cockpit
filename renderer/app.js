@@ -1786,7 +1786,6 @@ async function desfazerDaqui(P, feitas) {
 function ramificarDaqui(P, d) {
   const ate = Number(d.dataset.hist || 0);
   const pedaco = P.hist.slice(0, ate + 1);
-  if (panes.size >= 12) { avisoEnvio(P, 'Feche um chat para abrir a ramificação.'); return; }
   const Q = novoChatNaAba(P.engine);
   if (!Q) return;
   Q.cwd = P.cwd;
@@ -1811,7 +1810,6 @@ async function ramificarInteiro(P) {
      ssh para o CLI de lá (que pode ser velho demais e derrubar o painel no start) e no Codex o
      motor local não enxerga a conversa de lá. Cai direto na reserva do resumo, que sempre vale. */
   if (NA_VPS(P.cwd)) { ramoDeReserva(P, 'a conversa mora na VPS'); return; }
-  if (panes.size >= 12) { avisoEnvio(P, 'Feche um chat para abrir a ramificação.'); return; }
   if (P.engine === 'claude') { forkClaude(P, id); return; }
   let r = null;
   try { r = await window.api.sessaoFork({ engine: P.engine, id }); }
@@ -2047,7 +2045,6 @@ async function perguntarAosDois(P) {
   const A = abaDe(P);
   let Q = A ? A.ordem.map(id => panes.get(id)).find(q => q && q !== P && q.engine === outro) : null;
   if (!Q) {
-    if (panes.size >= 12) { avisoEnvio(P, 'Feche um chat para abrir o outro motor.'); return; }
     Q = novoChatNaAba(outro);
     if (!Q) return;
     Q.cwd = P.cwd;                       // os dois olham a MESMA pasta, senao a resposta muda
@@ -4424,7 +4421,6 @@ function guardarFechado(P) {
 async function reabrirUltimoFechado() {
   const f = fechadosRecentes.pop();
   if (!f) { if (focusPane) avisoTemp(focusPane, 'Nenhum chat fechado nesta sessão.'); return; }
-  if (panes.size >= 12) { if (focusPane) avisoEnvio(focusPane, 'Feche um chat para reabrir o anterior.'); return; }
   if (f.resumeId) {
     await openSession({ id: f.resumeId, engine: f.engine, cwd: f.cwd, title: f.titulo || '', file: f.arquivo }, null);
     return;
@@ -4488,7 +4484,7 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Contexto', ic: 'plug', nome: 'Puxar a aba aberta do navegador', desc: 'manda o endereço e o título da aba de agora', act: () => puxarAbaDoNavegador(P) },
     { sec: 'Contexto', ic: 'book', nome: 'Salvar no Obsidian', desc: 'vira nota no vault, na pasta do cliente', act: () => salvarConversaNoVault(P) },
     { sec: 'Contexto', ic: 'mic', nome: 'Ditar', desc: 'falar em vez de digitar · ⌘⇧D', act: () => alternarDitado(P) },
-    { sec: 'Chat', ic: 'plus', nome: 'Abrir outro chat nesta aba', act: () => { if (panes.size < 12) novoChatNaAba(P.engine); } },
+    { sec: 'Chat', ic: 'plus', nome: 'Abrir outro chat nesta aba', act: () => { novoChatNaAba(P.engine); } },
     { sec: 'Chat', ic: 'rotate-cw', nome: 'Reabrir o último chat fechado', desc: '⌘⇧W', act: () => reabrirUltimoFechado() },
     { sec: 'Chat', ic: 'columns-2', nome: 'Perguntar aos dois motores', desc: 'a mesma pergunta no Claude e no Codex · ⌘D', act: () => perguntarAosDois(P) },
     { sec: 'Painel', ic: 'folder-open', nome: 'Trocar a pasta deste painel', tag: nomePasta(P.cwd), act: () => $('.p-cwd', P.el).click() },
@@ -5582,7 +5578,7 @@ function entrarNaConta(engine) {
     ? focusPane
     : [...panes.values()].find((q) => q.engine === engine);
   if (!P && ['gemini', 'grok'].includes(engine)) {
-    P = focusPane || (panes.size < 12 ? novoChatNaAba(engine) : null);
+    P = focusPane || novoChatNaAba(engine);
   }
   if (P) { setFocus(P); contaAcao(P, 'login', engine); return; }
   const recado = 'Abra um chat do ' + nomeDoMotor(engine) + ' para entrar na conta dele.';
@@ -7314,15 +7310,9 @@ async function openSession(s, el) {
     return;
   }
   // cada conversa da lista abre no seu proprio painel, sem atropelar o que ja esta rolando
-  let P = null;
-  if (panes.size < 12) {
-    // a conversa abre na aba do cliente dela, mesmo que tenha nascido numa subpasta
-    const A = abaDoCaminho(s.cwd, true);
-    P = newPane({ engine: s.engine, aba: A, cwd: s.cwd, titulo: s.title });
-  } else {
-    P = [...panes.values()].find(q => !q.busy && !q.hist.length) || [...panes.values()].find(q => !q.busy);
-    if (!P) { const q = focusPane; if (q) avisoTemp(q, 'Todos os painéis estão ocupados. Feche um para abrir esta conversa.'); return; }
-  }
+  // a conversa abre na aba do cliente dela, mesmo que tenha nascido numa subpasta
+  const A = abaDoCaminho(s.cwd, true);
+  let P = newPane({ engine: s.engine, aba: A, cwd: s.cwd, titulo: s.title });
   document.body.classList.remove('gaveta');
   document.querySelectorAll('.hist-item').forEach(x => x.classList.remove('on'));
   if (el) el.classList.add('on');
@@ -7361,7 +7351,7 @@ async function novaConversa(engine) {
   engine = motorVisivel(engine);
   const motivo = motorIndisponivelNaPasta(engine, abaAtiva?.cwd || focusPane?.cwd);
   if (motivo) { if (focusPane) avisoTemp(focusPane, motivo, true); return; }
-  const P = panes.size < 12 ? novoChatNaAba(engine) : focusPane;
+  const P = novoChatNaAba(engine);
   if (!P) return;
   document.body.classList.remove('gaveta');   // no celular, sai da lista e mostra a conversa nova
   await window.api.paneStop({ paneId: P.id, engine: P.engine });
@@ -7667,10 +7657,6 @@ function naConfirmar(dois) {
 // chat novo dentro da aba que esta aberta (mesma pasta, sem perguntar nada)
 function novoChatNaAba(engine) {
   if (!abaAtiva) { telaNovaAba(); return; }
-  if (panes.size >= 12) {
-    if (focusPane) avisoTemp(focusPane, 'Já são 12 chats abertos. Feche um para abrir outro.', true);
-    return;
-  }
   engine = motorVisivel(engine || (focusPane && focusPane.engine) || cfg.lastEngine);
   const motivo = motorIndisponivelNaPasta(engine, abaAtiva.cwd);
   if (motivo) { if (focusPane) avisoTemp(focusPane, motivo, true); return; }
