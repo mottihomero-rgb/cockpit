@@ -24,6 +24,8 @@
 <div id="faixaAvisos"></div>
 
 <div id="abasTopo">
+  <!-- as duas folgas crescem por igual: as abas ficam no meio do topo -->
+  <span class="abas-gap"></span>
   <div class="abas-lista" id="abasLista"></div>
   <button class="aba-mais" id="btnNovaAba" title="Nova aba de projeto (⌘⇧T)"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg></button>
   <span class="abas-gap"></span>
@@ -254,7 +256,7 @@
 
     <button class="na-ok" id="naOk">Começar</button>
     <p class="na-dica" id="naDica">Sem pasta escolhida, a aba abre no Mac inteiro.</p>
-    <button class="na-dois" id="naDois">
+    <button class="na-dois hidden" id="naDois">
       <span class="na-ico peq" id="naDoisA"></span>
       <span class="na-mais">+</span>
       <span class="na-ico peq" id="naDoisB"></span>
@@ -292,18 +294,18 @@
 <template id="tplPane">
   <section class="pane">
     <header class="pane-hd">
+      <!-- leva 10.4: branch do git desta pasta; some sozinho fora de repositório -->
+      <div class="hd-lado hd-esq"><button class="p-git hidden" title="Branch do git"></button></div>
       <div class="p-chave" role="group" aria-label="Escolher assistente">
         <button class="ch-lado" data-motor="claude"><span></span>Claude</button>
         <button class="ch-lado" data-motor="codex"><span></span>Codex</button>
         <button class="ch-lado" data-motor="gemini"><span></span>Gemini</button>
         <button class="ch-lado" data-motor="grok"><span></span>Grok</button>
       </div>
-      <button class="p-cwd" title="Trocar pasta deste painel"></button>
-      <!-- leva 10.4: branch do git desta pasta; some sozinho fora de repositório -->
-      <button class="p-git hidden" title="Branch do git"></button>
-      <span class="p-spacer"></span>
+      <div class="hd-lado hd-dir">
       <span class="p-dot dot off"></span>
       <button class="p-close" title="Fechar este chat (⌘W)"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></svg></button>
+      </div>
     </header>
     <div class="modal p-modal hidden"><div class="modal-cx"></div></div>
     <div class="modal p-visor hidden"><div class="visor-cx">
@@ -334,6 +336,8 @@
         <button class="cb p-slash" title="Ações e comandos">/</button>
         <button class="cb p-modoenvio" title="O que fazer se ele já estiver trabalhando"></button>
         <button class="cb p-plano hidden" aria-pressed="false" title="Planejar antes de executar"></button>
+        <!-- a pasta do chat mora aqui como ícone; o nome aparece ao passar o mouse -->
+        <button class="cb p-cwd" title="Trocar pasta deste painel"></button>
         <span class="cmp-gap"></span>
         <button class="p-model" title="Trocar o modelo e o esforço"></button>
         <button class="modo-btn p-modo" title="O que ele pode fazer sem perguntar">

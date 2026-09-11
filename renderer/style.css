@@ -160,7 +160,7 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .pane.eng-claude{--accent:var(--claude)}
 .pane.eng-acp{--accent:var(--acp)}
 
-.pane-hd{height:auto;min-height:34px;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:3px 7px;padding:5px 8px;
+.pane-hd{height:auto;min-height:34px;flex:none;display:flex;align-items:center;gap:7px;padding:5px 8px;
   background:var(--bg3);border-bottom:1px solid var(--line);font-size:11.5px}
 .pane.focus .pane-hd{background:var(--bg4)}
 .p-engine{color:var(--accent);font-weight:600;font-size:11.5px;padding:2px 3px;border-radius:4px}
@@ -715,11 +715,12 @@ mark.acha.agora{background:var(--yellow);color:#1a1a1a}
 .p-modal .mo-sub{margin-bottom:6px}
 
 /* nome da conversa no topo do painel */
-.pane-nome{flex:none;padding:7px 14px 6px;border-bottom:1px solid var(--line);
-  background:var(--bg);display:flex;align-items:center;gap:7px}
-.pane-nome::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent);
-  flex:none;opacity:.7}
-.pn-txt{flex:1;min-width:0;font-size:12px;color:var(--fg-strong);font-weight:500;
+.pane-nome{flex:none;padding:9px 40px 8px;border-bottom:1px solid var(--line);position:relative;
+  background:color-mix(in srgb, var(--accent) 7%, var(--bg));display:flex;align-items:center;
+  justify-content:center;gap:9px}
+.pane-nome::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);
+  flex:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent)}
+.pn-txt{flex:0 1 auto;min-width:0;font-size:14px;color:var(--fg-strong);font-weight:650;letter-spacing:-.1px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pane-nome.vazio{display:none}
 
@@ -856,6 +857,9 @@ textarea.cxq-input{min-height:62px;resize:vertical}
 .pn-edit{width:20px;height:20px;border-radius:5px;color:var(--fg-dim);flex:none;opacity:0;
   display:grid;place-items:center;transition:opacity .12s}
 .pane-nome:hover .pn-edit{opacity:1}
+.pane-nome .pn-edit{position:absolute;right:10px;top:50%;margin-top:-10px}
+/* espaço invisível do tamanho da bolinha: sem ele o nome fica 8px fora do centro */
+.pane-nome::after{content:"";width:7px;flex:none}
 .pn-edit:hover{background:var(--hover2);color:var(--fg)}
 .pn-edit .ic{width:12px;height:12px}
 .pn-input{flex:1;background:var(--fundo-fundo);border:1px solid var(--accent);border-radius:6px;
@@ -1017,7 +1021,7 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 
 /* Faixa própria para os quatro assistentes: nomes completos, inclusive em chats estreitos. */
 .p-chave{position:relative;display:flex;align-items:center;background:var(--fundo-fundo);
-  border:1px solid var(--line);border-radius:8px;padding:2px;gap:1px;flex:0 0 100%;min-width:0;
+  border:1px solid var(--line);border-radius:8px;padding:2px;gap:1px;flex:0 1 auto;min-width:0;
   max-width:100%;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin}
 .ch-lado{position:relative;display:flex;align-items:center;gap:5px;flex:none;white-space:nowrap;
   padding:4px 9px;border-radius:6px;font-size:11px;font-weight:600;color:var(--fg-fraco);
@@ -1029,6 +1033,12 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 .ch-lado[aria-pressed="true"] span{opacity:1}
 .ch-lado:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .pane-hd .p-git{max-width:110px}
+/* As logos ficam no meio: os dois lados crescem por igual, então o centro é o centro de verdade. */
+.hd-lado{flex:1 1 0;min-width:0;display:flex;align-items:center;gap:6px}
+.hd-dir{justify-content:flex-end}
+.pane-cmp .p-cwd{position:relative;max-width:none;padding:0;font:inherit;color:var(--fg-dim)}
+.pane-cmp .p-cwd:hover{background:var(--hover2);color:var(--fg)}
+.cwd-wt{position:absolute;right:-2px;bottom:-3px;font-size:9px;color:var(--accent)}
 
 /* botão de resumir a conversa, com o anel de quanto já encheu */
 .p-compactar{display:grid;place-items:center;width:26px;height:24px;border-radius:7px;

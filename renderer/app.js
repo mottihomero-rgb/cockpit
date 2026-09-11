@@ -388,7 +388,7 @@ function conversaDaPastaNova(P, pasta) {
      Esta função é chamada nos QUATRO pontos em que a pasta de um chat muda (trocar a pasta da
      aba, arrastar o chat para outra aba, e os dois ramos do levarChatPara). */
   P.worktree = '';
-  P.titulo = ''; P.nomeManual = false; P.hist = []; limparPlano(P); limparSugestoes(P);
+  P.titulo = ''; P.nomeManual = false; P.nomeCurto = false; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.blocks.clear(); P.tools.clear();
   P.ultraAvisado = false;
   voltarVazio(P);
@@ -405,7 +405,7 @@ async function trocarPastaDaAba(A) {
     const P = panes.get(pid); if (!P) continue;
     await window.api.paneStop({ paneId: pid, engine: P.engine });
     P.cwd = p; P.started = false; setDot(P, 'off');
-    $('.p-cwd', P.el).textContent = nomePasta(p);
+    pintarPasta(P, nomePasta(p));
     conversaDaPastaNova(P, p);
     mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
   }
@@ -434,7 +434,7 @@ function moverPane(P, A, indice) {
   if (antiga && antiga !== A && P.cwd !== A.cwd) {
     window.api.paneStop({ paneId: P.id, engine: P.engine });
     P.cwd = A.cwd; P.started = false; setDot(P, 'off');
-    $('.p-cwd', P.el).textContent = nomePasta(P.cwd);
+    pintarPasta(P, nomePasta(P.cwd));
     conversaDaPastaNova(P, P.cwd);
     mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
   }
@@ -510,7 +510,7 @@ async function levarChatPara(P, escolhida) {
   if (jaExiste && jaExiste === A0) {   // ja e a aba certa: so a subpasta do chat muda
     await window.api.paneStop({ paneId: P.id, engine: P.engine });
     P.cwd = escolhida; P.started = false; setDot(P, 'off');
-    $('.p-cwd', P.el).textContent = nomePasta(escolhida);
+    pintarPasta(P, nomePasta(escolhida));
     conversaDaPastaNova(P, escolhida);
     mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
     savePanes();
@@ -523,7 +523,7 @@ async function levarChatPara(P, escolhida) {
     A0.cwd = escolhida;
     await window.api.paneStop({ paneId: P.id, engine: P.engine });
     P.cwd = escolhida; P.started = false; setDot(P, 'off');
-    $('.p-cwd', P.el).textContent = nomePasta(escolhida);
+    pintarPasta(P, nomePasta(escolhida));
     pintarAba(A0);
     if (abaAtiva === A0) { loadTree(escolhida); const pn = $('#projName'); if (pn) pn.textContent = nomePasta(escolhida); setFocus(P); }
     conversaDaPastaNova(P, escolhida);
@@ -690,7 +690,7 @@ function newPane(opts = {}) {
 
   // pasta
   const btnCwd = $('.p-cwd', el);
-  btnCwd.title = 'Trocar a pasta deste chat (ele vai para a aba dessa pasta)';
+  pintarPasta(P, nomePasta(P.cwd));
   btnCwd.addEventListener('click', () => mudarPastaDoChat(P));
 
   $('.p-close', el).addEventListener('click', () => closePane(id));
@@ -865,7 +865,7 @@ function newPane(opts = {}) {
   btMic.addEventListener('click', (e) => { e.stopPropagation(); alternarDitado(P); });
   $('.p-slash', el).insertAdjacentElement('afterend', btMic);
 
-  btnCwd.textContent = nomePasta(P.cwd);
+  pintarPasta(P, nomePasta(P.cwd));
   fillModels(P); paintEngine(P); pintarModo(P); pintarUso(P); lerUso(P.engine);
   if (!opts.model) aplicarEscolhaDaPasta(P);   // esta pasta ja tem cerebro preferido?
 
@@ -1789,7 +1789,7 @@ function ramificarDaqui(P, d) {
   const Q = novoChatNaAba(P.engine);
   if (!Q) return;
   Q.cwd = P.cwd;
-  $('.p-cwd', Q.el).textContent = nomePasta(Q.cwd);
+  pintarPasta(Q, nomePasta(Q.cwd));
   Q.hist = pedaco.slice();
   Q.passarContexto = pedaco.map(h => '### ' + h.quem + ':\n' + (h.texto || '').trim()).join('\n\n');
   Q.titulo = 'Ramo de: ' + (P.titulo || 'conversa'); Q.nomeManual = true;
@@ -1826,7 +1826,7 @@ function forkClaude(P, id) {
   const Q = novoChatNaAba(P.engine);
   if (!Q) return;
   Q.cwd = P.cwd;
-  $('.p-cwd', Q.el).textContent = nomePasta(Q.cwd);
+  pintarPasta(Q, nomePasta(Q.cwd));
   Q.resumeId = id; Q.forkPendente = true;
   Q.titulo = 'Ramo de: ' + (P.titulo || 'conversa'); Q.nomeManual = true;
   pintarNome(Q);
@@ -1839,7 +1839,7 @@ function abrirRamo(P, idNovo) {
   const Q = novoChatNaAba(P.engine);
   if (!Q) return;
   Q.cwd = P.cwd;
-  $('.p-cwd', Q.el).textContent = nomePasta(Q.cwd);
+  pintarPasta(Q, nomePasta(Q.cwd));
   Q.resumeId = idNovo;
   Q.titulo = 'Ramo de: ' + (P.titulo || 'conversa'); Q.nomeManual = true;
   pintarNome(Q);
@@ -2050,7 +2050,7 @@ async function perguntarAosDois(P) {
     Q = novoChatNaAba(outro);
     if (!Q) return;
     Q.cwd = P.cwd;                       // os dois olham a MESMA pasta, senao a resposta muda
-    $('.p-cwd', Q.el).textContent = nomePasta(Q.cwd);
+    pintarPasta(Q, nomePasta(Q.cwd));
     aplicarEscolhaDaPasta(Q);
   }
   const outroInp = $('.p-input', Q.el);
@@ -3078,7 +3078,7 @@ async function send(P) {
   guardarPrompt(text);              // pra trazer de volta com a seta pra cima
   P.navHist = undefined;
   const bolha = userMsg(P, text, anexos);
-  if (!P.titulo) { P.titulo = nomeDaConversa(P, text, anexos); pintarNome(P); }
+  if (!P.titulo) { P.titulo = nomeDaConversa(P, text, anexos); pintarNome(P); nomearCurto(P, text); }
   P.quadroColado = null;
 
   if (!P.started) {
@@ -3304,6 +3304,7 @@ function receberEventoPane(ev) {
       // nao zera mais o histCache aqui: zerar trocava a lista por "Carregando..." e derrubava
       // busca, filtro e favorito ate a releitura terminar. O loadHist ja sobrescreve o cache.
       setTimeout(() => lerUsoAposResposta(P.engine), 1500);
+      salvarNomeCurto(P);
       setTimeout(() => buscarNome(P), 1200);
       if (lateralAberta(P.engine)) loadHist(P.engine, true);
       if (P.queued) { const q = P.queued; P.queued = null;
@@ -4104,8 +4105,28 @@ function renomearAqui(P) {
   inp.addEventListener('blur', () => fim(true));
 }
 
+/* O nome provisorio (comeco da frase) aparece na hora; a IA troca por ate 3 palavras sobre o
+   assunto. So troca se ninguem mexeu no nome enquanto ela pensava. */
+async function nomearCurto(P, text) {
+  if (P.nomeManual || !text || !window.api.nomeCurto) return;
+  const provisorio = P.titulo;
+  let nome = '';
+  try { nome = await window.api.nomeCurto({ texto: text }); } catch {}
+  if (!nome || P.nomeManual || P.titulo !== provisorio) return;
+  P.titulo = nome; P.nomeCurto = true; pintarNome(P); savePanes();
+  salvarNomeCurto(P);
+}
+/* Grava no nomes.json para a lista lateral e a reabertura mostrarem o mesmo nome. Na 1a
+   mensagem o id da conversa ainda nao existe: o fim do turno chama de novo. */
+function salvarNomeCurto(P) {
+  const id = P.sessaoId || P.resumeId;
+  if (!P.nomeCurto || P.nomeManual || !id || P.nomeCurtoSalvo === id) return;
+  P.nomeCurtoSalvo = id;
+  window.api.renomear({ engine: P.engine, id, nome: P.titulo }).catch(() => {});
+}
+
 async function buscarNome(P) {
-  if (P.engine !== 'claude' || !P.sessaoId || P.nomeManual) return;
+  if (P.engine !== 'claude' || !P.sessaoId || P.nomeManual || P.nomeCurto) return;
   const t = await window.api.sessionTitulo({ engine: 'claude', file: P.sessaoFile, id: P.sessaoId });
   if (t && t !== P.titulo) { P.titulo = t; pintarNome(P); savePanes(); }
 }
@@ -7275,10 +7296,10 @@ async function openSession(s, el) {
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
   P.effectiveSettings = null; P.settingsPending = false;
   P.sessaoFile = s.file || '';   // guardado para a conversa voltar cheia quando reabrir o app
-  P.titulo = s.title || ''; P.hist = []; limparPlano(P); limparSugestoes(P);
+  P.titulo = s.title || ''; P.nomeCurto = false; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.blocks.clear(); P.tools.clear(); P.chat.innerHTML = ''; P.rolagem = null;   // solta a mensagem-ancora da memoria
   fillModels(P); paintEngine(P); setDot(P, 'off');
-  $('.p-cwd', P.el).textContent = nomePasta(P.cwd);
+  pintarPasta(P, nomePasta(P.cwd));
   mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
   pintarModo(P); pintarNome(P);
   setFocus(P); savePanes();
@@ -7307,7 +7328,7 @@ async function novaConversa(engine) {
   escondePerm(P);
   // sessaoId TEM de zerar junto: se ficar o da conversa anterior, uma queda de conexao faria
   // o "religar" voltar para a conversa velha em vez desta nova
-  P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.hist = []; limparPlano(P); limparSugestoes(P);
+  P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.nomeCurto = false; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.forkPendente = false;   // leva 8.3: conversa nova nunca e ramo de outra
   P.effort = EF_NOVO; P.ultraAvisado = false;   // conversa nova sempre volta ao Extra alto
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
@@ -7561,7 +7582,7 @@ function naPintar() {
     : (naEstado.pasta
         ? 'Ele começa dentro dessa pasta, mas continua enxergando o Mac inteiro.'
         : 'Sem pasta escolhida, ele abre no Mac inteiro.'));
-  $('#naDois').classList.toggle('hidden', false);
+  $('#naDois').classList.toggle('hidden', true);   // ele pediu para tirar o "dois lado a lado" (11/09)
   $('.na-cx').style.setProperty('--accent', 'var(--' + naEstado.motor + ')');
 }
 
@@ -8278,9 +8299,16 @@ const pastaDoWorktree = (P) =>
 // o rótulo do botão de pasta: o "⎇ nome" só aparece quando o chat está num worktree
 const rotuloPasta = (P) => nomePasta(P.cwd) + (P && P.worktree ? '  ⎇ ' + P.worktree : '');
 function mostrarPastaNoPainel(P) {
-  if (!P || !P.el) return;
-  const bt = $('.p-cwd', P.el);
-  if (bt) bt.textContent = rotuloPasta(P);
+  if (P && P.el) pintarPasta(P, rotuloPasta(P));
+}
+/* A pasta virou ícone na barra da caixa de texto: o nome fica no balão do mouse, e o ⎇
+   continua visível quando o chat está num worktree. */
+function pintarPasta(P, rotulo) {
+  const bt = P && P.el && $('.p-cwd', P.el);
+  if (!bt) return;
+  bt.innerHTML = ico('folder-open') + (P.worktree ? '<span class="cwd-wt">⎇</span>' : '');
+  bt.title = rotulo + ' · clique para trocar a pasta deste chat';
+  bt.setAttribute('aria-label', rotulo);
 }
 async function alternarWorktree(P) {
   if (P.worktree) { await aplicarWorktree(P, ''); return; }   // sair sempre pode, em qualquer motor
@@ -8313,7 +8341,7 @@ async function aplicarWorktree(P, nome) {
   P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
   pararTrabalho(P); limparPassos(P); limparContinuar(P);
   P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null; P.forkPendente = false;
-  P.titulo = ''; P.nomeManual = false; P.hist = []; limparPlano(P); limparSugestoes(P);
+  P.titulo = ''; P.nomeManual = false; P.nomeCurto = false; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.blocks.clear(); P.tools.clear();
   P.started = false; setDot(P, 'off');
   voltarVazio(P);

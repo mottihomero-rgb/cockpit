@@ -96,6 +96,7 @@
     sessionTitulo: (o) => chamar('sessions:titulo', o),
     buscarConversas: (o) => chamar('sessions:buscar', o),
     renomear: (o) => chamar('sessao:renomear', o),
+    nomeCurto: (o) => chamar('sessao:nomeCurto', o),
     /* Apagar conversa manda arquivo do Mac para a Lixeira: o main nem expoe o canal ao Wi-Fi, e
        aqui a resposta sai na hora, com o tipo certo, para o toque nao ficar 2 minutos esperando.
        Sem esta linha o app.js (o MESMO arquivo nos dois) morreria num TypeError. */

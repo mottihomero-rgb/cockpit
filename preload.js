@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('api', {
   // linha de shell que entra na VPS (host e usuario sao montados no main, nunca na tela)
   termLinhaShell: (cwd) => ipcRenderer.invoke('term:linhaShell', cwd),
   renomear: (o) => ipcRenderer.invoke('sessao:renomear', o),
+  nomeCurto: (o) => ipcRenderer.invoke('sessao:nomeCurto', o),
   // apagar conversa: manda para a Lixeira. Fora do mapa HANDLERS de proposito (R1) — o iPhone
   // nao pode apagar arquivo do Mac pelo Wi-Fi
   apagarSessao: (o) => ipcRenderer.invoke('sessao:apagar', o),
