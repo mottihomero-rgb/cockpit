@@ -1113,11 +1113,14 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 
 /* --- a aba (um projeto): cartao de duas linhas, igual o do Hugo ---
    linha 1: bolinha da cor + nome + ponto de "trabalhando"; linha 2: quantos chats.
-   Encolhe ate 104px quando aperta; passou disso, a faixa rola de lado. */
-.aba{position:relative;flex:0 1 auto;min-width:104px;max-width:190px;height:44px;
+   Nao encolhe (encolher cortava o nome em 3 letras): cada aba tem a largura do nome, de
+   104 a 190px, e quando nao cabem todas a faixa rola de lado. */
+.aba{position:relative;flex:none;min-width:104px;max-width:190px;height:44px;
   display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;
   padding:6px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg2);
   color:var(--fg-dim);cursor:pointer;-webkit-app-region:no-drag;
+  /* sem isto vale o 1.55 do body e as duas linhas nao cabem nos 44px: a de baixo era cortada */
+  line-height:1.2;
   --aba-cor:var(--aba-neon)}
 .aba:hover{background:var(--bg3)}
 .aba.ativa{background:var(--bg3);color:var(--fg-strong);border-color:var(--aba-cor)}
@@ -1226,7 +1229,6 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .na-mais{font-size:12px;color:var(--fg-fraco)}
 
 @media (max-width:620px){
-  .aba{flex:0 1 150px}
   .na-cx{width:100%;padding:18px 16px 16px}
 }
 
@@ -1236,8 +1238,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .na-ok:focus-visible{box-shadow:0 0 0 3px var(--hover3)}
 
 /* aba de outro projeto que recebeu resposta enquanto voce estava em outra */
-.aba.nova::after{content:"";position:absolute;left:-1px;top:10px;bottom:10px;width:3px;
-  border-radius:0 3px 3px 0;background:var(--aba-cor)}
+.aba.nova{border-color:color-mix(in srgb, var(--aba-cor) 45%, var(--line2))}
 
 /* ---------- trabalhar na VPS ---------- */
 .na-ondes{display:flex;gap:8px;margin-bottom:18px}

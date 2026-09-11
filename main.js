@@ -3635,7 +3635,8 @@ function createWindow() {
     width: 1500, height: 900, minWidth: 900, minHeight: 560,
     backgroundColor: '#1e1e1e',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 16 },
+    // os semaforos moram na faixa de abas (58px) desde que a barra de titulo saiu (10/09)
+    trafficLightPosition: { x: 16, y: 21 },
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false },
   });
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
