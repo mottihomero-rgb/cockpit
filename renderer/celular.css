@@ -93,3 +93,12 @@ body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right
   .bv-dois{width:100%}
   #boasvindas{padding:16px}
 }
+
+/* O arranjo de colunas do Mac continua salvo; no telefone cada chat ocupa a tela. */
+@media (max-width: 820px), (pointer: coarse) and (max-width: 1100px) {
+  .espaco > .coluna{display:contents}
+  .espaco > .coluna > .pane{flex:0 0 100vw !important;min-height:0;height:100%;container-type:normal}
+  .pane-split-h{display:none}
+  .pl-corpo,.empilhado .pl-corpo{max-height:88px}
+  .sug-chip{min-height:32px}
+}

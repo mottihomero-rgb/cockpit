@@ -369,7 +369,7 @@ function conversaDaPastaNova(P, pasta) {
      Esta função é chamada nos QUATRO pontos em que a pasta de um chat muda (trocar a pasta da
      aba, arrastar o chat para outra aba, e os dois ramos do levarChatPara). */
   P.worktree = '';
-  P.titulo = ''; P.nomeManual = false; P.hist = [];
+  P.titulo = ''; P.nomeManual = false; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.blocks.clear(); P.tools.clear();
   P.ultraAvisado = false;
   voltarVazio(P);
@@ -410,6 +410,7 @@ function moverPane(P, A, indice) {
   if (indice == null || indice >= A.ordem.length) A.ordem.push(P.id);
   else A.ordem.splice(indice, 0, P.id);
   P.aid = A.id;
+  if (antiga !== A) { P.coluna = crypto.randomUUID(); P.larguraColuna = 0; P.pesoAltura = 1; }
   // mudou de projeto: o chat recomeca na pasta da aba nova
   if (antiga && antiga !== A && P.cwd !== A.cwd) {
     window.api.paneStop({ paneId: P.id, engine: P.engine });
@@ -625,25 +626,7 @@ function semPerderRolagem(A, tarefa) {
 }
 
 // redesenha os chats de uma aba na ordem certa, com os divisores entre eles
-function remontarEspaco(A) {
-  semPerderRolagem(A, () => {
-  const guardado = new Map();
-  for (const pid of A.ordem) {
-    const P = panes.get(pid);
-    if (P) guardado.set(pid, { flex: P.el.style.flex, min: P.el.style.minWidth });
-  }
-  A.corpoEl.innerHTML = '';
-  A.ordem.forEach((pid, k) => {
-    const P = panes.get(pid); if (!P) return;
-    if (k > 0) A.corpoEl.appendChild(makeSplitter());
-    A.corpoEl.appendChild(P.el);
-    const g = guardado.get(pid) || {};
-    P.el.style.flex = g.flex || '';
-    P.el.style.minWidth = g.min || '';
-  });
-  pintarMulti();
-  });
-}
+function remontarEspaco(A) { montarColunasDaAba(A); }
 
 function newPane(opts = {}) {
   const id = ESTA_TELA + 'p' + (++paneSeq);
@@ -653,6 +636,10 @@ function newPane(opts = {}) {
   const A = opts.aba || abaAtiva || novaAbaProjeto(opts.cwd || cfg.defCwd || HOME);
   const P = {
     id, el, aid: A.id,
+    coluna: typeof opts.coluna === 'string' ? opts.coluna : crypto.randomUUID(),
+    larguraColuna: Math.max(0, Math.min(2400, Number(opts.larguraColuna) || 0)),
+    pesoAltura: Math.max(.1, Math.min(10, Number(opts.pesoAltura) || 1)),
+    plano: normalizarPlano(opts.plano), planoAberto: opts.planoAberto !== false,
     engine: opts.engine || cfg.lastEngine || 'codex',
     cwd: opts.cwd || A.cwd,                // a pasta e a da aba
     model: opts.model || '',
@@ -670,6 +657,7 @@ function newPane(opts = {}) {
     chat: $('.pane-chat', el),
   };
   panes.set(id, P);
+  observarAlturaPainel(P);
 
   // interruptor Claude / Codex
   $$('.ch-lado', el).forEach(bt => {
@@ -699,6 +687,18 @@ function newPane(opts = {}) {
   $('.pn-edit', el).innerHTML = ico('pencil');
   $('.pn-edit', el).addEventListener('click', () => renomearAqui(P));
   $('.pn-txt', el).addEventListener('dblclick', () => renomearAqui(P));
+
+  // O menu da cabeceira também organiza sem precisar arrastar.
+  $('.pane-hd', el).title = 'Arraste para empilhar ou separar. Botão direito para organizar.';
+  $('.pane-hd', el).addEventListener('contextmenu', e => {
+    if (e.target.closest('button')) return;
+    e.preventDefault();
+    const outros = abaDe(P).ordem.map(id => panes.get(id)).filter(q => q && q !== P);
+    const itens = outros.map(q => ({ ic: 'panel-left', nome: 'Empilhar com ' + (q.titulo || nomeDoMotor(q.engine)),
+      fn: () => organizarPainel(P, q, true) }));
+    itens.push({ ic: 'panel-left', nome: 'Deixar em coluna própria', fn: () => separarPainel(P) });
+    abrirMenuLayout(P, e, itens);
+  });
 
   // input
   const inp = $('.p-input', el);
@@ -854,10 +854,13 @@ function newPane(opts = {}) {
   else A.ordem.splice(opts.indice, 0, id);
   remontarEspaco(A);
   pintarAba(A);
+  if (P.plano.length) desenharPlano(P, P.plano);
   if (abaAtiva !== A) ativarAbaProjeto(A);
   setFocus(P);
   inp.focus();
-  setTimeout(() => el.scrollIntoView({ behavior: 'smooth', inline: 'end', block: 'nearest' }), 60);
+  setTimeout(() => {
+    if (focusPane === P && abaDe(P) === abaAtiva) el.scrollIntoView({ behavior: window.SEM_ELECTRON ? 'instant' : 'smooth', inline: 'nearest', block: 'nearest' });
+  }, 60);
   setTimeout(savePanes, 30);
   return P;
 }
@@ -883,13 +886,14 @@ function makeSplitter() {
   s.addEventListener('mousedown', (e) => {
     e.preventDefault();
     const alvo = s.previousElementSibling;
-    if (!alvo || !alvo.classList.contains('pane')) return;
+    if (!alvo || !alvo.classList.contains('coluna')) return;
     const x0 = e.clientX, w0 = alvo.getBoundingClientRect().width;
     const minimo = 300;
     const move = (ev) => {
       const largura = Math.max(minimo, w0 + (ev.clientX - x0));
       alvo.style.flex = '0 0 ' + Math.round(largura) + 'px';
       alvo.style.minWidth = '0';
+      guardarLarguraColuna(alvo);
     };
     const up = () => {
       window.removeEventListener('mousemove', move);
@@ -911,10 +915,11 @@ function igualarChats(voltarProPrimeiro) {
   semPerderRolagem(A, () => {
     for (const pid of A.ordem) {
       const q = panes.get(pid);
-      if (q) { q.el.style.flex = ''; q.el.style.minWidth = ''; }
+      if (q) { q.larguraColuna = 0; q.pesoAltura = 1; }
     }
     // so o duplo clique no divisor ("deixa todos iguais") volta a fila de chats pro primeiro;
     // fechar ou abrir um chat nao pode arrastar a tela de lado sem ele ter pedido
+    remontarEspaco(A);
     if (voltarProPrimeiro) A.corpoEl.scrollLeft = 0;
   });
   savePanes();
@@ -957,7 +962,9 @@ function savePanes() {
         engine: P.engine, cwd: P.cwd, model: P.model, mode: P.mode, effort: P.effort,
         serviceTier: P.serviceTier, experimentalContext: P.experimentalContext,
         collaborationMode: P.collaborationMode,
-        titulo: P.titulo, larg: P.el.style.flex || '',
+        titulo: P.titulo, larg: P.larguraColuna ? '0 0 ' + P.larguraColuna + 'px' : '',
+        coluna: P.coluna, larguraColuna: P.larguraColuna, pesoAltura: P.pesoAltura,
+        plano: P.plano || [], planoAberto: P.planoAberto,
         // guarda a conversa para ela voltar cheia, e nao uma caixa vazia
         sessao: P.sessaoId || P.resumeId || '',
         arquivo: P.sessaoFile || '',
@@ -1032,8 +1039,10 @@ async function restaurarAbasCorpo(salvas) {
         model: c.model, mode: c.mode, effort: c.effort, titulo: c.titulo,
         serviceTier: c.serviceTier, experimentalContext: c.experimentalContext,
         collaborationMode: c.collaborationMode,
+        coluna: c.coluna, pesoAltura: c.pesoAltura, plano: c.plano, planoAberto: c.planoAberto,
+        larguraColuna: c.larguraColuna || Number((String(c.larg || '').match(/([\d.]+)px$/) || [])[1]) || 0,
       });
-      if (c.larg) P.el.style.flex = c.larg;
+      // A largura antiga migrou para a coluna; a altura usa proporção.
       // ramo que fechou o app antes da 1a mensagem: continua sendo ramo (leva 8.3)
       if (c.fork) P.forkPendente = true;
       // chat que estava numa branch isolada volta nela (leva 10.5); o rotulo "⎇ nome" tem
@@ -1103,6 +1112,7 @@ async function trocarMotor(P, novo) {
   // Codex, e o id do Codex nao existe no Claude. Se ele atravessa a troca, o motor novo tenta
   // retomar uma conversa impossivel ("no rollout found" no Codex). A continuidade entre os
   // motores vem pelo contexto montado logo abaixo, nao pelo id do motor antigo.
+  limparPlano(P); limparSugestoes(P);
   P.engine = novo; P.started = false; P.model = '';
   P.effectiveSettings = null; P.settingsPending = false;
   P.collaborationMode = estavaPlanejando ? 'plan' : 'default';
@@ -1268,6 +1278,7 @@ async function closePane(id, semPerguntar) {
     // Parar o Codex pode levar ate 1,5s (ele espera o turn/interrupt) e na VPS vai por ssh.
     // O chat tem de sumir no clique: o processo principal termina de matar o turno sozinho.
     window.api.paneStop({ paneId: id, engine: P.engine }).catch(() => {});
+    P.tamanhoObserver?.disconnect();
     P.el.remove(); panes.delete(id);
     marcarAbertas();          // fechou o chat: a borda da conversa na lista apaga junto
     if (focusPane === P) focusPane = null;
@@ -1277,7 +1288,6 @@ async function closePane(id, semPerguntar) {
     if (A.ativo === id) A.ativo = A.ordem[Math.max(0, i - 1)] || A.ordem[0] || null;
     if (!A.ordem.length) { fecharAba(A); return; }   // aba sem chat nenhum some junto
     remontarEspaco(A);
-    igualarChats();
     pintarAba(A);
     const viz = panes.get(A.ordem[Math.max(0, i - 1)]) || panes.get(A.ordem[0]);
     if (viz) setFocus(viz);
@@ -2660,6 +2670,7 @@ function note(P, text, isErr) {
 function comecarTurno(P) {
   /* Relogio PROPRIO do turno. Nao dava pra reaproveitar o P.comecouEm: ele e do aviso de
      "ficou pronto" e o avisarQueTerminou o zera UMA LINHA antes do carimbo ser desenhado. */
+  limparSugestoes(P);
   P.t0 = Date.now();
   P.usoTurno = null;
   P.mudancasTurno = [];
@@ -2961,6 +2972,7 @@ async function send(P) {
       && !(P.anexos || []).length && !P.quadroColado
       && VIVO.P !== P && DITADO.P !== P) inp.value = 'continue';
   const text = inp.value.trim();
+  if (text || (P.anexos || []).length || P.quadroColado) limparSugestoes(P);
   /* Print colado sozinho TEM de sair. Antes o envio exigia texto: ele colava a imagem, apertava
      Enter e nao acontecia nada — a fichinha ficava presa no campo e ele achava que tinha
      mandado. Agora o anexo (ou o desenho do quadro) ja basta; so o campo totalmente vazio,
@@ -3182,7 +3194,10 @@ function receberEventoPane(ev) {
     case 'text-delta': textDelta(P, ev.id, ev.text); break;
     case 'think-delta': thinkDelta(P, ev.text); break;
     case 'text-final': textFinal(P, ev.id, ev.text); break;
-    case 'tool-start': toolStart(P, ev.id, ev.name, ev.arg, { edicao: ev.edicao, tarefas: ev.tarefas }); break;
+    case 'tool-start':
+      if (Array.isArray(ev.tarefas)) { desenharPlano(P, ev.tarefas); savePanes(); }
+      toolStart(P, ev.id, ev.name, ev.arg, { edicao: ev.edicao, tarefas: ev.tarefas }); break;
+    case 'sugestao': mostrarSugestoes(P, ev.itens); break;
     case 'tool-output': toolOutput(P, ev.id, ev.text); break;
     case 'tool-end': toolEnd(P, ev.id, ev.output, ev.error, ev.imagens); break;
     // o agente te chamou no meio do trabalho (PushNotification interceptada no main)
@@ -3225,7 +3240,9 @@ function receberEventoPane(ev) {
     case 'turn-end':
       marcarFimDoTurno(P);   // PRIMEIRA linha: o carimbo precisa do P.t0 antes de qualquer limpeza
       avisarQueTerminou(P);
-      P.busy = false; escondePerm(P, false);   // perguntas não bloqueantes continuam respondíveis
+      P.busy = false;
+      if (P.sugestoesPendentes) mostrarSugestoes(P, P.sugestoesPendentes);
+      escondePerm(P, false);   // perguntas não bloqueantes continuam respondíveis
       setDot(P, 'idle'); P.blocks.clear(); pararTrabalho(P); limparPassos(P);
       mostrarContinuar(P);
       atualizarGit(P);   // leva 10.4: o turno acabou; o chip mostra o que ele mexeu na pasta
@@ -3441,6 +3458,9 @@ function cartaoCodex(P, classe, titulo) {
   P.chat.appendChild(el); scroll(P); return el;
 }
 function planoCodex(P, ev) {
+  if (Array.isArray(ev.steps) || Array.isArray(ev.plan)) {
+    desenharPlano(P, ev.steps || ev.plan); savePanes(); return;
+  }
   const id = ev.turnId || ev.id || 'atual';
   if (!P.codexPlan || !P.codexPlan.el.isConnected || P.codexPlan.id !== id) {
     P.codexPlan = { id, el: cartaoCodex(P, 'cx-plano-cartao', 'Plano de trabalho') };
@@ -7201,7 +7221,7 @@ async function openSession(s, el) {
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
   P.effectiveSettings = null; P.settingsPending = false;
   P.sessaoFile = s.file || '';   // guardado para a conversa voltar cheia quando reabrir o app
-  P.titulo = s.title || ''; P.hist = [];
+  P.titulo = s.title || ''; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.blocks.clear(); P.tools.clear(); P.chat.innerHTML = ''; P.rolagem = null;   // solta a mensagem-ancora da memoria
   fillModels(P); paintEngine(P); setDot(P, 'off');
   $('.p-cwd', P.el).textContent = nomePasta(P.cwd);
@@ -7230,7 +7250,7 @@ async function novaConversa(engine) {
   escondePerm(P);
   // sessaoId TEM de zerar junto: se ficar o da conversa anterior, uma queda de conexao faria
   // o "religar" voltar para a conversa velha em vez desta nova
-  P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.hist = [];
+  P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.forkPendente = false;   // leva 8.3: conversa nova nunca e ramo de outra
   P.effort = EF_NOVO; P.ultraAvisado = false;   // conversa nova sempre volta ao Extra alto
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
@@ -7353,16 +7373,18 @@ function alvoDoPane(ev, P) {
 
   const A = abaAtiva;
   if (!A || !sob.closest('.espaco')) return null;
-  const vivos = A.ordem.map(id => panes.get(id)).filter(Boolean);
-  let indice = vivos.length, x = 0;
-  const r0 = A.corpoEl.getBoundingClientRect();
-  for (let k = 0; k < vivos.length; k++) {
-    const r = vivos[k].el.getBoundingClientRect();
-    if (ev.clientX < r.left + r.width / 2) { indice = k; x = r.left; break; }
-    x = r.right;
+  const paneEl = sob.closest('.pane');
+  const Q = paneEl && panes.get(paneEl.dataset.id);
+  if (!Q || Q === P) return null;
+  const r = paneEl.getBoundingClientRect();
+  const meio = ev.clientX > r.left + r.width * .22 && ev.clientX < r.right - r.width * .22;
+  if (meio) {
+    const antes = ev.clientY < r.top + r.height / 2;
+    return { tipo: 'pilha', A, Q, antes, x: r.left, y: antes ? r.top : r.bottom - 3, h: 3, w: r.width };
   }
-  if (indice === vivos.length) x = vivos.length ? vivos[vivos.length - 1].el.getBoundingClientRect().right : r0.left;
-  return { tipo: 'fila', A, indice, x, y: r0.top, h: r0.height };
+  const antes = ev.clientX < r.left + r.width / 2;
+  const col = paneEl.closest('.coluna').getBoundingClientRect();
+  return { tipo: 'coluna', A, Q, antes, x: antes ? col.left : col.right, y: col.top, h: col.height, w: 3 };
 }
 
 function pintarAlvoPane(alvo, marca) {
@@ -7372,6 +7394,7 @@ function pintarAlvoPane(alvo, marca) {
   marca.style.left = (alvo.x - 1) + 'px';
   marca.style.top = alvo.y + 'px';
   marca.style.height = alvo.h + 'px';
+  marca.style.width = (alvo.w || 3) + 'px';
 }
 
 function soltarPane(P, alvo) {
@@ -7380,6 +7403,9 @@ function soltarPane(P, alvo) {
     if (alvo.A === A0) return;
     moverPane(P, alvo.A, null);
     return;
+  }
+  if (alvo.tipo === 'pilha' || alvo.tipo === 'coluna') {
+    organizarPainel(P, alvo.Q, alvo.tipo === 'pilha', alvo.antes); return;
   }
   let idx = alvo.indice;
   if (A0 === alvo.A) {
@@ -8234,7 +8260,7 @@ async function aplicarWorktree(P, nome) {
   P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
   pararTrabalho(P); limparPassos(P); limparContinuar(P);
   P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null; P.forkPendente = false;
-  P.titulo = ''; P.nomeManual = false; P.hist = [];
+  P.titulo = ''; P.nomeManual = false; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.blocks.clear(); P.tools.clear();
   P.started = false; setDot(P, 'off');
   voltarVazio(P);

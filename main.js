@@ -822,6 +822,7 @@ function claudeStart(paneId, opts) {
     '--verbose', '--include-partial-messages',
     '--permission-mode', CLAUDE_MODE[opts.approval] || 'bypassPermissions',
   ];
+  if (opts.sugestoes !== false && !ehRemoto(opts.cwd)) args.push('--prompt-suggestions');
   const modo = opts.approval || 'bypass';
   if (modo === 'bypass') {
     args.push('--dangerously-skip-permissions');
@@ -995,6 +996,15 @@ function imagensDoResultado(content) {
 }
 
 function claudeMessage(paneId, m) {
+  if (m.type === 'prompt_suggestion') {
+    const raw = m.suggestion ?? m.prompt ?? m.text ?? m.value;
+    const itens = [...new Set((Array.isArray(raw) ? raw : [raw]).map(x =>
+      typeof x === 'string' ? x : x && typeof x === 'object' ? (x.text || x.prompt || x.suggestion || '') : '')
+      .filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 4000)))].slice(0, 2);
+    if (itens.length) emit(paneId, 'sugestao', { itens });
+    return;
+  }
+
   if (m.type === 'control_response') return;
   if (m.type === 'control_request' && m.request && m.request.subtype === 'can_use_tool') {
     const key = 'cl_' + paneId + '_' + m.request_id;
