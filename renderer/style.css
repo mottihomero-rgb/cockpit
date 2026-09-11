@@ -1084,84 +1084,68 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
    ABAS DE PROJETO no topo + chats lado a lado dentro de cada aba
    ============================================================ */
 
-#abasTopo{height:41px;flex:none;display:flex;align-items:flex-end;
-  background:var(--aba-barra);border-bottom:1px solid var(--aba-borda);
-  padding-left:var(--recuo-abas,48px);transition:padding-left .12s ease-out}
-#abasLista{flex:0 1 auto;min-width:0;display:flex;align-items:flex-end;gap:2px;
-  padding:0 0 0 6px;overflow-x:auto;overflow-y:hidden}
-.abas-gap{flex:1;min-width:6px}
-#abasLista::-webkit-scrollbar{height:0}
-.aba-mais{flex:none;width:32px;height:28px;align-self:flex-end;margin:0 3px 4px;
-  border-radius:7px;display:grid;place-items:center;color:var(--fg-dim)}
-/* o + do canto abre chat na aba de agora, e leva um rotulo para nao confundir com o outro */
-.aba-mais.canto{width:auto;padding:0 10px;gap:5px;grid-auto-flow:column;
-  background:var(--aba-fundo);border:1px solid var(--aba-borda);color:var(--fg)}
-.aba-mais.canto:hover{background:var(--aba-alto);color:var(--fg-strong)}
-.am-txt{font-size:11px}
+/* Visual das abas igual ao Cockpit do Hugo (10/09): cartao quadrado de duas linhas,
+   e a barra de titulo do Mac saiu. A faixa das abas virou a barra de titulo: e ela que
+   arrasta a janela, e o recuo da esquerda e o lugar dos tres semaforos.
+   --topo-altura = tudo que fica acima do #shell. No Mac so a faixa (58px); o
+   index-web.html ainda tem a barra de titulo e redefine no celular.css. */
+:root{--topo-altura:58px;--veu-topo:58px;--recuo-semaforo:80px}
+#abasTopo{height:58px;flex:none;display:flex;align-items:center;gap:8px;
+  padding:0 10px 0 var(--recuo-semaforo);background:var(--bg-flutua);border-bottom:1px solid var(--line);
+  -webkit-app-region:drag}
+#abasLista{flex:0 1 auto;min-width:0;display:flex;align-items:center;gap:8px;
+  overflow-x:auto;overflow-y:hidden}
+.abas-gap{flex:1;min-width:8px}
+#abasLista::-webkit-scrollbar{height:0;display:none}
+/* o + logo depois das abas: abre aba nova (cartao tracejado) */
+.aba-mais{flex:none;width:38px;height:44px;border-radius:10px;border:1px dashed var(--line2);
+  background:var(--bg2);display:grid;place-items:center;color:var(--fg-fraco);-webkit-app-region:no-drag}
+.aba-mais:hover{color:var(--fg);border-color:var(--fg-dim);border-style:solid}
 .aba-mais .ic{width:15px;height:15px}
-.aba-mais:hover{background:var(--hover2);color:var(--fg-strong)}
+/* o + do canto abre chat na aba de agora, e leva um rotulo para nao confundir com o outro */
+.aba-mais.canto{width:auto;height:28px;padding:0 9px;gap:5px;grid-auto-flow:column;
+  border:1px solid transparent;border-radius:7px;background:none;color:var(--fg-dim)}
+.aba-mais.canto:hover{background:var(--hover2);color:var(--fg);border-color:var(--line2)}
+.am-txt{font-size:11px}
 
-/* o shell perde a altura da barra de abas */
-#shell{display:flex;height:calc(100% - 79px)}
+/* o shell perde a altura do que fica em cima dele */
+#shell{display:flex;height:calc(100% - var(--topo-altura))}
 
-/* --- a aba (um projeto): forma de aba mesmo, com o canto cortado --- */
-/* largura de conforto 215px, mas encolhe conforme abre aba nova, igual navegador */
-/* o width:215px NAO e redundante com o flex-basis. O container-type de baixo faz o navegador
-   medir a aba "como se estivesse vazia", entao a barra de abas nunca pedia mais do que o
-   min-width: as abas ficavam sempre em 46px (so o icone), sobrando espaco na tela. Com uma
-   largura declarada, a barra volta a pedir os 215px de conforto e encolher so quando precisa. */
-.aba{position:relative;flex:0 1 215px;width:215px;min-width:46px;max-width:260px;height:31px;
-  container-type:inline-size;
-  display:flex;align-items:center;gap:7px;padding:0 8px 0 12px;
-  color:var(--fg-dim);cursor:pointer;overflow:hidden;
-  /* canto de cima-direita chanfrado: e o que da a cara de aba */
-  clip-path:polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 0 100%);
-  background:linear-gradient(180deg, var(--aba-alto) 0%, var(--aba-fundo) 100%);
-  box-shadow:inset 0 0 0 1px var(--aba-borda), inset 0 1px 0 var(--aba-brilho);
-  transition:height .12s ease-out, filter .12s}
-.aba:hover{filter:brightness(1.07);color:var(--fg)}
-/* a aba aberta sobe, ganha a cor do conteudo e encosta nele */
-/* o neon leve da aba aberta: um fio da cor de destaque contornando a aba, mais um halo
-   suave por dentro. E inset de proposito — o clip-path do chanfro corta qualquer sombra
-   por fora, entao brilho externo simplesmente nao apareceria. */
-.aba.ativa{height:38px;color:var(--fg-strong);
-  background:linear-gradient(180deg, var(--aba-alto-on) 0%, var(--bg) 38%, var(--bg) 100%);
-  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--aba-neon) 60%, var(--aba-borda-on)),
-             inset 0 0 13px -3px color-mix(in srgb, var(--aba-neon) 70%, transparent),
-             inset 0 1.5px 0 var(--aba-brilho-on),
-             inset -14px 0 22px -20px var(--sombra2), inset 14px 0 22px -20px var(--sombra2);
-  transition:height .12s ease-out, box-shadow .18s ease-out}
-.aba.ativa:hover{filter:none}
+/* --- a aba (um projeto): cartao de duas linhas, igual o do Hugo ---
+   linha 1: bolinha da cor + nome + ponto de "trabalhando"; linha 2: quantos chats.
+   Encolhe ate 104px quando aperta; passou disso, a faixa rola de lado. */
+.aba{position:relative;flex:0 1 auto;min-width:104px;max-width:190px;height:44px;
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;
+  padding:6px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg2);
+  color:var(--fg-dim);cursor:pointer;-webkit-app-region:no-drag;
+  --aba-cor:var(--aba-neon)}
+.aba:hover{background:var(--bg3)}
+.aba.ativa{background:var(--bg3);color:var(--fg-strong);border-color:var(--aba-cor)}
 
-.aba-ic{flex:none;width:15px;height:15px;display:grid;place-items:center;color:var(--fg-dim)}
+/* .aba-ic sozinho tambem e usado no fantasma do arraste (com icone dentro) */
+.aba-ic{flex:none;display:grid;place-items:center}
 .aba-ic .ic{width:100%;height:100%}
-.aba.ativa .aba-ic{color:var(--aba-marca)}
-.aba-txt{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;line-height:1.2}
-.aba-proj{font-size:12.5px;font-weight:500;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.aba.ativa .aba-proj{font-weight:700;color:var(--fg-strong)}
-.aba-tit{font-size:9.5px;color:var(--fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.aba-dot{flex:none;width:6px;height:6px}
-.aba-dot.off{display:none}
-.aba-x{flex:none;width:18px;height:18px;margin-right:2px;border-radius:5px;
-  display:grid;place-items:center;color:var(--fg-dim);opacity:0}
-.aba-x .ic{width:11px;height:11px}
-.aba:hover .aba-x,.aba.ativa .aba-x{opacity:.7}
-.aba-x:hover{background:var(--hover3);color:var(--fg-strong);opacity:1 !important}
+/* o X e absoluto no canto e tem fundo solido: a folga da direita impede que ele cubra o ponto */
+.aba-topo{display:flex;align-items:center;gap:6px;width:100%;padding-right:14px}
+.aba .aba-ic{width:8px;height:8px;border-radius:50%;background:var(--aba-cor)}
+.aba-proj{flex:1;min-width:0;font-size:12.5px;font-weight:600;text-align:left;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* --fg-dim, nao --fg-fraco: em 10px o contador sumia. Na aba aberta sobe pra --fg */
+.aba-tit{max-width:100%;font-size:10px;color:var(--fg-dim);padding-left:14px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aba.ativa .aba-tit{color:var(--fg)}
+/* o ponto ocupa lugar mesmo apagado: senao a aba mudava de largura ao comecar e
+   terminar o trabalho, e as vizinhas pulavam de lugar. So aparece trabalhando. */
+.aba .aba-dot{width:6px;height:6px}
+.aba .aba-dot.off,.aba .aba-dot.idle{visibility:hidden}
+.aba-x{position:absolute;top:5px;right:5px;width:16px;height:16px;border-radius:4px;
+  display:grid;place-items:center;color:var(--fg-fraco);background:var(--bg2);opacity:0}
+.aba-x .ic{width:9px;height:9px}
+.aba:hover .aba-x,.aba.ativa .aba-x{opacity:1}
+.aba.ativa .aba-x{background:var(--bg3)}
+.aba-x:hover{background:var(--hover3);color:var(--red)}
 /* aba de outro projeto que recebeu resposta enquanto voce estava em outra */
-.aba.nova .aba-proj{color:var(--aba-marca);font-weight:600}
-
-/* abas apertadas: vai jogando fora o que e menos importante, em vez de cortar */
-@container (max-width: 150px){
-  .aba{gap:5px;padding:0 5px 0 8px}
-  .aba-tit{display:none}                      /* some o "2 chats" */
-}
-@container (max-width: 92px){
-  .aba-x{display:none}                        /* some o X (fecha pelo botao do meio ou menu) */
-}
-@container (max-width: 62px){
-  .aba-txt{display:none}                      /* so o icone, igual navegador cheio de aba */
-  .aba{justify-content:center;padding:0 4px}
-}
+.aba.nova .aba-proj{color:var(--fg-strong)}
 
 /* --- espaco de cada aba: os chats lado a lado, igual antes --- */
 #panes{flex:1;display:flex;min-width:0;overflow:hidden}
@@ -1196,7 +1180,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .pane-split:hover{background:var(--accent)}
 
 /* ============ tela do meio: nova aba ============ */
-#novaAba{position:fixed;inset:38px 0 0 0;z-index:400;display:grid;place-items:center;
+#novaAba{position:fixed;inset:var(--veu-topo,38px) 0 0 0;z-index:400;display:grid;place-items:center;
   background:var(--veu);backdrop-filter:blur(7px);padding:24px}
 #novaAba.hidden{display:none !important}
 .na-cx{width:min(430px,100%);background:var(--bg-flutua);border:1px solid var(--line2);
@@ -1252,7 +1236,8 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .na-ok:focus-visible{box-shadow:0 0 0 3px var(--hover3)}
 
 /* aba de outro projeto que recebeu resposta enquanto voce estava em outra */
-.aba.nova::after{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--aba-marca)}
+.aba.nova::after{content:"";position:absolute;left:-1px;top:10px;bottom:10px;width:3px;
+  border-radius:0 3px 3px 0;background:var(--aba-cor)}
 
 /* ---------- trabalhar na VPS ---------- */
 .na-ondes{display:flex;gap:8px;margin-bottom:18px}
@@ -1274,8 +1259,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .na-atalho:hover{background:var(--bg4);color:var(--fg-strong);border-color:var(--accent)}
 
 /* aba de projeto que vive na VPS */
-.aba.vps .aba-ic{color:var(--green)}
-.aba.vps.ativa .aba-ic{color:var(--green)}
+.aba.vps{--aba-cor:var(--green)}
 .aba.vps .aba-tit{color:var(--green)}
 .cx-vps{width:min(440px,92vw);padding:0}
 .cx-vps .na-caminho{margin:0 16px}
@@ -1345,7 +1329,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
    O corredor vertical entre um bloco e outro (.ag-liga) é onde a linha é desenhada: encolher
    isso devolve o visual de lista e mata a leitura de fluxo. A cor viva do momento é --ag, que
    o JS troca conforme o motor do chat (Claude ou Codex). */
-#agPainel{position:fixed;inset:38px 0 0 0;z-index:500;display:grid;place-items:center;
+#agPainel{position:fixed;inset:var(--veu-topo,38px) 0 0 0;z-index:500;display:grid;place-items:center;
   background:var(--veu);backdrop-filter:blur(8px);padding:22px;--ag:var(--claude)}
 #agPainel.hidden{display:none !important}
 .ag-cx{width:min(1000px,96vw);height:min(86vh,880px);display:flex;flex-direction:column;
@@ -1463,7 +1447,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 /* ============ lista de atalhos do teclado (⌘/) ============ */
 /* mesmo visual da tela de nova aba: veu escuro + cartao no meio. So que aqui o cartao e mais
    largo e rola por dentro — a lista tem 40 e poucas linhas e nao pode empurrar a pagina. */
-#telaAtalhos{position:fixed;inset:38px 0 0 0;z-index:560;display:grid;place-items:center;
+#telaAtalhos{position:fixed;inset:var(--veu-topo,38px) 0 0 0;z-index:560;display:grid;place-items:center;
   background:var(--veu);backdrop-filter:blur(7px);padding:24px}
 #telaAtalhos.hidden{display:none !important}
 .at-cx{width:min(640px,100%);max-height:100%;overflow-y:auto;background:var(--bg-flutua);
@@ -1510,11 +1494,12 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 
 /* ================= conversas: apagar, ramificar, grupos (leva 8) ================= */
 
-/* Janelinha e menu que NAO pertencem a nenhum chat. O inset comeca em 38px de proposito:
-   com inset:0 (como no fork de origem, que e Windows) o veu cobriria a barra de titulo do
-   Mac e matava o arrasto da janela e os tres semaforos. 600/610 fica acima do #telaAtalhos
+/* Janelinha e menu que NAO pertencem a nenhum chat. O inset comeca abaixo da barra que
+   arrasta a janela (--veu-topo: a faixa de abas no Mac) de proposito: com inset:0 (como no
+   fork de origem, que e Windows) o veu cobriria essa barra e matava o arrasto da janela e
+   os tres semaforos. 600/610 fica acima do #telaAtalhos
    (560) e abaixo do arraste de aba (900). */
-.modal.global{position:fixed;inset:38px 0 0 0;z-index:600}
+.modal.global{position:fixed;inset:var(--veu-topo,38px) 0 0 0;z-index:600}
 .pop-global{position:fixed;z-index:610;min-width:200px;max-width:290px;padding:5px;
   background:var(--bg-flutua);border:1px solid var(--line2);border-radius:10px;
   box-shadow:0 14px 40px var(--sombra2)}
@@ -1640,20 +1625,15 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
    nunca vê. Nomes com prefixo `fx` de propósito: a classe `.aviso` do fork de origem já é
    usada aqui pela tarja de limite do plano (`.p-uso aviso`, app.js) e o CSS de lá a
    repintaria inteira (padding, fundo, borda, tamanho de letra).
-   `position:fixed`: #shell tem altura calculada na mão (100% - 79px); um elemento a mais no
-   fluxo do body empurraria a tela toda para baixo. */
-#faixaAvisos{position:fixed;left:0;right:0;top:79px;z-index:60;display:flex;flex-direction:column;
+   `position:fixed`: #shell tem altura calculada na mão (100% - --topo-altura); um elemento a
+   mais no fluxo do body empurraria a tela toda para baixo.
+   O top segue --topo-altura: no Mac 58px (só a faixa de abas); no telefone a barra de título
+   é mais alta (46px + o recorte da câmera) e quem soma isso é o celular.css — é o único que
+   conhece o --sat. Antes aqui havia um calc com --sat que, sem o celular.css (no Mac, janela
+   estreita ou com zoom), ficava inválido e enterrava a barra de abas. */
+#faixaAvisos{position:fixed;left:0;right:0;top:var(--topo-altura);z-index:60;display:flex;flex-direction:column;
   max-height:30vh;overflow-y:auto}
 #faixaAvisos:empty{display:none}
-/* no telefone a barra de título é mais alta (46px + o recorte da câmera). O --sat só existe
-   com o celular.css carregado, e só o index-web.html o carrega: no Mac ele NÃO existe. Sem o
-   fallback `0px` o calc fica inválido em tempo de valor computado e o `top` cai para `auto`
-   — NÃO para os 79px da regra de cima —, e a faixa (que é `fixo:true`, fica até ele resolver)
-   enterra a barra de abas de projeto em janela estreita ou com zoom (⌘+ reduz o viewport CSS
-   abaixo de 820px mesmo com o minWidth 900 da janela). */
-@media (max-width: 820px), (pointer: coarse) and (max-width: 1100px) {
-  #faixaAvisos{top:calc(87px + var(--sat, 0px))}
-}
 .fx{display:flex;align-items:center;gap:9px;padding:7px 12px;font-size:12px;
   border-bottom:1px solid var(--line);background:var(--bg3);color:var(--fg)}
 .fx-alerta{background:color-mix(in srgb,var(--yellow) 16%,var(--bg3));

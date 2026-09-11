@@ -51,7 +51,7 @@
    ========================================================================== */
 
 #qdPainel,.qd-painel{
-  position:fixed;inset:38px 0 0 0;   /* 38px = a barra de abas do app */
+  position:fixed;inset:var(--veu-topo,38px) 0 0 0;   /* comeca onde acaba a barra que arrasta a janela (style.css) */
   z-index:520;                        /* acima do painel de agentes (500) e da nova aba (400) */
   display:grid;place-items:center;
   background:var(--veu);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);

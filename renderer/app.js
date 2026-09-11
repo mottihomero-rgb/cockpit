@@ -264,8 +264,7 @@ function abaDe(P) { return abas.get(P.aid); }
 function pintarAba(A) {
   const n = A.ordem.length;
   const naVps = NA_VPS(A.cwd);
-  A.el.classList.toggle('vps', naVps);
-  $('.aba-ic', A.el).innerHTML = ico(naVps ? 'server' : 'folder');
+  A.el.classList.toggle('vps', naVps);   // a bolinha da aba fica verde (style.css)
   $('.aba-proj', A.el).textContent = nomeProjeto(A.cwd);
   $('.aba-tit', A.el).textContent = (naVps ? 'VPS · ' : '') + (n === 0 ? 'sem chat' : (n === 1 ? '1 chat' : n + ' chats'));
   A.el.title = shortPath(A.cwd) + '\n' + (n === 1 ? '1 chat aberto' : n + ' chats abertos');
@@ -299,6 +298,9 @@ function ativarAbaProjeto(A) {
     B.corpoEl.classList.toggle('oculta', !on);
   }
   if (A.el.classList.contains('nova')) A.el.classList.remove('nova');
+  // com muita aba a faixa rola de lado (a aba nao encolhe abaixo de 104px): a que abriu
+  // tem que ficar a vista, senao o cmd+1..9 trocava para uma aba escondida
+  A.el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   // o chat guardado pode ter mudado de aba: nesse caso ele levaria voce de volta para a outra
   if (A.ativo && !A.ordem.includes(A.ativo)) A.ativo = null;
   const P = panes.get(A.ativo) || panes.get(A.ordem[0]);
@@ -7738,7 +7740,6 @@ document.querySelectorAll('.act').forEach(b => b.addEventListener('click', () =>
   document.querySelectorAll('.act').forEach(x => x.classList.toggle('active', x === b));
   document.querySelectorAll('.side-view').forEach(x => x.classList.toggle('hidden', x.dataset.view !== v));
   abrirVistaLateral(v);
-  encostarAbas();
 }));
 
 /* ===================== LEVA 10.2 — TORRE DE CONTROLE =====================
@@ -8303,7 +8304,6 @@ function abrirBuscaDeConversa() {
   $$('.side-view').forEach(x => x.classList.toggle('hidden', x.dataset.view !== v));
   loadHist(eng); pintarContaLateral(eng);
   sincronizarIconesLaterais();
-  encostarAbas();
   const campo = $('.side-busca[data-busca="' + eng + '"]');
   if (campo) setTimeout(() => { campo.focus(); campo.select(); }, 60);
 }
@@ -8332,7 +8332,6 @@ function toggleSidebar() {
     // leva 10.2: abrindo a coluna pelo atalho, a torre também precisa nascer atualizada
     if (v && v.dataset.view === 'torre') pintarTorre(true);
   }
-  encostarAbas();
 }
 
 /* O icone aceso na barrinha da esquerda tem de dizer a verdade: so fica marcado quando a
@@ -8345,26 +8344,11 @@ function sincronizarIconesLaterais() {
   $$('.act').forEach(x => x.classList.toggle('active', !!vista && x.dataset.view === vista));
 }
 
-// a primeira aba comeca no fim da coluna da esquerda, aberta ou fechada
-function encostarAbas() {
-  // no telefone a lateral e uma gaveta por cima: as abas ficam encostadas na esquerda
-  if (window.SEM_ELECTRON || window.innerWidth < 700) {
-    document.documentElement.style.setProperty('--recuo-abas', '0px');
-    return;
-  }
-  const barra = $('#activitybar'), lateral = $('#sidebar'), puxador = $('#dragbar');
-  let x = barra ? barra.getBoundingClientRect().width : 48;
-  if (lateral && !lateral.classList.contains('hidden')) {
-    x += lateral.getBoundingClientRect().width;
-    if (puxador && !puxador.classList.contains('hidden')) x += puxador.getBoundingClientRect().width;
-  }
-  document.documentElement.style.setProperty('--recuo-abas', Math.round(x) + 'px');
-}
 
 (() => {
   let drag = false;
   $('#dragbar').addEventListener('mousedown', () => { drag = true; document.body.style.cursor = 'col-resize'; });
-  window.addEventListener('mousemove', (e) => { if (drag) { $('#sidebar').style.width = Math.min(480, Math.max(160, e.clientX - 48)) + 'px'; encostarAbas(); } });
+  window.addEventListener('mousemove', (e) => { if (drag) { $('#sidebar').style.width = Math.min(480, Math.max(160, e.clientX - 48)) + 'px'; } });
   window.addEventListener('mouseup', () => { drag = false; document.body.style.cursor = ''; });
 })();
 
@@ -8426,7 +8410,7 @@ document.addEventListener('keydown', (e) => {
   if (inpFoco && document.activeElement !== inpFoco) inpFoco.focus();
 });
 
-window.addEventListener('resize', () => { for (const P of panes.values()) paintEngine(P); encostarAbas(); });
+window.addEventListener('resize', () => { for (const P of panes.values()) paintEngine(P); });
 
 /* ---- Lista de atalhos (⌘/) ----
    REGRA: so pode entrar aqui o que FAZ o que a linha diz. Uma tela de ajuda mentindo e pior
@@ -8784,7 +8768,6 @@ document.addEventListener('keydown', (e) => {
   // barra de icones aparece, a lateral comeca fechada
   $('#sidebar').classList.add('hidden'); $('#dragbar').classList.add('hidden');
   sincronizarIconesLaterais();
-  encostarAbas();
   // volta com as abas e os chats de antes; so se nao houver nada e que pergunta o que abrir
   let voltou = false;
   try { voltou = await restaurarAbas(); }
