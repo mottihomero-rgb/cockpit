@@ -2851,7 +2851,25 @@ function credClaude(denovo) {
   return credGuardada;
 }
 
-async function usoDoClaude(segundaTentativa) {
+/* UMA leitura do limite do Claude para todo mundo: faixa, cartao da conta, janela da conta e
+   celular. Antes cada um perguntava por conta propria (a coluna aberta de 2 em 2 min, o fim de
+   cada resposta de cada chat, o celular...). Com varios chats trabalhando, a Anthropic
+   respondia 429 e a tela APAGAVA os numeros que ja tinha, ficando so com "—".
+   Agora: a leitura vale 90s, pedidos ao mesmo tempo viram um so, no 429 espera o prazo que
+   ela manda (retry-after) e, enquanto isso, devolve o ultimo numero bom com a hora dele. */
+const USO_VALE_MS = 90 * 1000;
+const usoClaude = { dados: null, quando: 0, pausaAte: 0, pausa: 0, voando: null };
+const ultimoBomClaude = () => (usoClaude.dados ? { ...usoClaude.dados, velho: usoClaude.quando } : null);
+
+async function usoDoClaude() {
+  const agora = Date.now();
+  if (usoClaude.dados && agora - usoClaude.quando < USO_VALE_MS) return usoClaude.dados;
+  if (agora < usoClaude.pausaAte) return ultimoBomClaude() || { limitado: true, voltaEm: usoClaude.pausaAte };
+  if (!usoClaude.voando) usoClaude.voando = buscarUsoDoClaude().finally(() => { usoClaude.voando = null; });
+  return usoClaude.voando;
+}
+
+async function buscarUsoDoClaude(segundaTentativa) {
   const t = credClaude(false);
   if (!t) return null;
   try {
@@ -2859,12 +2877,63 @@ async function usoDoClaude(segundaTentativa) {
       headers: { Authorization: 'Bearer ' + t, 'anthropic-beta': 'oauth-2025-04-20' },
     });
     // vencida: descarta a guardada e tenta mais uma vez com a atual
-    if ((r.status === 401 || r.status === 403) && !segundaTentativa) { credClaude(true); return usoDoClaude(true); }
-    // 429 e "muita consulta em pouco tempo", nao e conta com problema: vale dizer isso
-    if (r.status === 429) return { limitado: true };
-    if (!r.ok) return null;
-    return await r.json();
-  } catch { return null; }
+    if ((r.status === 401 || r.status === 403) && !segundaTentativa) { credClaude(true); return buscarUsoDoClaude(true); }
+    // 429 e "muita consulta em pouco tempo", nao e conta com problema. Espera o que ela
+    // mandar; sem prazo, dobra a espera a cada 429 seguido (2, 4, 8... ate 15 min)
+    if (r.status === 429) {
+      const pediu = Number(r.headers.get('retry-after')) * 1000;
+      usoClaude.pausa = Math.min(15 * 60000, Math.max(60000, pediu > 0 ? pediu : (usoClaude.pausa * 2 || 120000)));
+      usoClaude.pausaAte = Date.now() + usoClaude.pausa;
+      return ultimoBomClaude() || { limitado: true, voltaEm: usoClaude.pausaAte };
+    }
+    if (!r.ok) return ultimoBomClaude();
+    const j = await r.json();
+    Object.assign(usoClaude, { dados: j, quando: Date.now(), pausa: 0, pausaAte: 0 });
+    return j;
+  } catch { return ultimoBomClaude(); }
+}
+
+/* Janela do Claude na forma que a tela usa. Numero ANTIGO de uma janela que ja virou nao vale
+   mais (o 97% da sessao de ontem nao e o de agora): vira "sem dado". */
+function janelaClaude(x, velho) {
+  if (!x) return null;
+  const reseta = x.resets_at ? Date.parse(x.resets_at) : 0;
+  if (velho && reseta && reseta < Date.now()) return null;
+  return { pct: Math.round(x.utilization || 0), reseta };
+}
+
+/* Limite do Codex, com o mesmo ultimo-numero-bom do Claude. O plano Pro de hoje so tem a
+   janela da SEMANA (primary de 10080 min, secondary vazio): a "Sessão" vazia e verdade, nao
+   defeito, e a tela precisa saber disso (semSessao) para nao mostrar "—" como se tivesse falhado. */
+const usoCodex = { dados: null, quando: 0 };
+async function limitesDoCodex() {
+  try {
+    await codexStart();
+    const lim = await codexReq('local', 'account/rateLimits/read', {});
+    const rl = (lim && lim.rateLimits) || null;
+    if (!rl) throw new Error('sem rateLimits');
+    Object.assign(usoCodex, { dados: rl, quando: Date.now() });
+    return { rl, velho: 0 };
+  } catch {
+    return usoCodex.dados ? { rl: usoCodex.dados, velho: usoCodex.quando } : { rl: null, velho: 0 };
+  }
+}
+function janelasDoCodex(rl, velho) {
+  const jan = (x) => {
+    if (!x) return null;
+    const reseta = (x.resetsAt || 0) * 1000;
+    if (velho && reseta && reseta < Date.now()) return null;
+    return { pct: Math.round(x.usedPercent || 0), reseta, mins: x.windowDurationMins || 0 };
+  };
+  const cru = [rl && rl.primary, rl && rl.secondary].filter(Boolean);
+  const curta = (x) => x.windowDurationMins && x.windowDurationMins <= 1440;
+  const a = jan(rl && rl.primary), b = jan(rl && rl.secondary);
+  return {
+    sessao: [a, b].find(x => x && x.mins && x.mins <= 1440) || null,
+    semana: [a, b].find(x => x && x.mins && x.mins > 1440) || null,
+    // pela resposta CRUA: so veio a janela da semana, entao o plano nao tem limite de sessao
+    semSessao: cru.length > 0 && !cru.some(curta),
+  };
 }
 
 handle('conta:ler', async (_e, engine) => {
@@ -2880,7 +2949,7 @@ handle('conta:ler', async (_e, engine) => {
     let conta = {};
     try { conta = JSON.parse((await rodar(CLAUDE_BIN, ['auth', 'status'], 25000)).out || '{}'); } catch {}
     const u = await usoDoClaude();
-    const janela = (x) => x ? { pct: Math.round(x.utilization || 0), reseta: x.resets_at ? Date.parse(x.resets_at) : 0 } : null;
+    const velho = (u && u.velho) || 0;
     return {
       entrou: !!conta.loggedIn,
       email: conta.email || '',
@@ -2890,8 +2959,10 @@ handle('conta:ler', async (_e, engine) => {
       // 429 do endpoint de uso = muita consulta em pouco tempo. Nao e conta com problema,
       // entao a tela diz isso em vez de "nao consegui ler"
       limitado: !!(u && u.limitado),
-      sessao: (u && !u.limitado) ? janela(u.five_hour) : null,
-      semana: (u && !u.limitado) ? janela(u.seven_day) : null,
+      voltaEm: (u && u.voltaEm) || 0,
+      velho,
+      sessao: (u && !u.limitado) ? janelaClaude(u.five_hour, velho) : null,
+      semana: (u && !u.limitado) ? janelaClaude(u.seven_day, velho) : null,
       extra: u && u.extra_usage ? {
         ligado: !!u.extra_usage.is_enabled,
         usado: u.extra_usage.used_credits || 0,
@@ -2911,14 +2982,11 @@ handle('conta:ler', async (_e, engine) => {
       erro: 'não consegui falar com o Codex: ' + String((e && e.message) || e),
     };
   }
-  let conta = {}, lim = {};
+  let conta = {};
   try { conta = await codexReq('local', 'account/read', {}); } catch {}
-  try { lim = await codexReq('local', 'account/rateLimits/read', {}); } catch {}
-  const rl = (lim && lim.rateLimits) || {};
-  const jan = (x) => x ? { pct: Math.round(x.usedPercent || 0), reseta: (x.resetsAt || 0) * 1000, mins: x.windowDurationMins || 0 } : null;
-  const a = jan(rl.primary), b = jan(rl.secondary);
-  const curta = [a, b].find(x => x && x.mins && x.mins <= 1440) || null;
-  const longa = [a, b].find(x => x && x.mins && x.mins > 1440) || null;
+  const { rl: rlLido, velho } = await limitesDoCodex();
+  const rl = rlLido || {};
+  const { sessao, semana, semSessao } = janelasDoCodex(rlLido, velho);
   const c = (conta && conta.account) || {};
   return {
     entrou: !!c.email,
@@ -2926,8 +2994,7 @@ handle('conta:ler', async (_e, engine) => {
     nome: c.email || '',
     plano: c.planType || rl.planType || '',
     via: c.type || '',
-    sessao: curta,
-    semana: longa,
+    sessao, semana, semSessao, velho,
     extra: rl.credits ? {
       ligado: !!rl.credits.hasCredits,
       usado: 0,
@@ -2946,21 +3013,13 @@ handle('uso:ler', async (_e, engine) => {
   if (engine === 'claude') {
     const u = await usoDoClaude();
     if (!u) return null;
-    if (u.limitado) return { limitado: true, sessao: null, semana: null };
-    const janela = (x) => x ? { pct: Math.round(x.utilization || 0), reseta: x.resets_at ? Date.parse(x.resets_at) : 0 } : null;
-    return { sessao: janela(u.five_hour), semana: janela(u.seven_day) };
+    if (u.limitado) return { limitado: true, voltaEm: u.voltaEm || 0, sessao: null, semana: null };
+    const velho = u.velho || 0;
+    return { sessao: janelaClaude(u.five_hour, velho), semana: janelaClaude(u.seven_day, velho), velho };
   }
-  try {
-    await codexStart();
-    const lim = await codexReq('local', 'account/rateLimits/read', {});
-    const rl = (lim && lim.rateLimits) || {};
-    const jan = (x) => x ? { pct: Math.round(x.usedPercent || 0), reseta: (x.resetsAt || 0) * 1000, mins: x.windowDurationMins || 0 } : null;
-    const a = jan(rl.primary), b = jan(rl.secondary);
-    return {
-      sessao: [a, b].find(x => x && x.mins && x.mins <= 1440) || null,
-      semana: [a, b].find(x => x && x.mins && x.mins > 1440) || null,
-    };
-  } catch { return null; }
+  const { rl, velho } = await limitesDoCodex();
+  if (!rl) return null;
+  return { ...janelasDoCodex(rl, velho), velho };
 });
 
 handle('auth:acao', async (_e, { engine, acao, cwd }) => {
