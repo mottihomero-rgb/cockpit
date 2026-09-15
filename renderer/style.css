@@ -900,6 +900,10 @@ textarea.cxq-input{min-height:62px;resize:vertical}
 /* anexo clicável */
 .anx.clicavel{cursor:zoom-in}
 .msg-body a.arquivo{color:var(--accent);cursor:zoom-in;text-decoration:none;border-bottom:1px dotted currentColor}
+/* miniatura da entrega: a altura ja nasce reservada, senao a imagem chegando depois empurra a
+   conversa para cima e a ultima linha some embaixo */
+.msg-body .entrega-img{display:block;height:200px;margin:8px 0 4px;cursor:zoom-in}
+.msg-body .entrega-img img{height:100%;max-width:100%;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:var(--bg3);display:block}
 .hist-cab{position:sticky;top:0;background:linear-gradient(var(--bg2) 70%,transparent);z-index:2}
 
 /* peças que mudam com o tema */

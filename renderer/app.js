@@ -86,11 +86,29 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const markdownSeguro = new marked.Renderer();
 const escaparAtributo = (v) => String(v || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 markdownSeguro.html = () => '';
+/* Link para arquivo do Mac vira link de ARQUIVO. Antes todo link que nao fosse http virava so o
+   texto: o Codex entregava "[Baixar arte](/Users/.../arte.png)" e a entrega sumia da conversa,
+   sem link, sem imagem e sem caminho. Aqui so marca o caminho; quem liga o clique e a
+   miniatura e o linkarArquivos, que sabe de qual painel (Mac ou VPS) a fala veio. */
+const caminhoDoLink = (href) => {
+  let h = String(href || '').trim();
+  if (/^file:\/\//i.test(h)) h = h.replace(/^file:\/\//i, '');
+  if (!h.startsWith('/') || h.startsWith('//')) return '';
+  try { h = decodeURIComponent(h); } catch {}
+  return h;
+};
+const linkDeArquivo = (caminho, text, img) => '<a class="arquivo" href="#" data-caminho="' + escaparAtributo(caminho) + '"'
+  + (img ? ' data-img="1"' : '') + '>' + (text || escaparAtributo(caminho.split('/').pop())) + '</a>';
 markdownSeguro.link = (href, title, text) => {
+  const caminho = caminhoDoLink(href);
+  if (caminho) return linkDeArquivo(caminho, text);
   if (!/^https?:\/\//i.test(String(href || ''))) return text;
   return '<a href="' + escaparAtributo(href) + '"' + (title ? ' title="' + escaparAtributo(title) + '"' : '') + '>' + text + '</a>';
 };
-markdownSeguro.image = (_href, _title, text) => text;
+markdownSeguro.image = (href, _title, text) => {
+  const caminho = caminhoDoLink(href);
+  return caminho ? linkDeArquivo(caminho, text, true) : text;
+};
 marked.setOptions({ breaks: true, gfm: true, renderer: markdownSeguro });
 
 const EF_PT = { minimal: 'Mínimo', low: 'Leve', medium: 'Médio', high: 'Alto',
@@ -2479,7 +2497,41 @@ function marcarLinksWeb(el) {
   }
 }
 
+/* Miniatura da entrega. Guardada por caminho porque a mesma fala e redesenhada varias vezes
+   (o ACP manda a fala inteira de novo a cada 100ms): sem a gaveta, cada redesenho pediria a
+   imagem inteira ao Mac outra vez. Poucas vagas: e vitrine, nao arquivo. */
+const miniaturas = new Map();
+const EXT_MINIATURA = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
+function miniaturaDaEntrega(P, a, caminho) {
+  const cx = document.createElement('span');
+  cx.className = 'entrega-img';
+  cx.title = 'abre aqui dentro';
+  cx.onclick = (e) => { e.preventDefault(); e.stopPropagation(); verArquivo(P, caminho); };
+  a.after(cx);
+  if (!miniaturas.has(caminho)) {
+    if (miniaturas.size >= 24) miniaturas.delete(miniaturas.keys().next().value);
+    miniaturas.set(caminho, Promise.resolve(lerParaVisor(caminho)).catch(() => null));
+  }
+  miniaturas.get(caminho).then((r) => {
+    if (!r || r.tipo !== 'imagem' || !r.dados) { miniaturas.delete(caminho); cx.remove(); return; }
+    const img = document.createElement('img');
+    img.alt = a.textContent || ''; img.src = r.dados;
+    cx.appendChild(img);
+  });
+}
+
 function linkarArquivos(P, el) {
+  /* Link de arquivo que veio do markdown ("[Baixar arte](/Users/.../arte.png)"): o caminho ja
+     vem marcado pelo markdownSeguro. Imagem ganha miniatura logo abaixo, para a entrega
+     aparecer na conversa sem precisar clicar. Teto de 6 por fala para lista grande nao
+     virar galeria. */
+  let vitrine = 0;
+  for (const a of el.querySelectorAll('a.arquivo[data-caminho]')) {
+    const caminho = caminhoDoPainel(P, a.dataset.caminho);
+    a.title = caminho;
+    a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); verArquivo(P, caminho); };
+    if (EXT_MINIATURA.test(caminho) && vitrine < 6) { vitrine++; miniaturaDaEntrega(P, a, caminho); }
+  }
   /* Painel da VPS fala de caminho de LINUX (/home, /opt, /var…), que aqui no Mac nem existe.
      Por isso a peneira muda com o painel: raizes do Mac num painel local, raizes do Linux num
      painel da VPS. Sem isso, ou o link nem aparecia, ou apontava para o arquivo errado. */
@@ -3682,7 +3734,10 @@ function renderizarHistorico(P, m) {
   const role = m.role || m.kind || m.type;
   if (role === 'user') userMsg(P, m.text || '', m.attachments || m.anexos);
   else if (['bot', 'assistant'].includes(role)) {
-    const b = botBlock(P, m.id || 'h' + Math.random()); b.raw = m.text || ''; b.el.innerHTML = marked.parse(b.raw); botoesDeCopia(b); marcarRecibo(b.el);
+    // os mesmos passos da fala ao vivo (textFinal): sem o linkarArquivos, a entrega que
+    // aparecia na hora sumia de novo ao reabrir a conversa
+    const b = botBlock(P, m.id || 'h' + Math.random()); b.raw = m.text || ''; b.el.innerHTML = marked.parse(b.raw);
+    linkarArquivos(P, b.el); marcarLinksWeb(b.el); botoesDeCopia(b); marcarRecibo(b.el);
     P.hist.push({ quem: nomeDoMotor(P.engine), texto: b.raw });
   } else if (role === 'tool') {
     const id = m.id || 'h' + Math.random(); toolStart(P, id, m.name, m.arg, { edicao: m.edicao, tarefas: m.tarefas });
