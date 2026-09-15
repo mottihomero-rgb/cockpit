@@ -1103,10 +1103,10 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 /* Visual das abas igual ao Cockpit do Hugo (10/09): cartao quadrado de duas linhas,
    e a barra de titulo do Mac saiu. A faixa das abas virou a barra de titulo: e ela que
    arrasta a janela, e o recuo da esquerda e o lugar dos tres semaforos.
-   --topo-altura = tudo que fica acima do #shell. No Mac so a faixa (58px); o
+   --topo-altura = tudo que fica acima do #shell. No Mac so a faixa (50px); o
    index-web.html ainda tem a barra de titulo e redefine no celular.css. */
-:root{--topo-altura:58px;--veu-topo:58px;--recuo-semaforo:80px}
-#abasTopo{height:58px;flex:none;display:flex;align-items:center;gap:8px;
+:root{--topo-altura:50px;--veu-topo:50px;--recuo-semaforo:80px}
+#abasTopo{height:50px;flex:none;display:flex;align-items:center;gap:8px;
   padding:0 10px 0 var(--recuo-semaforo);background:var(--bg-flutua);border-bottom:1px solid var(--line);
   -webkit-app-region:drag}
 #abasLista{flex:0 1 auto;min-width:0;display:flex;align-items:center;gap:8px;
@@ -1114,7 +1114,7 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 .abas-gap{flex:1;min-width:8px}
 #abasLista::-webkit-scrollbar{height:0;display:none}
 /* o + logo depois das abas: abre aba nova (cartao tracejado) */
-.aba-mais{flex:none;width:38px;height:44px;border-radius:10px;border:1px dashed var(--line2);
+.aba-mais{flex:none;width:34px;height:36px;border-radius:10px;border:1px dashed var(--line2);
   background:var(--bg2);display:grid;place-items:center;color:var(--fg-fraco);-webkit-app-region:no-drag}
 .aba-mais:hover{color:var(--fg);border-color:var(--fg-dim);border-style:solid}
 .aba-mais .ic{width:15px;height:15px}
@@ -1131,11 +1131,11 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
    linha 1: bolinha da cor + nome + ponto de "trabalhando"; linha 2: quantos chats.
    Nao encolhe (encolher cortava o nome em 3 letras): cada aba tem a largura do nome, de
    104 a 190px, e quando nao cabem todas a faixa rola de lado. */
-.aba{position:relative;flex:none;min-width:104px;max-width:190px;height:44px;
-  display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;
-  padding:6px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg2);
+.aba{position:relative;flex:none;min-width:104px;max-width:190px;height:36px;
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;
+  padding:3px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg2);
   color:var(--fg-dim);cursor:pointer;-webkit-app-region:no-drag;
-  /* sem isto vale o 1.55 do body e as duas linhas nao cabem nos 44px: a de baixo era cortada */
+  /* sem isto vale o 1.55 do body e as duas linhas nao cabem nos 36px: a de baixo era cortada */
   line-height:1.2;
   --aba-cor:var(--cor-foco, var(--aba-neon));
   border-color:color-mix(in srgb, var(--aba-cor) 40%, var(--line2))}
@@ -1159,7 +1159,7 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
    terminar o trabalho, e as vizinhas pulavam de lugar. So aparece trabalhando. */
 .aba .aba-dot{width:6px;height:6px}
 .aba .aba-dot.off,.aba .aba-dot.idle{visibility:hidden}
-.aba-x{position:absolute;top:5px;right:5px;width:16px;height:16px;border-radius:4px;
+.aba-x{position:absolute;top:3px;right:4px;width:16px;height:16px;border-radius:4px;
   display:grid;place-items:center;color:var(--fg-fraco);background:var(--bg2);opacity:0}
 .aba-x .ic{width:9px;height:9px}
 .aba:hover .aba-x,.aba.ativa .aba-x{opacity:1}
@@ -1650,7 +1650,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
    repintaria inteira (padding, fundo, borda, tamanho de letra).
    `position:fixed`: #shell tem altura calculada na mão (100% - --topo-altura); um elemento a
    mais no fluxo do body empurraria a tela toda para baixo.
-   O top segue --topo-altura: no Mac 58px (só a faixa de abas); no telefone a barra de título
+   O top segue --topo-altura: no Mac 50px (só a faixa de abas); no telefone a barra de título
    é mais alta (46px + o recorte da câmera) e quem soma isso é o celular.css — é o único que
    conhece o --sat. Antes aqui havia um calc com --sat que, sem o celular.css (no Mac, janela
    estreita ou com zoom), ficava inválido e enterrava a barra de abas. */

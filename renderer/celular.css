@@ -2,9 +2,9 @@
 /* recorte da camera (topo) e barra de gestos (base) do iPhone, em um lugar so.
    Da para simular no navegador do Mac mexendo em --sat / --sab. */
 :root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
-/* aqui a barra de titulo continua (38px) em cima da faixa de abas (58px), e nao ha
+/* aqui a barra de titulo continua (38px) em cima da faixa de abas (50px), e nao ha
    semaforo do Mac na esquerda: as abas encostam na borda */
-:root{--topo-altura:96px;--veu-topo:38px;--recuo-semaforo:10px}
+:root{--topo-altura:88px;--veu-topo:38px;--recuo-semaforo:10px}
 .so-celular{display:none}
 body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right:0;bottom:0;
   z-index:999;background:var(--red);color:#fff;text-align:center;font-size:12px;padding:6px}
@@ -21,8 +21,8 @@ body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right
 @media (max-width: 820px), (pointer: coarse) and (max-width: 1100px) {
   body{display:flex;flex-direction:column;height:var(--altura-app,100dvh);overscroll-behavior:none}
   #titlebar,#abasTopo{flex-shrink:0}
-  /* barra de titulo do telefone (46px + camera) + faixa de abas (58px): e onde a faixa de avisos comeca */
-  :root{--topo-altura:calc(104px + var(--sat))}
+  /* barra de titulo do telefone (46px + camera) + faixa de abas (50px): e onde a faixa de avisos comeca */
+  :root{--topo-altura:calc(96px + var(--sat))}
   #shell{flex:1;min-height:0;height:auto}
   .so-celular{display:grid !important}
   /* a faixa do topo desce a barra inteira para baixo da camera/ilha do iPhone */
