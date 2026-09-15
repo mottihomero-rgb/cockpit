@@ -2510,7 +2510,8 @@ function miniaturaDaEntrega(P, a, caminho) {
   a.after(cx);
   if (!miniaturas.has(caminho)) {
     if (miniaturas.size >= 24) miniaturas.delete(miniaturas.keys().next().value);
-    miniaturas.set(caminho, Promise.resolve(lerParaVisor(caminho)).catch(() => null));
+    // new Promise pega ate erro na hora da chamada: miniatura que falha nao pode derrubar a fala
+    miniaturas.set(caminho, new Promise((ok) => ok(lerParaVisor(caminho))).catch(() => null));
   }
   miniaturas.get(caminho).then((r) => {
     if (!r || r.tipo !== 'imagem' || !r.dados) { miniaturas.delete(caminho); cx.remove(); return; }
