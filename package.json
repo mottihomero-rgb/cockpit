@@ -8,7 +8,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac --arm64",
-    "test": "node --test tests/astra-contract.test.cjs tests/port-final.test.cjs tests/web-mobile.test.cjs tests/contas-cli.test.cjs tests/layout-contract.test.cjs tests/markdown-arquivo.test.cjs",
+    "test": "node --test tests/astra-contract.test.cjs tests/port-final.test.cjs tests/web-mobile.test.cjs tests/contas-cli.test.cjs tests/layout-contract.test.cjs tests/markdown-arquivo.test.cjs tests/uso-limite.test.cjs",
     "test:acp": "node tests/teste-acp.js && node tests/teste-acp-ponte.js"
   },
   "dependencies": {

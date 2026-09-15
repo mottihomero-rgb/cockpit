@@ -5679,7 +5679,9 @@ async function pintarContaLateral(engine, forcar) {
     return;
   }
   const semDado = !c.sessao && !c.semana;
-  const barra = (titulo, j) => {
+  const barra = (titulo, j, semLimite) => {
+    // plano sem essa janela (o Codex Pro hoje so tem a da semana): dizer isso, nao "—"
+    if (!j && semLimite) return '<div class="sc-us" title="Seu plano hoje só tem o limite da semana"><div class="sc-top"><span>' + titulo + '</span><b class="sc-sem">sem limite</b></div></div>';
     if (!j) return '<div class="sc-us"><div class="sc-top"><span>' + titulo + '</span><b>—</b></div></div>';
     const pct = Math.min(100, Math.max(0, j.pct || 0));
     const cor = pct >= 90 ? 'perto' : pct >= 70 ? 'meio' : '';
@@ -5695,15 +5697,17 @@ async function pintarContaLateral(engine, forcar) {
     + (c.plano ? '<span class="sc-plano"></span>' : '')
     + '<button class="sc-re" title="Atualizar agora"></button></div>'
     + '<div class="sc-rot">Limite de uso</div>'
-    + barra('Sessão de agora', c.sessao)
+    + barra('Sessão de agora', c.sessao, c.semSessao)
     + barra('Semana', c.semana)
     // dizer O QUE houve: "limitado" e muita consulta em pouco tempo (passa sozinho),
     // e bem diferente de nao conseguir ler
     + (semDado
         ? (c.limitado
-            ? '<div class="sc-pe sc-aviso">o Claude está limitando as consultas agora · volta sozinho em alguns minutos</div>'
+            ? '<div class="sc-pe sc-aviso">o ' + motor + ' segurou as consultas agora · tento de novo sozinho '
+              + (c.voltaEm ? quandoFuturo(c.voltaEm) : 'em alguns minutos') + '</div>'
             : '<div class="sc-pe sc-aviso">não consegui ler agora · clique em ↻ para tentar de novo</div>')
-        : '');
+        // numero guardado porque a consulta falhou: mostra, mas diz de quando e
+        : c.velho ? '<div class="sc-pe">última leitura ' + haQuanto(c.velho) + ' · atualizo sozinho</div>' : '');
   $('.sc-av', cx).innerHTML = svgMotor(engine);
   $('.sc-n', cx).textContent = c.nome || c.email || '';
   $('.sc-e', cx).textContent = c.email || '';
@@ -5792,10 +5796,17 @@ async function janelaConta(P, motorPedido) {
     + (c.plano ? '<span class="ct-plano"></span>' : '') + '</div>'
     + '<div class="mo-sub" style="margin-top:12px">Limite de uso</div>'
     + (c.sessao ? barra('Sessão de agora', c.sessao)
-       : '<div class="us"><div class="us-top"><span>Sessão de agora</span><b>—</b></div>'
-         + '<div class="us-pe">sem uso registrado na janela curta agora</div></div>')
+       : c.semSessao
+         ? '<div class="us"><div class="us-top"><span>Sessão de agora</span><b>sem limite</b></div>'
+           + '<div class="us-pe">seu plano hoje só tem o limite da semana</div></div>'
+         : '<div class="us"><div class="us-top"><span>Sessão de agora</span><b>—</b></div>'
+           + '<div class="us-pe">sem uso registrado na janela curta agora</div></div>')
     + barra('Semana', c.semana)
-    + (!c.sessao && !c.semana ? '<div class="mo-sub">Não consegui ler o limite agora.</div>' : '')
+    + (!c.sessao && !c.semana
+        ? '<div class="mo-sub">' + (c.limitado
+            ? 'O ' + motor + ' segurou as consultas agora. Tento de novo sozinho ' + (c.voltaEm ? quandoFuturo(c.voltaEm) : 'em alguns minutos') + '.'
+            : 'Não consegui ler o limite agora.') + '</div>'
+        : c.velho ? '<div class="us-pe">Última leitura ' + haQuanto(c.velho) + '. O ' + motor + ' segurou a consulta agora; atualizo sozinho.</div>' : '')
     + extra
     // tudo que antes eram cinco linhas soltas no menu "/" mora aqui, junto de quem esta entrado
     + '<div class="mo-rodape">'
@@ -6004,8 +6015,11 @@ async function lerUso(engine, forcar) {
   // a cada chat novo e a cada 5 minutos. Isso fazia o painel piscar e, pior, batia tanto na
   // consulta de limite que a Anthropic passava a responder 429. Os numeros novos ja estao em
   // USO[engine]: da pra atualizar o cartao sem chamar nada.
+  // o main ja devolve o ultimo numero bom quando a consulta falha (com a hora dele em "velho"):
+  // copiar tudo como veio, sem misturar com o cartao antigo
   const cc = contaCache[engine], uu = USO[engine];
-  if (cc && uu) { cc.sessao = uu.sessao || cc.sessao; cc.semana = uu.semana || cc.semana; cc.limitado = !!uu.limitado; }
+  if (cc && uu) Object.assign(cc, { sessao: uu.sessao, semana: uu.semana, limitado: !!uu.limitado,
+    velho: uu.velho || 0, semSessao: !!uu.semSessao, voltaEm: uu.voltaEm || 0 });
   pintarContaLateral(engine);
 }
 
@@ -6036,8 +6050,9 @@ function pintarUso(P) {
   faixa.innerHTML = '<span class="uso-ic">▲</span>'
     + '<span class="uso-alerta">' + (naSessao ? 'Limite da sessão chegando' : 'Metade do limite da semana') + '</span>'
     + '<span class="uso-pt">·</span>'
-    + '<span>Sessão <b>' + (ps === null ? '—' : ps + '%') + '</b></span>'
-    + '<span class="uso-pt">·</span>'
+    // plano sem limite de sessao (Codex Pro hoje): nao mostra "Sessão —" como se tivesse falhado
+    + (u.semSessao && ps === null ? '' : '<span>Sessão <b>' + (ps === null ? '—' : ps + '%') + '</b></span>'
+      + '<span class="uso-pt">·</span>')
     + '<span>Semana <b>' + (pw === null ? '—' : pw + '%') + '</b></span>'
     + (zera && zera.reseta ? '<span class="uso-pt">·</span><span class="uso-zera">zera ' + quandoFuturo(zera.reseta) + '</span>' : '')
     + '<span class="uso-gap"></span>'
@@ -6646,6 +6661,8 @@ function grupoDoTempo(ms) {
   return meses[dt.getMonth()] + (dt.getFullYear() !== agora.getFullYear() ? ' de ' + dt.getFullYear() : '');
 }
 
+// "há 5 min" / "agora há pouco", para dizer de quando e um numero guardado
+function haQuanto(ms) { const q = quando(ms); return q === 'agora' ? 'agora há pouco' : 'há ' + q; }
 function quando(ms) {
   if (!ms) return '';
   const d = Math.max(0, Date.now() - ms);

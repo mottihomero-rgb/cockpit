@@ -2906,6 +2906,11 @@ function janelaClaude(x, velho) {
    janela da SEMANA (primary de 10080 min, secondary vazio): a "Sessão" vazia e verdade, nao
    defeito, e a tela precisa saber disso (semSessao) para nao mostrar "—" como se tivesse falhado. */
 const usoCodex = { dados: null, quando: 0 };
+// trocou de conta: o ultimo numero bom era da conta ANTERIOR e nao pode aparecer como desta
+function esquecerUso(engine) {
+  if (engine === 'claude') { credGuardada = null; Object.assign(usoClaude, { dados: null, quando: 0, pausaAte: 0, pausa: 0 }); }
+  if (engine === 'codex') Object.assign(usoCodex, { dados: null, quando: 0 });
+}
 async function limitesDoCodex() {
   try {
     await codexStart();
@@ -3040,6 +3045,8 @@ handle('auth:acao', async (_e, { engine, acao, cwd }) => {
     : { login: 'login', logout: 'logout', status: 'login status', codigo: 'login --device-auth' };
 
   if (acao === 'status') {
+    // o app confere a conta logo depois de entrar ou trocar: a leitura de uso guardada era da outra
+    if (!naVps) esquecerUso(engine);
     if (naVps) {
       const r2 = await noServidor(partesRemoto(cwd), bin + ' ' + CMD.status, 25000);
       return { texto: String(r2.out || r2.error || '').trim().slice(0, 800) };
@@ -3243,6 +3250,7 @@ handle('contas:trocar', (_e, { engine, apelido } = {}) => {
       const porque = (cod === 'EBUSY' || cod === 'EPERM' || cod === 'EACCES') ? 'o arquivo está em uso' : cod;
       return { error: 'Não consegui trocar a credencial agora (' + porque + '). Tente de novo.' };
     }
+    esquecerUso(engine);
     return { ok: true };
   } catch (e) { return { error: String(e && e.message || e) }; }
 });

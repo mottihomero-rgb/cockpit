@@ -31,7 +31,7 @@ test('Claude: 429 depois de uma leitura boa mantem os numeros, marcados como ant
   const pedidos = comRede(h, [{ status: 200, body: USO_BOM }, { status: 429, headers: { 'retry-after': '120' } }]);
   const bom = await h.call('uso:ler', 'claude');
   assert.equal(bom.sessao.pct, 29); assert.equal(bom.semana.pct, 55);
-  h.evaluate('usoClaude.quando = 0');                  // leitura ficou velha: vai buscar de novo
+  h.evaluate('usoClaude.quando = Date.now() - 300000'); // leitura de 5 min atras: vai buscar de novo
   const depois = await h.call('uso:ler', 'claude');
   assert.equal(pedidos.length, 2);
   assert.equal(depois.sessao.pct, 29, 'o 429 nao pode apagar o numero que ja tinha');
@@ -65,7 +65,7 @@ test('Claude: falha de rede tambem devolve o ultimo numero bom', async () => {
   const h = loadMain();
   comRede(h, [{ status: 200, body: USO_BOM }, new Error('sem internet')]);
   await h.call('uso:ler', 'claude');
-  h.evaluate('usoClaude.quando = 0');
+  h.evaluate('usoClaude.quando = Date.now() - 300000');
   const r = await h.call('uso:ler', 'claude');
   assert.equal(r.semana.pct, 55); assert.ok(r.velho > 0);
 });
@@ -75,7 +75,7 @@ test('Claude: numero antigo de janela que ja zerou nao aparece como se valesse',
   const passado = { ...USO_BOM, five_hour: { utilization: 97, resets_at: '2001-01-01T00:00:00Z' } };
   comRede(h, [{ status: 200, body: passado }, { status: 429 }]);
   await h.call('uso:ler', 'claude');
-  h.evaluate('usoClaude.quando = 0');
+  h.evaluate('usoClaude.quando = Date.now() - 300000');
   const r = await h.call('uso:ler', 'claude');
   assert.equal(r.sessao, null, 'a janela de 5h ja virou: o 97% antigo nao vale mais');
   assert.equal(r.semana.pct, 55);

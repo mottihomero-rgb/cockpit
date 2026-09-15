@@ -1320,6 +1320,7 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .sc-us{margin-bottom:4px}
 .sc-top{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;color:var(--fg-dim)}
 .sc-top b{font-size:10.5px;color:var(--fg-strong);font-weight:600}
+.sc-top b.sc-sem{color:var(--fg-dim);font-weight:500}
 .sc-bar{height:3px;border-radius:3px;background:var(--bg4);overflow:hidden;margin:2px 0 1px}
 .sc-fill{display:block;height:100%;border-radius:3px;background:var(--accent);transition:width .3s}
 .sc-fill.meio{background:var(--yellow)}
