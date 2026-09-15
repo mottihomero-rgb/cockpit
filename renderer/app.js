@@ -125,6 +125,16 @@ const EF_DESC_PT = {
 
 // esforço com que TODA conversa nova nasce (não muda quando você mexe na barra de um painel)
 const EF_NOVO = 'xhigh';
+/* O que toda conversa NOVA do Claude e do Codex traz marcado (pedido do Homero, 15/09/2026):
+   Codex no Sol, Claude no Opus 5 SEM o 1M, os dois no Alto. Vale para aba nova, "nova
+   conversa" e troca de motor no mesmo chat; conversa restaurada mantém o que estava salvo.
+   Se o modelo sumir da lista do motor, cai no padrão dele (fillModels). */
+const PADRAO_NOVO = {
+  claude: { model: 'claude-opus-5', effort: 'high' },
+  codex: { model: 'gpt-5.6-sol', effort: 'high' },
+};
+const modeloNovo = (eng) => (PADRAO_NOVO[eng] && PADRAO_NOVO[eng].model) || '';
+const esforcoNovo = (eng) => (PADRAO_NOVO[eng] && PADRAO_NOVO[eng].effort) || EF_NOVO;
 
 // no Máximo o painel do Claude vira "ultracode". Em --print o CLI proíbe workflow por padrão,
 // então a liberação vai como fala do usuário — é o que vence a regra de fábrica (testado).
@@ -662,20 +672,21 @@ function newPane(opts = {}) {
   el.dataset.id = id;
 
   const A = opts.aba || abaAtiva || novaAbaProjeto(opts.cwd || cfg.defCwd || HOME);
+  const motorDoPainel = opts.engine || motorVisivel(cfg.lastEngine);
   const P = {
     id, el, aid: A.id,
     coluna: typeof opts.coluna === 'string' ? opts.coluna : crypto.randomUUID(),
     larguraColuna: Math.max(0, Math.min(2400, Number(opts.larguraColuna) || 0)),
     pesoAltura: Math.max(.1, Math.min(10, Number(opts.pesoAltura) || 1)),
     plano: normalizarPlano(opts.plano), planoAberto: opts.planoAberto !== false,
-    engine: opts.engine || motorVisivel(cfg.lastEngine),
+    engine: motorDoPainel,
     cwd: opts.cwd || A.cwd,                // a pasta e a da aba
-    model: opts.model || '',
+    model: opts.model || modeloNovo(motorDoPainel),
     started: false, busy: false, queued: null, filaMsgs: [], hist: [], passarContexto: null,
     titulo: opts.titulo || '', sessaoId: null, sessaoFile: '', anexos: [],
     envio: cfg.envioPadrao || 'fila',
-    // conversa nova sempre nasce no Extra alto; painel restaurado mantém o que estava salvo
-    mode: opts.mode || cfg.defMode || 'auto', effort: opts.effort || EF_NOVO,
+    // conversa nova nasce no esforço de PADRAO_NOVO; painel restaurado mantém o que estava salvo
+    mode: opts.mode || cfg.defMode || 'auto', effort: opts.effort || esforcoNovo(motorDoPainel),
     serviceTier: opts.serviceTier || '', experimentalContext: opts.experimentalContext === true,
     collaborationMode: opts.collaborationMode === 'plan' || (!opts.collaborationMode && (opts.mode || cfg.defMode) === 'plan') ? 'plan' : 'default',
     effectiveSettings: null, settingsPending: false,
