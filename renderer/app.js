@@ -1176,7 +1176,8 @@ async function trocarMotor(P, novo) {
   // retomar uma conversa impossivel ("no rollout found" no Codex). A continuidade entre os
   // motores vem pelo contexto montado logo abaixo, nao pelo id do motor antigo.
   limparPlano(P); limparSugestoes(P);
-  P.engine = novo; P.started = false; P.model = '';
+  // trocar de motor comeca conversa nova daquele motor: nasce com o modelo e o esforço de PADRAO_NOVO
+  P.engine = novo; P.started = false; P.model = modeloNovo(novo); P.effort = esforcoNovo(novo);
   // Modelos e comandos anunciados pelo agente antigo não pertencem ao próximo motor.
   P.acpInfo = null; P.acpComandos = []; P.acpModo = '';
   P.effectiveSettings = null; P.settingsPending = false;
@@ -1264,7 +1265,7 @@ function fillModels(P) {
   // chega, so pinta; nao decide nada. Quando ela chega, fillModels roda de novo (linha do
   // codexModels().then) e a escolha certa aparece.
   const listaReal = P.engine !== 'codex' || !!(MODELOS_CODEX && MODELOS_CODEX.length);
-  if (listaReal && !ms.find(m => m.id === P.model)) P.model = (ms.find(m => m.padrao) || ms[0]).id;
+  if (listaReal && !ms.find(m => m.id === P.model)) P.model = (ms.find(m => m.id === modeloNovo(P.engine)) || ms.find(m => m.padrao) || ms[0]).id;
   const ef = esforcosDe(P);
   if (listaReal && ef.length && !ef.find(e => e.id === P.effort)) P.effort = modeloAtual(P).padraoEffort || ef[Math.min(2, ef.length - 1)].id;
   $('.p-model', P.el).innerHTML = ico('brain') + '<span>' + modeloAtual(P).nome + '</span>';
@@ -2056,6 +2057,10 @@ function lembrarEscolhaDaPasta(P) {
   window.api.setConfig(cfg);
 }
 function aplicarEscolhaDaPasta(P) {
+  /* Claude e Codex nascem SEMPRE no PADRAO_NOVO (pedido de 15/09/2026, "sempre"): a escolha da
+     pasta passava por cima (o Pedro abria no Opus 1M e no Extra alto). Continua valendo para os
+     outros motores; o que ja foi guardado em cfg.porPasta fica la, para dar para voltar. */
+  if (PADRAO_NOVO[P.engine]) return false;
   const g = cfg.porPasta && cfg.porPasta[chaveDaPasta(P)];
   if (!g) return false;
   if (g.model && modelosDe(P).some(m => m.id === g.model)) P.model = g.model;
@@ -4099,7 +4104,7 @@ function barraEsforco(P) {
 }
 
 async function trocarEsforco(P, id) {
-  // vale só para este painel: conversa nova continua nascendo em EF_NOVO
+  // vale só para este painel: conversa nova continua nascendo no esforço de PADRAO_NOVO
   P.effort = id; P.ultraAvisado = false;
   lembrarEscolhaDaPasta(P);
   if (P.engine === 'claude' && P.started) await desligarMotor(P);
@@ -7444,7 +7449,9 @@ async function novaConversa(engine) {
   // o "religar" voltar para a conversa velha em vez desta nova
   P.engine = engine; P.resumeId = null; P.sessaoId = null; P.started = false; P.titulo = ''; P.nomeCurto = false; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.forkPendente = false;   // leva 8.3: conversa nova nunca e ramo de outra
-  P.effort = EF_NOVO; P.ultraAvisado = false;   // conversa nova sempre volta ao Extra alto
+  // conversa nova sempre volta ao modelo e ao esforço de PADRAO_NOVO, mesmo que o chat
+  // anterior estivesse em outro
+  P.model = modeloNovo(engine); P.effort = esforcoNovo(engine); P.ultraAvisado = false;
   P.serviceTier = ''; P.experimentalContext = false; P.collaborationMode = 'default';
   P.effectiveSettings = null; P.settingsPending = false;
   P.blocks.clear(); P.tools.clear(); voltarVazio(P); pintarNome(P);
