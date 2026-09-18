@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('api', {
   gitStatus: (o) => ipcRenderer.invoke('git:status', o),
   gitDiff: (o) => ipcRenderer.invoke('git:diff', o),
   motoresVersoes: () => ipcRenderer.invoke('motores:versoes'),
+  onMotorAtualizado: (cb) => ipcRenderer.on('motores:atualizado', (_e, p) => cb(p)),
   motoresDisponiveis: () => ipcRenderer.invoke('motores:disponiveis'),
   /* leva 11: rotinas do launchd. Listar é LEITURA; disparar roda o robô de verdade e o main o
      mantém fora do mapa servido pelo Wi-Fi (R1). */

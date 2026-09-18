@@ -4812,12 +4812,14 @@ const NPM_DOS_MOTORES = {
   claude: '@anthropic-ai/claude-code',
   codex: '@openai/codex',
 };
-handle('motores:versoes', async () => {
+async function versoesDosMotores(forcarNpm) {
   const soVersao = (s) => { const m = String(s || '').match(/(\d+\.\d+\.\d+)/); return m ? m[1] : ''; };
   let npmCache = {};
   let fresco = false;
   let quandoAntigo = 0;
-  try {
+  /* forcarNpm: o robo de atualizacao pergunta ao npm de novo a cada volta. Sem isso ele
+     herdaria o cache de 20 horas e uma versao lancada de manha so seria instalada a noite. */
+  if (!forcarNpm) try {
     const c = JSON.parse(fs.readFileSync(VERSOES_PATH(), 'utf8'));
     if (c && c.quando && (Date.now() - c.quando) < 20 * 60 * 60 * 1000) { npmCache = c.npm || {}; fresco = true; quandoAntigo = c.quando; }
   } catch {}
@@ -4843,7 +4845,65 @@ handle('motores:versoes', async () => {
     try { gravarSeguro(VERSOES_PATH(), JSON.stringify({ quando: (fresco && quandoAntigo) || Date.now(), npm: npmNovo })); } catch {}
   }
   return dados;
-});
+}
+handle('motores:versoes', versoesDosMotores);
+
+/* ---- 12.9: o Cockpit atualiza os motores SOZINHO ----
+   O radar de cima so avisava, e o aviso morria na tela: o Claude ficou 13 versoes para tras
+   justamente porque ninguem larga o trabalho para ir ao Terminal. Agora o proprio Cockpit
+   roda a atualizacao e refaz a copia congelada na hora.
+
+   Por que nenhum chat aberto cai: usarClaudeDeCaminhoFixo troca o arquivo por rename, que no
+   Unix e atomico — quem ja esta rodando continua no arquivo antigo ate terminar, e o proximo
+   chat ja nasce na versao nova. Fechar e abrir o Cockpit deixou de ser necessario. */
+const COMO_ATUALIZA_MOTOR = {
+  claude: () => {
+    const bin = path.join(HOME, '.local/bin/claude');
+    // o instalador nativo se atualiza com "claude update"; quem instalou pelo npm nao tem esse caminho
+    return fs.existsSync(bin) ? { bin, args: ['update'] } : { bin: 'npm', args: ['i', '-g', NPM_DOS_MOTORES.claude] };
+  },
+  codex: () => ({ bin: 'npm', args: ['i', '-g', NPM_DOS_MOTORES.codex] }),
+};
+const versaoAtras = (instalada, ultima) => {
+  const a = String(instalada || '').split('.').map(Number), b = String(ultima || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((b[i] || 0) > (a[i] || 0)) return true;
+    if ((b[i] || 0) < (a[i] || 0)) return false;
+  }
+  return false;
+};
+let atualizandoMotores = false;
+async function atualizarMotoresSozinho(motivo) {
+  if (EH_WIN || atualizandoMotores) return;
+  // desligavel: basta gravar "autoAtualizarMotores": false no config.json
+  try { if (loadConfig().autoAtualizarMotores === false) return; } catch {}
+  atualizandoMotores = true;
+  try {
+    let vs = null;
+    try { vs = await versoesDosMotores(true); } catch { return; }
+    if (!vs) return;
+    for (const eng of Object.keys(vs)) {
+      const v = vs[eng] || {};
+      if (!v.instalada || !v.ultima || !versaoAtras(v.instalada, v.ultima)) continue;
+      const rec = COMO_ATUALIZA_MOTOR[eng]; if (!rec) continue;
+      const { bin, args } = rec();
+      anota('atualizando ' + eng + ' sozinho (' + (motivo || '') + '):', v.instalada, '->', v.ultima);
+      const r = await rodar(bin, args, 15 * 60 * 1000);   // npm em rede ruim passa fácil de 1 minuto
+      if (r && r.err) { anota('falhou ao atualizar ' + eng, r.err.message, String(r.errout || '').slice(-400)); continue; }
+      /* Confere na fonte em vez de acreditar no comando: "update" as vezes sai com codigo 0
+         sem ter trocado nada (sem rede, sem permissao de escrita na pasta da versao). */
+      if (eng === 'claude') usarClaudeDeCaminhoFixo();
+      const binLer = eng === 'claude' ? CLAUDE_BIN : eng;
+      const lida = await rodar(binLer, ['--version'], 15000).then((x) => String(x.out + ' ' + x.errout).match(/(\d+\.\d+\.\d+)/)).catch(() => null);
+      const agora = lida ? lida[1] : '';
+      if (!agora || agora === v.instalada) { anota('rodei a atualizacao de ' + eng + ' mas a versao nao mudou', v.instalada, agora); continue; }
+      anota('atualizei ' + eng, v.instalada, '->', agora);
+      try {
+        if (win && !win.isDestroyed()) win.webContents.send('motores:atualizado', { engine: eng, de: v.instalada, para: agora });
+      } catch {}
+    }
+  } finally { atualizandoMotores = false; }
+}
 
 
 /* ===================== LEVA 11 — ROTINAS: os robôs agendados deste Mac =====================
@@ -5470,6 +5530,10 @@ ipcMain.handle('inbox:pasta', () => PASTA_INBOX());
 
 app.whenReady().then(() => { anota('app iniciou'); usarClaudeDeCaminhoFixo(); menu(); createWindow(); montarIndiceDeFundo();
   limparColadosAntigos();
+  /* Atualiza os motores sozinho: 60s depois de abrir (para nao brigar com o arranque) e de
+     6 em 6 horas, para quem deixa o Cockpit aberto a semana inteira. */
+  setTimeout(() => atualizarMotoresSozinho('abriu o app'), 60000);
+  setInterval(() => atualizarMotoresSozinho('a cada 6h'), 6 * 60 * 60 * 1000);
   ligarInbox();   // leva 6: a caixa de entrada passa a ser varrida (a pasta nasce aqui)
   // atalho global de ditar, se ele tiver ligado nos Ajustes (desligado por padrao)
   try { ligarAtalhosGlobais(!!loadConfig().atalhosGlobais); } catch { ligarAtalhosGlobais(false); }

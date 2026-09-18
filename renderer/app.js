@@ -3258,6 +3258,18 @@ document.addEventListener('dragover', (e) => {
 });
 document.addEventListener('drop', (e) => { if (!e.defaultPrevented) e.preventDefault(); });
 
+/* O main atualiza os motores sozinho e avisa aqui. O recado importa: sem ele a pessoa
+   continuaria vendo o aviso de versao velha da abertura e iria ao Terminal a toa. */
+if (window.api.onMotorAtualizado) {
+  window.api.onMotorAtualizado((p) => {
+    if (!p || !p.engine) return;
+    const alvo = focusPane || panes.values().next().value;
+    if (!alvo) return;
+    note(alvo, nomeMotor(p.engine) + ' foi atualizado sozinho: ' + p.de + ' → ' + p.para
+      + '. Os chats abertos seguem na versão antiga até terminarem; o próximo chat já nasce na nova.', true);
+  });
+}
+
 let ultimoAvisoMain = 0;
 if (window.api.onErroApp) {
   window.api.onErroApp((p) => {
@@ -8474,8 +8486,8 @@ const versaoMaisNova = (a, b) => {
    parar de pedir permissão de disco a cada versão nova). Por isso o recado daqui é diferente
    do fork de origem: atualizar sem fechar e abrir o Cockpit não muda nada na tela. */
 const COMO_ATUALIZAR = {
-  claude: 'rode "claude update" no Terminal e depois FECHE E ABRA o Cockpit (ele usa uma cópia do Claude que só é refeita ao abrir)',
-  codex: 'rode "npm i -g @openai/codex" no Terminal',
+  claude: 'o Cockpit atualiza sozinho em até 1 minuto — se quiser na hora, rode "claude update" no Terminal',
+  codex: 'o Cockpit atualiza sozinho em até 1 minuto — se quiser na hora, rode "npm i -g @openai/codex" no Terminal',
 };
 async function checarVersoesDosMotores() {
   if (window.SEM_ELECTRON) return;              // no telefone não há o que atualizar
