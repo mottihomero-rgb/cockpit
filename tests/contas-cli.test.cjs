@@ -33,10 +33,12 @@ test('Grok não apresenta chave paga como login; nunca devolve tokens', t => {
   const m = montar(t);
   m.salvar('.grok/auth.json', { 'xai::api_key': { auth_mode: 'api_key', key: 'segredo-api', email: 'pago@example.com' } });
   assert.equal(m.contas.ler('grok').entrou, false);
+  assert.equal(m.contas.tokenGrok(), '');
   m.salvar('.grok/auth.json', { 'https://auth.x.ai': { auth_mode: 'oidc', key: 'segredo-oauth', refresh_token: 'segredo-refresh', email: 'homero@example.com', oidc_issuer: 'https://auth.x.ai' } });
   const c = m.contas.ler('grok');
   assert.equal(c.entrou, true); assert.equal(c.email, 'homero@example.com');
   assert.doesNotMatch(JSON.stringify(c), /segredo/);
+  assert.equal(m.contas.tokenGrok(), 'segredo-oauth');
 });
 
 test('Gemini força OAuth só neste processo e preserva as políticas existentes', t => {

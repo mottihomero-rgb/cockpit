@@ -6007,7 +6007,7 @@ async function pintarContaLateral(engine, forcar) {
   /* leva 12.5: o ACP não tem conta que o Cockpit leia — ela é do agente, resolvida no terminal
      dele. Sem este ramo a coluna dizia "Sem conta do Claude neste Mac" num painel que não é
      Claude, e ainda oferecia um botão "Entrar" que não entraria em lugar nenhum. */
-  if (['gemini', 'grok'].includes(engine)) {
+  if (engine === 'gemini') {
     cx.innerHTML = '<div class="sc-vazio sc-conta-extra"><span></span> <button class="sc-link sc-entrar"></button>'
       + '<button class="sc-link sc-atualizar" title="Conferir conta">Conferir</button></div>';
     $('span', cx).textContent = c?.entrou === true
@@ -6027,7 +6027,7 @@ async function pintarContaLateral(engine, forcar) {
       || 'A conta é a do próprio agente ACP, configurada no terminal dele.';
     return;
   }
-  const motor = engine === 'codex' ? 'Codex' : 'Claude';
+  const motor = nomeDoMotor(engine);
   if (!c || !c.entrou) {
     cx.innerHTML = '<div class="sc-vazio">Sem conta do ' + motor + ' neste Mac. <button class="sc-link">Entrar</button></div>';
     $('.sc-link', cx).onclick = () => entrarNaConta(engine);
@@ -6102,7 +6102,7 @@ async function janelaConta(P, motorPedido) {
 
   const c = await window.api.contaLer(eng);
   if (modal.classList.contains('hidden')) return;
-  if (['gemini', 'grok'].includes(eng)) {
+  if (eng === 'gemini') {
     cx.innerHTML = topo + '<div class="mo-sub ct-estado-extra"></div>'
       + '<div class="mo-sub ct-ajuda-extra"></div>'
       + '<div class="mo-rodape"><button class="mo-btn" id="ctConferir">Conferir conta</button>'
@@ -6110,9 +6110,7 @@ async function janelaConta(P, motorPedido) {
     $('.ct-estado-extra', cx).textContent = c?.entrou === true
       ? 'Entrada salva' + (c.email ? ': ' + c.email : ' no ' + motor) + '.'
       : c?.motivo || 'A entrada na conta ainda não foi confirmada.';
-    $('.ct-ajuda-extra', cx).textContent = eng === 'gemini'
-      ? 'Use sua conta Google gratuita. O limite de uso é definido pelo Gemini.'
-      : 'Entre com sua conta Grok. O teste gratuito e seus limites são definidos pelo Grok.';
+    $('.ct-ajuda-extra', cx).textContent = 'Use sua conta Google gratuita. O limite de uso é definido pelo Gemini.';
     $('.mo-x', cx).onclick = () => fecharModal(P);
     $('#ctConferir', cx).onclick = () => { pintarContaLateral(eng, true); janelaConta(P, eng); };
     $('#ctEntrar', cx).onclick = () => { fecharModal(P); contaAcao(P, 'login', eng); };
@@ -6352,8 +6350,8 @@ function receberEventoGlobalCodex(ev) {
 if (window.api.onCodexEvent) window.api.onCodexEvent(receberEventoGlobalCodex);
 
 async function lerUso(engine, forcar) {
-  // leva 12.4: o ACP não tem cota que dê para ler daqui — a conta é a do agente, no terminal dele
-  if (['acp', 'gemini', 'grok'].includes(engine)) return;
+  // ACP e Gemini não têm cota que dê para ler daqui. O Grok tem: é o da conta logada.
+  if (['acp', 'gemini'].includes(engine)) return;
   if (!window.api || !window.api.usoLer) return;
   if (USO_LENDO[engine]) return;
   if (!forcar && Date.now() - (USO_QUANDO[engine] || 0) < USO_INTERVALO) return;
@@ -6388,7 +6386,7 @@ function esconderUso(P) {
 /* O numero pequeno do rodape, ao lado do modelo. Vive FORA da tarja de alarme de proposito:
    a tarja so nasce em 90% de sessao ou 50% de semana, e abaixo disso a tela nao dizia nada —
    ele planejava o dia no escuro com o numero ja pronto na memoria. Sem cor: quem grita e a
-   tarja. Some sozinho no motor que nao tem cota de ler daqui (Gemini, Grok, ACP). */
+   tarja. Some sozinho no motor que nao tem cota de ler daqui (Gemini, ACP). */
 function pintarLimiteMini(P) {
   const el = $('.p-limite', P.el);
   if (!el) return;

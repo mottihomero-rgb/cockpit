@@ -105,3 +105,76 @@ test('Codex: falha depois de uma leitura boa devolve o ultimo numero bom', async
   const r = await h.call('uso:ler', 'codex');
   assert.equal(r.semana.pct, 88); assert.ok(r.velho > 0);
 });
+
+const GROK_BILLING = {
+  config: {
+    currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', start: '2099-01-01T00:00:00Z', end: '2099-01-08T00:00:00Z' },
+    creditUsagePercent: 15,
+    productUsage: [{ product: 'GrokBuild', usagePercent: 13 }, { product: 'GrokChat', usagePercent: 2 }],
+    onDemandCap: { val: 0 },
+    onDemandUsed: { val: 0 },
+  },
+};
+
+function comGrok(h, respostas) {
+  h.put(h.HOME + '/.grok/auth.json', JSON.stringify({
+    'https://auth.x.ai': {
+      auth_mode: 'oidc', key: 'token-grok-secreto', email: 'homero@example.com',
+      first_name: 'Homero', last_name: 'Motti', oidc_issuer: 'https://auth.x.ai',
+    },
+  }));
+  const pedidos = [];
+  const fila = [...respostas];
+  const g = h.evaluate('globalThis');
+  g.fetch = async (url, opts) => {
+    const headers = (opts && opts.headers) || {};
+    pedidos.push({ url: String(url), auth: headers.Authorization || '', tokenAuth: headers['x-xai-token-auth'] || '' });
+    if (String(url).includes('/user')) {
+      return { status: 200, ok: true, headers: { get: () => null }, json: async () => ({ subscriptionTier: 'SuperGrokLite', email: 'homero@example.com' }) };
+    }
+    const r = fila.length > 1 ? fila.shift() : fila[0];
+    if (r instanceof Error) throw r;
+    return { status: r.status, ok: r.status >= 200 && r.status < 300,
+      headers: { get: (n) => (r.headers || {})[String(n).toLowerCase()] ?? null },
+      json: async () => r.body };
+  };
+  return pedidos;
+}
+
+test('Grok sem login não pergunta o limite e não devolve token', async () => {
+  const h = loadMain();
+  assert.equal(await h.call('uso:ler', 'grok'), null);
+  const c = await h.call('conta:ler', 'grok');
+  assert.equal(c.entrou, false);
+  assert.doesNotMatch(JSON.stringify(c), /token-grok|Bearer /);
+  assert.equal(h.violations.length, 0);
+});
+
+test('Grok: plano semanal vira barra da semana, sem limite de sessão', async () => {
+  const h = loadMain();
+  const pedidos = comGrok(h, [{ status: 200, body: GROK_BILLING }]);
+  const r = await h.call('uso:ler', 'grok');
+  assert.equal(r.semana.pct, 15);
+  assert.equal(r.sessao, null);
+  assert.equal(r.semSessao, true);
+  assert.ok(pedidos.some(p => p.url.includes('/billing?format=credits')));
+  assert.equal(pedidos[0].auth, 'Bearer token-grok-secreto');
+  assert.equal(pedidos[0].tokenAuth, 'xai-grok-cli');
+  const c = await h.call('conta:ler', 'grok');
+  assert.equal(c.entrou, true);
+  assert.equal(c.plano, 'SuperGrok Lite');
+  assert.equal(c.semana.pct, 15);
+  assert.doesNotMatch(JSON.stringify(c), /token-grok-secreto|Bearer /);
+});
+
+test('Grok: 429 depois de uma leitura boa mantém os números', async () => {
+  const h = loadMain();
+  const pedidos = comGrok(h, [{ status: 200, body: GROK_BILLING }, { status: 429, headers: { 'retry-after': '120' } }]);
+  await h.call('uso:ler', 'grok');
+  h.evaluate('usoGrok.quando = Date.now() - 300000');
+  const depois = await h.call('uso:ler', 'grok');
+  assert.equal(depois.semana.pct, 15);
+  assert.ok(depois.velho > 0);
+  assert.ok(!depois.limitado);
+  assert.ok(pedidos.filter(p => p.url.includes('/billing')).length >= 2);
+});

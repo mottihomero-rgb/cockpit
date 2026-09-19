@@ -3136,6 +3136,7 @@ const usoCodex = { dados: null, quando: 0 };
 function esquecerUso(engine) {
   if (engine === 'claude') { credGuardada = null; Object.assign(usoClaude, { dados: null, quando: 0, pausaAte: 0, pausa: 0 }); }
   if (engine === 'codex') Object.assign(usoCodex, { dados: null, quando: 0 });
+  if (engine === 'grok') Object.assign(usoGrok, { dados: null, quando: 0, pausaAte: 0, pausa: 0 });
 }
 async function limitesDoCodex() {
   try {
@@ -3167,8 +3168,95 @@ function janelasDoCodex(rl, velho) {
   };
 }
 
+/* Limite do Grok: o mesmo backend do `/usage` no terminal. Semana no SuperGrok;
+   a "Sessão" vazia é o plano, não falha. Token só neste processo. */
+const usoGrok = { dados: null, quando: 0, pausaAte: 0, pausa: 0, voando: null };
+const ultimoBomGrok = () => (usoGrok.dados ? { ...usoGrok.dados, velho: usoGrok.quando } : null);
+function nomePlanoGrok(tier) {
+  if (!tier) return '';
+  return ({ SuperGrokLite: 'SuperGrok Lite', SuperGrokPlus: 'SuperGrok Plus', SuperGrokHeavy: 'SuperGrok Heavy', SuperGrok: 'SuperGrok' })[tier]
+    || String(tier).replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+function pctDoGrok(cfg) {
+  if (!cfg || typeof cfg !== 'object') return null;
+  if (Number.isFinite(cfg.creditUsagePercent)) return cfg.creditUsagePercent;
+  const produtos = Array.isArray(cfg.productUsage) ? cfg.productUsage : [];
+  const build = produtos.find(p => p && p.product === 'GrokBuild' && Number.isFinite(p.usagePercent));
+  if (build) return build.usagePercent;
+  const cap = cfg.onDemandCap && Number(cfg.onDemandCap.val);
+  const used = cfg.onDemandUsed && Number(cfg.onDemandUsed.val);
+  if (cap > 0 && Number.isFinite(used)) return used / cap * 100;
+  return null;
+}
+function janelasDoGrok(cfg, velho) {
+  if (!cfg) return { sessao: null, semana: null, semSessao: false };
+  const fim = Date.parse((cfg.currentPeriod && cfg.currentPeriod.end) || cfg.billingPeriodEnd || '') || 0;
+  const ini = Date.parse((cfg.currentPeriod && cfg.currentPeriod.start) || cfg.billingPeriodStart || '') || 0;
+  if (velho && fim && fim < Date.now()) return { sessao: null, semana: null, semSessao: false };
+  const pct = pctDoGrok(cfg);
+  if (pct == null) return { sessao: null, semana: null, semSessao: false };
+  const jan = { pct: Math.round(Math.min(100, Math.max(0, pct))), reseta: fim || 0 };
+  const tipo = String((cfg.currentPeriod && cfg.currentPeriod.type) || '');
+  const mins = ini && fim && fim > ini ? Math.round((fim - ini) / 60000) : 0;
+  const daSemana = /WEEKLY|MONTHLY/i.test(tipo) || mins > 1440 || (!tipo && !mins);
+  if (daSemana) return { sessao: null, semana: jan, semSessao: true };
+  return { sessao: jan, semana: null, semSessao: false };
+}
+async function usoDoGrok() {
+  const agora = Date.now();
+  if (usoGrok.dados && agora - usoGrok.quando < USO_VALE_MS) return usoGrok.dados;
+  if (agora < usoGrok.pausaAte) return ultimoBomGrok() || { limitado: true, voltaEm: usoGrok.pausaAte };
+  if (!usoGrok.voando) usoGrok.voando = buscarUsoDoGrok().finally(() => { usoGrok.voando = null; });
+  return usoGrok.voando;
+}
+async function buscarUsoDoGrok() {
+  const t = contasCli.tokenGrok ? contasCli.tokenGrok() : '';
+  if (!t) return null;
+  const headers = { Authorization: 'Bearer ' + t, Accept: 'application/json', 'x-xai-token-auth': 'xai-grok-cli' };
+  try {
+    const r = await fetch('https://cli-chat-proxy.grok.com/v1/billing?format=credits', { headers });
+    if (r.status === 429) {
+      const pediu = Number(r.headers.get('retry-after')) * 1000;
+      usoGrok.pausa = Math.min(15 * 60000, Math.max(60000, pediu > 0 ? pediu : (usoGrok.pausa * 2 || 120000)));
+      usoGrok.pausaAte = Date.now() + usoGrok.pausa;
+      return ultimoBomGrok() || { limitado: true, voltaEm: usoGrok.pausaAte };
+    }
+    if (!r.ok) return ultimoBomGrok();
+    const j = await r.json();
+    const cfg = (j && j.config) || j || {};
+    let plano = nomePlanoGrok(cfg.subscriptionTier || j.subscriptionTier);
+    try {
+      const u = await fetch('https://cli-chat-proxy.grok.com/v1/user?include=subscription', { headers });
+      if (u.ok) {
+        const user = await u.json();
+        if (user && user.subscriptionTier) plano = nomePlanoGrok(user.subscriptionTier);
+      }
+    } catch {}
+    Object.assign(usoGrok, { dados: { cfg, plano }, quando: Date.now(), pausa: 0, pausaAte: 0 });
+    return usoGrok.dados;
+  } catch { return ultimoBomGrok(); }
+}
+
 handle('conta:ler', async (_e, engine) => {
-  if (engine === 'gemini' || engine === 'grok') return contasCli.ler(engine);
+  if (engine === 'gemini') return contasCli.ler(engine);
+  if (engine === 'grok') {
+    const conta = contasCli.ler('grok');
+    if (!conta.entrou) return conta;
+    const u = await usoDoGrok();
+    const velho = (u && u.velho) || 0;
+    const j = (u && !u.limitado) ? janelasDoGrok(u.cfg, velho) : { sessao: null, semana: null, semSessao: false };
+    const cap = u && u.cfg && u.cfg.onDemandCap && Number(u.cfg.onDemandCap.val);
+    const usado = u && u.cfg && u.cfg.onDemandUsed && Number(u.cfg.onDemandUsed.val);
+    return {
+      ...conta,
+      plano: (u && u.plano) || conta.plano || '',
+      limitado: !!(u && u.limitado),
+      voltaEm: (u && u.voltaEm) || 0,
+      velho,
+      sessao: j.sessao, semana: j.semana, semSessao: !!j.semSessao,
+      extra: cap > 0 ? { ligado: true, usado: Number.isFinite(usado) ? usado : 0, teto: cap, moeda: 'créditos' } : null,
+    };
+  }
   /* resposta HONESTA em vez de "não consegui ler": a conta é a do próprio agente, configurada
      no terminal dele. O Cockpit não tem como conferir daqui — se ele pedir login, aparece no
      painel, com o recado que o acp.js monta a partir dos authMethods anunciados. */
@@ -3238,7 +3326,15 @@ handle('conta:ler', async (_e, engine) => {
 /* so os percentuais do plano, para a faixa em cima da caixa de texto.
    Diferente do conta:ler, nao chama o CLI: e leve o bastante para repetir de minuto em minuto. */
 handle('uso:ler', async (_e, engine) => {
-  if (engine === 'gemini' || engine === 'grok') return null;
+  if (engine === 'gemini') return null;
+  // grok ANTES do motorAcp: o Grok usa ACP no chat, mas o limite é da conta, não do Codex
+  if (engine === 'grok') {
+    const u = await usoDoGrok();
+    if (!u) return null;
+    if (u.limitado) return { limitado: true, voltaEm: u.voltaEm || 0, sessao: null, semana: null };
+    const velho = u.velho || 0;
+    return { ...janelasDoGrok(u.cfg, velho), velho };
+  }
   // o ACP não tem cota que o Cockpit possa ler: sem esta linha ele subia o Codex à toa
   if (motorAcp(engine)) return null;
   if (engine === 'claude') {
@@ -3254,7 +3350,10 @@ handle('uso:ler', async (_e, engine) => {
 });
 
 handle('auth:acao', async (_e, { engine, acao, cwd }) => {
-  if (engine === 'gemini' || engine === 'grok') return contasCli.acao({ engine, acao, cwd });
+  if (engine === 'gemini' || engine === 'grok') {
+    if (engine === 'grok') esquecerUso('grok');
+    return contasCli.acao({ engine, acao, cwd });
+  }
   if (motorAcp(engine)) return { error: 'A conta do agente ACP se resolve no terminal: rode o comando dele e entre por lá.' };
   const ehClaude = engine === 'claude';
   const naVps = ehRemoto(cwd);

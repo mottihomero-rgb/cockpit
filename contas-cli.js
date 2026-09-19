@@ -94,15 +94,25 @@ function criarContasCli({ HOME, pastaDados, acharBin, temBin, buildEnv, ehWindow
       }
     }
     return { entrou: instalado && salva, instalado, salvaLocalmente: salva, email, nome: nome || email,
-      via: gemini ? 'Conta Google' : 'Conta Grok', plano: '', gratuito: true,
+      via: gemini ? 'Conta Google' : 'Conta Grok', plano: '', gratuito: gemini,
       sessao: null, semana: null, extra: null,
       motivo: !instalado ? 'O programa do ' + (gemini ? 'Gemini' : 'Grok') + ' ainda não está instalado.'
         : salva ? 'Conta salva neste Mac. O serviço confere o acesso ao começar a conversa.'
         : usandoApi ? 'Existe uma chave de API salva. Entre com sua conta para usar o acesso gratuito.'
         : gemini ? 'Entre com sua conta Google para usar a cota gratuita.'
-        : 'Entre com sua conta Grok para experimentar o acesso gratuito.',
-      limiteNota: gemini ? 'A cota gratuita é definida pelo Google.' : 'O teste gratuito e os limites são definidos pelo Grok.',
+        : 'Entre com sua conta Grok para usar o limite da conta.',
+      limiteNota: gemini ? 'A cota gratuita é definida pelo Google.' : 'O limite de uso é o da conta Grok, o mesmo do terminal.',
     };
+  }
+
+  // Só o processo principal usa: busca o limite na API. Nunca vai para a tela.
+  function tokenGrok() {
+    const todas = lerJson(path.join(HOME, '.grok', 'auth.json'));
+    const lista = todas.auth_mode ? [todas] : Object.values(todas);
+    const conta = lista.find(c => c && typeof c === 'object' && typeof c.key === 'string' && c.key
+      && ['oidc', 'external'].includes(c.auth_mode)
+      && (!c.oidc_issuer || /^https:\/\/(auth|accounts)\.x\.ai(?:\/|$)/.test(c.oidc_issuer)));
+    return conta ? conta.key : '';
   }
 
   function acao({ engine, acao, cwd }) {
@@ -152,6 +162,6 @@ function criarContasCli({ HOME, pastaDados, acharBin, temBin, buildEnv, ehWindow
         : 'Entre com sua conta Grok no navegador. O login volta para o Cockpit ao terminar.',
     };
   }
-  return { ler, acao, ambiente, confirmar, invalidar };
+  return { ler, acao, ambiente, confirmar, invalidar, tokenGrok };
 }
 module.exports = { criarContasCli, ambienteSemChaves };
