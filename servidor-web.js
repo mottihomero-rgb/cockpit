@@ -132,7 +132,7 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
         }
         // agora a trava so pega quem erra a senha, e nem isso para quem ja tem sessao valida
         if (!jaDentro && !podeTentar(endereco)) {
-          return paginaLogin(res, 429, true, 'Muitas senhas erradas. Espere 15 minutos — ou entre com a senha certa.');
+          return paginaLogin(res, 429, true, 'Muitas senhas erradas. Espere 15 minutos, ou entre com a senha certa.');
         }
         falhou(endereco);
         paginaLogin(res, 401, true);

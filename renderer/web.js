@@ -56,6 +56,43 @@
   window.addEventListener('online', ligar);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) ligar(); });
 
+  /* Escolher imagem no telefone. O <input type="file"> e a unica janela de arquivo que o
+     Safari abre. A imagem vira texto (data URL) e sobe pelo MESMO cano da camera: quem grava
+     e o Mac, em colados/, e ele devolve o caminho de la — que e o que a tela espera receber. */
+  function escolherImagem() {
+    return new Promise((res) => {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*';
+      inp.style.display = 'none';
+      document.body.appendChild(inp);
+      let pronto = false, escolheu = false;
+      const terminar = (v) => { if (pronto) return; pronto = true; try { inp.remove(); } catch (_) {} res(v); };
+      inp.addEventListener('change', async () => {
+        escolheu = true;
+        const f = inp.files && inp.files[0];
+        if (!f) return terminar([]);
+        try {
+          const dados = await new Promise((ok, nao) => {
+            const fr = new FileReader();
+            fr.onload = () => ok(String(fr.result || ''));
+            fr.onerror = () => nao(new Error('nao consegui abrir o arquivo'));
+            fr.readAsDataURL(f);
+          });
+          const r = await chamar('imagem:salvar', { dados, prefixo: 'anexo' });
+          if (r && r.arquivo) return terminar([r.arquivo]);
+          alert('Não consegui mandar a imagem para o Mac: ' + ((r && r.error) || 'erro'));
+        } catch (e) {
+          alert('Não consegui mandar a imagem para o Mac: ' + ((e && e.message) || 'erro'));
+        }
+        terminar([]);
+      });
+      /* Cancelar o seletor nao avisa ninguem: sem esta rede a promessa ficaria pendurada pra
+         sempre e o menu do + nunca terminaria. So vale se ele nao escolheu nada. */
+      window.addEventListener('focus', () => setTimeout(() => { if (!escolheu) terminar([]); }, 800), { once: true });
+      inp.click();
+    });
+  }
+
   window.api = {
     getConfig: () => chamar('config:get'),
     // O telefone roda o MESMO app.js do Mac, inclusive o savePanes(). Como cada tela guarda a
@@ -110,7 +147,16 @@
     promptsLer: () => chamar('prompts:ler'),
     promptsSalvar: (l) => chamar('prompts:salvar', l),
     buscarArquivos: (o) => chamar('fs:buscarArquivos', o),
-    pickFiles: () => Promise.resolve([]),
+    /* Os tres itens do menu Anexar caiam aqui e nao faziam NADA: o menu fechava e pronto.
+       Agora 'Enviar imagem' abre a galeria do proprio celular de verdade. Arquivo comum e
+       pasta nao tem cano ate o Mac: em vez do toque morrer calado, ele ouve o porque. */
+    pickFiles: (tipo) => {
+      if (tipo === 'image') return escolherImagem();
+      alert(tipo === 'folder'
+        ? 'No iPhone escreva o caminho da pasta na mensagem: a janela de pastas só abre no Mac.'
+        : 'No iPhone dá para anexar imagem (use "Enviar imagem" ou "Fotografar"). Outro tipo de arquivo, só pelo Mac.');
+      return Promise.resolve([]);
+    },
     pickPhoto: () => Promise.resolve(null),
     // erro interno do processo principal so chega na janela do Mac; aqui e so pra a tela
     // nao ter de checar se a funcao existe
@@ -174,6 +220,10 @@
     // quem mostra aviso do sistema e' o Mac. Responder aqui na hora evita o TypeError que
     // derruba o boot do telefone (o app.js e' o MESMO arquivo nos dois).
     avisarAgente: () => Promise.resolve({ ok: false }),
+    // o irmao dele: o "terminou" que a tela dispara no fim de TODA resposta. Sem esta linha o
+    // telefone morria num TypeError bem no fim do turno, e o que vem depois nunca rodava: o
+    // "trabalhando" nao saia, a bolinha verde nao acendia e a mensagem da fila nao ia embora.
+    avisarPronto: () => Promise.resolve({ ok: false }),
     // atalho global é do teclado do MAC: o telefone não liga nem desliga isso. Responder aqui
     // na hora evita o TypeError que derrubaria o boot (o app.js é o MESMO arquivo nos dois).
     atalhosEstado: () => Promise.resolve({ falhos: [] }),
@@ -186,6 +236,29 @@
     inboxPasta: () => Promise.resolve(null),
     inboxOuvindo: () => Promise.resolve({ ok: false }),
     onInbox: () => {},
+    /* leva 12: estas oito a tela chama e aqui nao existiam. Cada uma derrubava o telefone num
+       TypeError no meio da tarefa (o app.js e o MESMO arquivo nos dois). As tres de baixo sao
+       trabalho de arquivo e de leitura, e o main ja as serve pelo Wi-Fi: vao pelo mesmo cano,
+       quem faz e o Mac. */
+    desfazerEdicao: (o) => chamar('arquivo:desfazer', o),
+    salvarNoVault: (o) => chamar('vault:salvar', o),
+    configClaude: () => chamar('config:claude'),
+    // ditar: o celular grava pelo microfone DELE e o Mac so passa o texto a limpo, igual ao ocrLer
+    ditar: (o) => chamar('voz:transcrever', o),
+    /* ja o ditado AO VIVO escuta o microfone DO MAC: por Wi-Fi isso abriria o microfone de casa
+       a distancia. Respondendo 'ok: false' a tela cai sozinha no ditado normal, que funciona aqui. */
+    vozVivo: () => Promise.resolve({ ok: false }),
+    vozParar: () => Promise.resolve({ ok: true }),
+    // puxar a aba aberta e ler o navegador DO MAC; do celular so daria a aba que ficou la
+    abaDoNavegador: () => Promise.resolve({ error: 'Puxar a aba do navegador só funciona no Mac.' }),
+    // aviso de motor atualizado o Mac manda so pra janela dele: aqui fica quieto, como o onMenu
+    onMotorAtualizado: () => {},
+    /* copiar: no Mac quem copia e o processo principal, porque dentro do app o clipboard do
+       navegador as vezes e barrado. No telefone e o contrario — o clipboard que serve e o do
+       proprio celular. Se o navegador barrar, o app.js ja tem a segunda tentativa dele. */
+    copiar: (t) => (navigator.clipboard
+      ? navigator.clipboard.writeText(String(t == null ? '' : t))
+      : Promise.reject(new Error('o navegador nao deixa copiar aqui'))),
     // no telefone nao faz sentido mexer no servidor nem abrir janela do Mac
     webEstado: () => Promise.resolve({ ligado: true, endereco: location.origin, senha: '' }),
     webLigar: () => Promise.resolve({ ligado: true, endereco: location.origin, senha: '' }),
@@ -194,4 +267,25 @@
     onCodexEvent: (cb) => { (ouvintes['codex:event'] = ouvintes['codex:event'] || []).push(cb); },
     onMenu: () => {},
   };
+
+  /* ---- rede de seguranca: nunca mais travar por falta de uma funcao ----
+     O app.js e o MESMO arquivo no Mac e no telefone. Toda vez que alguem cria uma funcao nova
+     la e esquece de acrescentar aqui, o telefone morre num TypeError NO MEIO de uma tarefa, e
+     tudo que vinha depois naquela linha nao acontece. Foi assim que o chat ficou preso em
+     "trabalhando" pra sempre. Daqui pra frente, funcao que faltar responde "nao deu" e a tela
+     segue viva em vez de quebrar.
+     Dois cuidados: 'then' fica de fora, senao o window.api passaria por promessa e travaria
+     quem esperasse por ele; e a tela as vezes PERGUNTA se a funcao existe para decidir o que
+     mostrar no telefone (if (window.api.vozVivo)) — a partir daqui a resposta e sempre sim,
+     entao funcao nova que o telefone NAO deve ter e melhor declarar la em cima, respondendo
+     'ok: false', do que deixar cair aqui. */
+  const FORA_DA_REDE = new Set(['then', 'catch', 'finally', 'toJSON']);
+  window.api = new Proxy(window.api, {
+    get(alvo, nome) {
+      if (typeof nome !== 'string' || nome in alvo) return alvo[nome];
+      if (FORA_DA_REDE.has(nome) || !/^[a-z][A-Za-z0-9_]*$/.test(nome)) return undefined;
+      console.warn('[cockpit] o web.js nao tem "' + nome + '": respondendo que so funciona no Mac.');
+      return () => Promise.resolve({ ok: false, error: 'Isto só funciona no Mac.' });
+    },
+  });
 })();

@@ -1,6 +1,6 @@
 {
   "name": "cockpit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Codex e Claude lado a lado, com acesso a tudo no Mac",
   "main": "main.js",
   "author": "Homero Motti",
@@ -8,7 +8,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac --arm64",
-    "test": "node --test tests/astra-contract.test.cjs tests/port-final.test.cjs tests/web-mobile.test.cjs tests/contas-cli.test.cjs tests/layout-contract.test.cjs tests/markdown-arquivo.test.cjs tests/uso-limite.test.cjs tests/padrao-novo.test.cjs tests/auto-update-motores.test.cjs",
+    "test": "node --test tests/*.test.cjs && npm run test:acp",
     "test:acp": "node tests/teste-acp.js && node tests/teste-acp-ponte.js"
   },
   "dependencies": {
@@ -41,6 +41,7 @@
       "package.json",
       "renderer/**/*",
       "!renderer/**/*.bak*",
+      "!renderer/**/*.antes-*",
       "assets/**/*",
       "node_modules/@lydell/**/*",
       "node_modules/@xterm/**/*",
@@ -48,7 +49,8 @@
       "node_modules/ws/**/*",
       "!**/*.d.ts",
       "!**/README.md",
-      "!**/*.bak*"
+      "!**/*.bak*",
+      "!**/*.antes-*"
     ],
     "asarUnpack": [
       "**/node_modules/@lydell/**"

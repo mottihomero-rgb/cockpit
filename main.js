@@ -1109,6 +1109,7 @@ function claudeMessage(paneId, m) {
     const entradaDoTurno = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     const saidaDoTurno = u.output_tokens || 0;
     if (entradaDoTurno || saidaDoTurno) emit(paneId, 'turno-uso', { entrada: entradaDoTurno, saida: saidaDoTurno });
+    { const st = claudePanes.get(paneId); if (st) st.rodando = false; }   // acabou: some do aviso de fechar
     emit(paneId, 'turn-end', {});
   }
 }
@@ -1715,7 +1716,7 @@ function acharNaConversa(file, alvo, engine) {
 const IND_ARQ = path.join(HOME, '.cockpit', 'indice-busca.json');
 /* Teto de texto guardado por conversa. Era 40 mil e, com 2769 conversas, isso da 110 MB de
    indice: cada busca parava a janela por quase 1 segundo e o app ficava com 1 GB a mais de
-   memoria. Com 12 mil o indice cai para uns 33 MB e a busca continua achando pelo comeco da
+   memoria. Com 12 mil o indice cai para 28 MB e a busca continua achando pelo comeco da
    conversa. O certo mesmo e um banquinho que busque no disco, mas isso e obra maior. */
 const IND_MAX = 12000;              // caracteres de texto guardados por conversa
 let indBusca = null, indiceSujo = false, indiceTimer = null;
@@ -1732,9 +1733,10 @@ function lerIndiceBusca() {
   apararIndice();
   return indBusca;
 }
-/* O que ja esta gravado vem do tempo em que o teto nao funcionava: 1157 conversas passavam
-   de 40 mil letras. Essas entradas so seriam refeitas se o arquivo da conversa mudasse, ou
-   seja, o peso ficaria ali para sempre. Aqui elas sao aparadas na primeira leitura. */
+/* O que ja esta gravado vem do tempo em que o teto nao funcionava: a maior entrada tinha
+   476 mil letras. Essas entradas so seriam refeitas se o arquivo da conversa mudasse, ou
+   seja, o peso ficaria ali para sempre. Aqui as 2230 que passam do teto sao aparadas na
+   primeira leitura: 161 MB viram 28 MB sem precisar reler conversa nenhuma. */
 function apararIndice() {
   let mexeu = 0;
   for (const k of Object.keys(indBusca)) {
@@ -3839,8 +3841,41 @@ function createWindow() {
       try { shell.showItemInFolder(decodeURIComponent(url.replace('file://', ''))); } catch {}
     }
   });
+  /* Fechar a janela mata na hora TODOS os agentes, sem perguntar: quem estava no meio de uma
+     tarefa morre ali. E no Mac o app continua no Dock, entao reabrir traz a tela de volta com
+     as conversas paradas e o trabalho perdido. Por isso o aviso: o 'close' ainda da para
+     cancelar; o 'closed' logo abaixo ja e depois do estrago. Cmd+Q nao pergunta nada, que ai
+     a ordem de sair e clara. Se qualquer coisa der errado aqui, a janela fecha normal: nunca
+     prender o Homero dentro do app. */
+  win.on('close', (e) => {
+    if (saindoDoApp) return;
+    let quantos = 0;
+    try { quantos = agentesTrabalhando(); } catch { return; }
+    if (!quantos) return;
+    try {
+      const r = dialog.showMessageBoxSync(win, {
+        type: 'warning',
+        buttons: ['Não fechar', 'Fechar mesmo assim'],
+        defaultId: 0, cancelId: 0,
+        message: quantos === 1 ? '1 agente está trabalhando agora' : quantos + ' agentes estão trabalhando agora',
+        detail: 'Fechar agora interrompe o trabalho no meio, e o que estava rodando não volta.',
+      });
+      if (r !== 1) e.preventDefault();
+    } catch {}
+  });
   win.on('closed', () => { win = null; shutdown(); });
 }
+
+/* quem esta no meio de uma tarefa AGORA: turno do Codex em andamento e painel do Claude que
+   recebeu uma mensagem e ainda nao devolveu o fim do turno. Painel aberto e parado nao conta,
+   senao o aviso apareceria toda vez que a janela fecha. */
+function agentesTrabalhando() {
+  let n = 0;
+  try { n += codex.paneTurn.size; } catch {}
+  try { for (const st of claudePanes.values()) if (st && st.rodando) n++; } catch {}
+  return n;
+}
+let saindoDoApp = false;
 
 function shutdown() {
   cli.fechar(); acp.fechar();
@@ -4482,7 +4517,10 @@ handle('pane:send', async (_e, data) => {
   if (engine === 'claude') {
     // A interface Claude continua usando o texto com a lista de caminhos.
     const content = claudeAttachmentText(text, attachments);
-    return escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: content }] } });
+    const foi = escreverClaude(paneId, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: content }] } });
+    // marca que este painel esta no meio de um turno: e isso que o aviso de fechar a janela le
+    if (foi) { const st = claudePanes.get(paneId); if (st) st.rodando = true; }
+    return foi;
   }
   const tid = codex.paneToThread.get(paneId);
   if (!tid) return false;
@@ -5608,4 +5646,4 @@ app.whenReady().then(() => { anota('app iniciou'); usarClaudeDeCaminhoFixo(); me
     }
   } catch (e) { anota('NAO ABRIU para o telefone:', e); } setTimeout(() => codexStart().catch(() => {}), 1500); app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); }); });
 app.on('window-all-closed', () => { shutdown(); if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { shutdown(); if (web) { try { (web.fechar || web.servidor.close.bind(web.servidor))(); } catch {} } });
+app.on('before-quit', () => { saindoDoApp = true; shutdown(); if (web) { try { (web.fechar || web.servidor.close.bind(web.servidor))(); } catch {} } });

@@ -4,8 +4,16 @@
   if (!window.SEM_ELECTRON) return;
   let pronto = false, atualizando = false;
   let reabrindo = false;
+  let relogio = 0;
   const selos = new WeakMap();
   const chaveRascunhos = 'cockpit:rascunhos';
+  const chaveConversa = 'cockpit:ultima-conversa';
+  /* Guardar em localStorage, e não em sessionStorage: o iPhone joga a gaveta de sessão fora
+     quando o app fecha ou quando o iOS o descarta da memória (acontece direto com app na Tela
+     de Início), e o texto que ele estava escrevendo sumia. Junto vai o carimbo da hora, pra
+     rascunho de ontem não ressuscitar amanhã. */
+  const VALIDADE = 24 * 60 * 60 * 1000;   // passou de um dia, não volta mais
+  const TETO = 512 * 1024;                // meio mega: a gaveta do navegador é pequena
   const sessao = P => P.sessaoId || P.resumeId || '';
 
   function altura() {
@@ -32,27 +40,49 @@
     if (!pronto || reabrindo || !focusPane) return;
     const P = focusPane;
     try {
-      if (sessao(P)) sessionStorage.setItem('cockpit:ultima-conversa', JSON.stringify({
+      if (sessao(P)) localStorage.setItem(chaveConversa, JSON.stringify({
         id: sessao(P), engine: P.engine, cwd: P.cwd, file: P.sessaoFile || '', title: P.titulo || '', remoto: NA_VPS(P.cwd),
+        em: Date.now(),
       }));
-      else sessionStorage.removeItem('cockpit:ultima-conversa');
+      else localStorage.removeItem(chaveConversa);
     } catch {}
   }
 
   function guardarRascunhos() {
+    clearTimeout(relogio);
     if (!pronto) return;
     guardarConversa();
+    const agora = Date.now();
     const itens = [...panes.values()].map((P, indice) => ({
       engine: P.engine, cwd: P.cwd, sessao: sessao(P), indice,
-      texto: P.el.querySelector('.p-input')?.value || '', anexos: P.anexos || [],
+      texto: P.el.querySelector('.p-input')?.value || '',
+      // o anexo vai SEM a miniatura: ela é a imagem inteira em base64 e sozinha entope a gaveta
+      anexos: (P.anexos || []).map(({ mini, ...resto }) => resto),
+      em: agora,
     })).filter(x => x.texto || x.anexos.length);
-    try { sessionStorage.setItem(chaveRascunhos, JSON.stringify(itens)); } catch {}
+    // se mesmo assim não couber, o que cai é o rascunho dos outros painéis; o do foco fica
+    const noFoco = focusPane ? [...panes.values()].indexOf(focusPane) : -1;
+    itens.sort((a, b) => (b.indice === noFoco) - (a.indice === noFoco));
+    while (itens.length > 1 && JSON.stringify(itens).length > TETO) itens.pop();
+    try {
+      if (itens.length) localStorage.setItem(chaveRascunhos, JSON.stringify(itens));
+      else localStorage.removeItem(chaveRascunhos);   // nada escrito: não deixa lixo guardado
+    } catch {}
   }
   function reporRascunhos() {
     let itens = [];
-    try { itens = JSON.parse(sessionStorage.getItem(chaveRascunhos) || '[]'); } catch {}
+    try { itens = JSON.parse(localStorage.getItem(chaveRascunhos) || '[]'); } catch {}
+    if (!Array.isArray(itens)) itens = [];
+    // rascunho de mais de um dia não volta, e ainda sai da gaveta pra não ocupar espaço à toa
+    const vivos = itens.filter(x => x && Date.now() - (Number(x.em) || 0) < VALIDADE);
+    if (vivos.length !== itens.length) {
+      try {
+        if (vivos.length) localStorage.setItem(chaveRascunhos, JSON.stringify(vivos));
+        else localStorage.removeItem(chaveRascunhos);
+      } catch {}
+    }
     for (const [indice, P] of [...panes.values()].entries()) {
-      const item = itens.find(x => x.engine === P.engine && x.cwd === P.cwd
+      const item = vivos.find(x => x.engine === P.engine && x.cwd === P.cwd
         && (x.sessao ? x.sessao === sessao(P) : !sessao(P) && x.indice === indice));
       const campo = P.el.querySelector('.p-input');
       if (!item || !campo || campo.value) continue;
@@ -61,7 +91,19 @@
       if (item.anexos?.length && !P.anexos.length) anexar(P, item.anexos).catch(() => {});
     }
   }
-  document.addEventListener('input', e => { if (e.target.matches('.p-input')) guardarRascunhos(); });
+  // não gravar a cada tecla: espera ele parar de digitar meio segundo
+  function agendarRascunhos() { clearTimeout(relogio); relogio = setTimeout(guardarRascunhos, 500); }
+  document.addEventListener('input', e => { if (e.target.matches('.p-input')) agendarRascunhos(); });
+  /* Mandou a mensagem: o campo esvazia e o rascunho tem que sumir junto, senão o texto que
+     ele JÁ enviou voltava sozinho na próxima abertura. Aqui o campo já está vazio, então
+     gravar de novo é o que apaga. */
+  document.addEventListener('click', e => { if (e.target.closest?.('.p-send')) setTimeout(guardarRascunhos, 0); });
+  document.addEventListener('keydown', e => {
+    // o ?. porque existe tecla disparada por codigo, e ai o alvo e o proprio documento
+    if (e.key === 'Enter' && !e.shiftKey && e.target.matches?.('.p-input')) setTimeout(guardarRascunhos, 0);
+  });
+  // ele pula pro WhatsApp e o iPhone pode matar o app sem avisar: gravar na hora que esconde
+  document.addEventListener('visibilitychange', () => { if (document.hidden) guardarRascunhos(); });
   window.addEventListener('pagehide', guardarRascunhos);
   window.addEventListener('cockpit:salvar-rascunhos', guardarRascunhos);
 
@@ -101,8 +143,9 @@
   window.addEventListener('cockpit:pronto', async () => {
     pronto = true; reabrindo = true;
     try {
-      const ultima = JSON.parse(sessionStorage.getItem('cockpit:ultima-conversa') || 'null');
-      if (ultima?.id && ultima.cwd && ['claude', 'codex', 'acp', 'gemini', 'grok'].includes(ultima.engine)) await openSession(ultima);
+      const ultima = JSON.parse(localStorage.getItem(chaveConversa) || 'null');
+      if (ultima?.id && ultima.cwd && Date.now() - (Number(ultima.em) || 0) < VALIDADE
+        && ['claude', 'codex', 'acp', 'gemini', 'grok'].includes(ultima.engine)) await openSession(ultima);
     } catch { /* o histórico completo continua disponível na gaveta */ }
     finally { reabrindo = false; }
     reporRascunhos(); mostrarConversa(); voltou();
