@@ -3137,6 +3137,7 @@ function esquecerUso(engine) {
   if (engine === 'claude') { credGuardada = null; Object.assign(usoClaude, { dados: null, quando: 0, pausaAte: 0, pausa: 0 }); }
   if (engine === 'codex') Object.assign(usoCodex, { dados: null, quando: 0 });
   if (engine === 'grok') Object.assign(usoGrok, { dados: null, quando: 0, pausaAte: 0, pausa: 0 });
+  if (engine === 'gemini') Object.assign(usoGemini, { dados: null, quando: 0, pausaAte: 0, pausa: 0 });
 }
 async function limitesDoCodex() {
   try {
@@ -3237,8 +3238,99 @@ async function buscarUsoDoGrok() {
   } catch { return ultimoBomGrok(); }
 }
 
+/* Limite do Gemini: o mesmo `/usage` do Antigravity (agy -p /usage --output-format json).
+   Só aceita resposta com command.name === "usage" — senão seria um prompt cobrado. */
+const usoGemini = { dados: null, quando: 0, pausaAte: 0, pausa: 0, voando: null, versao: null };
+const ultimoBomGemini = () => (usoGemini.dados ? { ...usoGemini.dados, velho: usoGemini.quando } : null);
+function fracRestanteGemini(b) {
+  if (!b || typeof b !== 'object') return null;
+  const n = b.remaining_fraction != null ? b.remaining_fraction : b.remainingFraction;
+  return Number.isFinite(n) ? n : null;
+}
+function janelasDoGemini(dados, velho) {
+  const grupos = dados && Array.isArray(dados.groups) ? dados.groups : [];
+  const gemini = grupos.find(g => g && /gemini/i.test(String(g.name || ''))) || grupos[0];
+  const buckets = gemini && Array.isArray(gemini.buckets) ? gemini.buckets : [];
+  const jan = (b) => {
+    const rest = fracRestanteGemini(b);
+    if (rest == null) return null;
+    const reseta = Date.parse(b.reset_time || b.resetTime || '') || 0;
+    if (velho && reseta && reseta < Date.now()) return null;
+    return { pct: Math.round(Math.min(100, Math.max(0, (1 - rest) * 100))), reseta };
+  };
+  const chave = (b) => String((b && (b.window || '')) + ' ' + (b && (b.id || '')) + ' ' + (b && (b.name || ''))).toLowerCase();
+  const sessao = jan(buckets.find(b => /5h|five.?hour|session/.test(chave(b))));
+  const semana = jan(buckets.find(b => /week/.test(chave(b))));
+  return { sessao, semana, semSessao: !sessao && !!semana };
+}
+async function usoDoGemini() {
+  const agora = Date.now();
+  if (usoGemini.dados && agora - usoGemini.quando < USO_VALE_MS) return usoGemini.dados;
+  if (agora < usoGemini.pausaAte) return ultimoBomGemini() || { limitado: true, voltaEm: usoGemini.pausaAte };
+  if (!usoGemini.voando) usoGemini.voando = buscarUsoDoGemini().finally(() => { usoGemini.voando = null; });
+  return usoGemini.voando;
+}
+async function versaoDoAgy() {
+  if (usoGemini.versao != null) return usoGemini.versao;
+  if (!temBin('agy')) { usoGemini.versao = 0; return 0; }
+  const r = await rodar(acharBin('agy'), ['--version'], 8000);
+  const m = String((r && r.out) || '').trim().match(/(\d+)\.(\d+)\.(\d+)/);
+  usoGemini.versao = m ? (+m[1] * 10000 + +m[2] * 100 + +m[3]) : 0;
+  return usoGemini.versao;
+}
+function pastaUsoAgy() {
+  const dir = path.join(app.getPath('userData'), 'contas-cli', 'agy-uso');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  return dir;
+}
+function rodarUsoAgy() {
+  return new Promise((res) => {
+    let out = '', errout = '', acabou = false;
+    const p = spawnBin(acharBin('agy'), ['-p', '/usage', '--output-format', 'json', '--print-timeout', '90s'], {
+      cwd: pastaUsoAgy(), env: contasCli.ambiente('gemini'), stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const t = setTimeout(() => { try { p.kill(); } catch {} }, 95000);
+    const fim = (err) => { if (acabou) return; acabou = true; clearTimeout(t); res({ err, out, errout }); };
+    p.stdout.on('data', (d) => { if (out.length < 1024 * 1024) out += d.toString('utf8'); });
+    p.stderr.on('data', (d) => { if (errout.length < 8000) errout += d.toString('utf8'); });
+    p.on('error', (e) => fim(e));
+    p.on('close', (code) => fim(code === 0 ? null : new Error('saiu com código ' + code)));
+  });
+}
+async function buscarUsoDoGemini() {
+  if (!temBin('agy')) return null;
+  try {
+    // 1.1.11 passou a devolver /usage em JSON; antes o agy mandava o texto pro modelo e cobrava
+    if (await versaoDoAgy() < 10111) return ultimoBomGemini();
+    const r = await rodarUsoAgy();
+    if (!r || r.err || !r.out) return ultimoBomGemini();
+    let j;
+    try { j = JSON.parse(r.out); } catch { return ultimoBomGemini(); }
+    const cmd = j && j.command;
+    if (!cmd || cmd.name !== 'usage' || !cmd.data) return ultimoBomGemini();
+    const groups = cmd.data.groups;
+    if (!Array.isArray(groups) || !groups.length) return ultimoBomGemini();
+    Object.assign(usoGemini, { dados: { groups }, quando: Date.now(), pausa: 0, pausaAte: 0 });
+    return usoGemini.dados;
+  } catch { return ultimoBomGemini(); }
+}
+
 handle('conta:ler', async (_e, engine) => {
-  if (engine === 'gemini') return contasCli.ler(engine);
+  if (engine === 'gemini') {
+    const conta = contasCli.ler('gemini');
+    const u = await usoDoGemini();
+    const velho = (u && u.velho) || 0;
+    const j = (u && !u.limitado) ? janelasDoGemini(u, velho) : { sessao: null, semana: null, semSessao: false };
+    const tem = !!(j.sessao || j.semana);
+    return {
+      ...conta,
+      entrou: tem ? true : conta.entrou,
+      limitado: !!(u && u.limitado),
+      voltaEm: (u && u.voltaEm) || 0,
+      velho,
+      sessao: j.sessao, semana: j.semana, semSessao: !!j.semSessao,
+    };
+  }
   if (engine === 'grok') {
     const conta = contasCli.ler('grok');
     if (!conta.entrou) return conta;

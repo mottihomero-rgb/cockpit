@@ -47,6 +47,18 @@ function loadMain() {
     proc.stdin.write = value => { record.writes.push(JSON.parse(value)); return true; };
     proc.kill = signal => { record.signal = signal; };
     spawned.push(record);
+    const agy = /(?:^|[\\/])agy$/.test(String(bin));
+    if (agy && args[0] === '--version') {
+      queueMicrotask(() => { proc.stdout.emit('data', Buffer.from('1.2.7\n')); proc.emit('close', 0); });
+    } else if (agy && args.includes('/usage')) {
+      queueMicrotask(async () => {
+        try {
+          const payload = ctx.__agyUso ? await ctx.__agyUso(record) : '';
+          if (payload) proc.stdout.emit('data', Buffer.from(typeof payload === 'string' ? payload : JSON.stringify(payload)));
+        } catch (e) { proc.stderr.emit('data', Buffer.from(String(e && e.message || e))); proc.emit('close', 1); return; }
+        proc.emit('close', 0);
+      });
+    }
     return proc;
   }
   const forbidden = name => () => { violations.push(name); throw new Error('Efeito externo proibido no teste: ' + name); };
@@ -129,6 +141,7 @@ function loadMain() {
   return {
     HOME, files, ipc, events, wire, spawned, timers, violations, appEvents,
     attachCodex, evaluate,
+    onAgyUso(fn) { ctx.__agyUso = fn; },
     // `resto` leva os argumentos extras de um handler que recebe mais de um (ex.: o
     // config:set, que alem do config recebe a ORIGEM da gravacao)
     call(name, args, event = null, ...resto) { if (!ipc.has(name)) throw new Error('Handler ausente: ' + name); return ipc.get(name)(event, args, ...resto); },
