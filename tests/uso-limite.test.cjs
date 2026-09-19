@@ -167,6 +167,66 @@ test('Grok: plano semanal vira barra da semana, sem limite de sessão', async ()
   assert.doesNotMatch(JSON.stringify(c), /token-grok-secreto|Bearer /);
 });
 
+const GEMINI_USO = {
+  status: 'SUCCESS',
+  command: {
+    name: 'usage',
+    data: {
+      groups: [
+        {
+          name: 'Gemini Models',
+          buckets: [
+            { id: 'gemini-weekly', name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 0.9792, reset_time: '2099-01-08T00:00:00Z' },
+            { id: 'gemini-5h', name: 'Five Hour Limit Remaining', window: '5h', remaining_fraction: 0.4, reset_time: '2099-01-01T05:00:00Z' },
+          ],
+        },
+        {
+          name: 'Claude and GPT models',
+          buckets: [{ id: '3p-weekly', window: 'weekly', remaining_fraction: 1, reset_time: '2099-01-08T00:00:00Z' }],
+        },
+      ],
+    },
+  },
+};
+
+test('Gemini: usa o /usage do Antigravity e pega sessão e semana do grupo Gemini', async () => {
+  const h = loadMain();
+  h.onAgyUso(() => GEMINI_USO);
+  const r = await h.call('uso:ler', 'gemini');
+  assert.equal(r.semana.pct, 2);
+  assert.equal(r.sessao.pct, 60);
+  assert.equal(r.semSessao, false);
+  const c = await h.call('conta:ler', 'gemini');
+  assert.equal(c.entrou, true);
+  assert.equal(c.semana.pct, 2);
+  assert.equal(c.sessao.pct, 60);
+  assert.ok(h.spawned.some(s => s.args.includes('/usage')));
+  assert.ok(h.spawned.every(s => !s.args.includes('--dangerously-skip-permissions')));
+  assert.doesNotMatch(JSON.stringify(c), /ya29\.|refresh_token|access_token/);
+});
+
+test('Gemini: só semana vira barra da semana, sem limite de sessão', async () => {
+  const h = loadMain();
+  h.onAgyUso(() => ({
+    status: 'SUCCESS',
+    command: { name: 'usage', data: { groups: [
+      { name: 'Gemini Models', buckets: [
+        { id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.5, reset_time: '2099-01-08T00:00:00Z' },
+      ] },
+    ] } },
+  }));
+  const r = await h.call('uso:ler', 'gemini');
+  assert.equal(r.semana.pct, 50);
+  assert.equal(r.sessao, null);
+  assert.equal(r.semSessao, true);
+});
+
+test('Gemini: resposta que não é o /usage não vira limite', async () => {
+  const h = loadMain();
+  h.onAgyUso(() => ({ status: 'SUCCESS', response: 'quota is fine', usage: { total_tokens: 12 } }));
+  assert.equal(await h.call('uso:ler', 'gemini'), null);
+});
+
 test('Grok: 429 depois de uma leitura boa mantém os números', async () => {
   const h = loadMain();
   const pedidos = comGrok(h, [{ status: 200, body: GROK_BILLING }, { status: 429, headers: { 'retry-after': '120' } }]);

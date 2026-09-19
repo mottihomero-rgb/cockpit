@@ -3418,7 +3418,15 @@ handle('conta:ler', async (_e, engine) => {
 /* so os percentuais do plano, para a faixa em cima da caixa de texto.
    Diferente do conta:ler, nao chama o CLI: e leve o bastante para repetir de minuto em minuto. */
 handle('uso:ler', async (_e, engine) => {
-  if (engine === 'gemini') return null;
+  if (engine === 'gemini') {
+    const u = await usoDoGemini();
+    if (!u) return null;
+    if (u.limitado) return { limitado: true, voltaEm: u.voltaEm || 0, sessao: null, semana: null };
+    const velho = u.velho || 0;
+    const j = janelasDoGemini(u, velho);
+    if (!j.sessao && !j.semana) return velho ? { ...j, velho } : null;
+    return { ...j, velho };
+  }
   // grok ANTES do motorAcp: o Grok usa ACP no chat, mas o limite é da conta, não do Codex
   if (engine === 'grok') {
     const u = await usoDoGrok();
@@ -3443,7 +3451,7 @@ handle('uso:ler', async (_e, engine) => {
 
 handle('auth:acao', async (_e, { engine, acao, cwd }) => {
   if (engine === 'gemini' || engine === 'grok') {
-    if (engine === 'grok') esquecerUso('grok');
+    esquecerUso(engine);
     return contasCli.acao({ engine, acao, cwd });
   }
   if (motorAcp(engine)) return { error: 'A conta do agente ACP se resolve no terminal: rode o comando dele e entre por lá.' };

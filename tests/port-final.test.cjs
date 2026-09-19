@@ -164,7 +164,8 @@ test('Comandos do Gemini vêm de TOML; contas e ajustes extras não iniciam Code
     assert.ok(entrada.terminal.includes(engine === 'gemini' ? 'agy' : engine));
     assert.equal(entrada.confereDepois, true);
   }
-  assert.equal(h.spawned.length, 0);
+  assert.ok(h.spawned.every(s => s.args[0] === '--version' || s.args.includes('/usage')),
+    'só pode ter nascido o agy do limite, nunca o Codex');
 });
 
 test('Grok usa ACP e autentica pelo login salvo, sem solicitar chave de API', async () => {

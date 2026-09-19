@@ -73,7 +73,8 @@ test('Estado via IPC não chama modelo nem trata falta de login como conta conec
     const status = await h.call('auth:acao', { engine, acao: 'status' });
     assert.equal(JSON.parse(status.texto).loggedIn, engine === 'gemini' ? null : false);
   }
-  assert.equal(h.spawned.length, 0); assert.equal(h.violations.length, 0);
+  assert.ok(h.spawned.every(s => s.args[0] === '--version' || s.args.includes('/usage')));
+  assert.equal(h.violations.length, 0);
 });
 
 test('Antigravity ignora conta Gemini legada, confirma por resposta real e invalida no logout', t => {
