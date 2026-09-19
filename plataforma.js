@@ -14,6 +14,7 @@ const { spawn, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { StringDecoder } = require('string_decoder');
 
 const EH_WIN = process.platform === 'win32';
 const HOME = os.homedir();
@@ -170,13 +171,39 @@ function abrirPty({ linha, cols, rows, cwd, env, ptyBridge }) {
   return ptyMac({ linha, cols, rows, cwd, env, ptyBridge });
 }
 
+/* Onde procurar o Python no Mac, nesta ordem.
+   O /usr/bin/python3 fica por último de propósito: num Mac sem as Ferramentas de
+   Linha de Comando da Apple esse arquivo existe, mas é só uma casca — ao ser
+   chamado ele abre um alerta pedindo instalação e sai com erro. Por isso
+   preferimos sempre um Python instalado de verdade. */
+function acharPython() {
+  const doPath = acharBin('python3');   // o python3 que o próprio app acha pelo PATH
+  const lugares = [doPath, '/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'];
+  for (const c of lugares) {
+    if (!c || !path.isAbsolute(c)) continue;   // acharBin devolve o nome cru quando não acha
+    try { if (fs.statSync(c).isFile()) return c; } catch {}
+  }
+  return null;
+}
+
 // Mac: continua exatamente como sempre foi — python3 + ptybridge.py, fd 3 resize.
 function ptyMac({ linha, cols, rows, cwd, env, ptyBridge }) {
-  const p = spawn('/usr/bin/python3', [ptyBridge, String(cols), String(rows), '/bin/sh', '-c', linha], {
+  const python = acharPython();
+  // Sem Python não há terminal. Melhor dizer o que falta do que quebrar calado.
+  if (!python) throw new Error('não achei o Python neste Mac. Abra o Terminal e rode: xcode-select --install');
+  const p = spawn(python, [ptyBridge, String(cols), String(rows), '/bin/sh', '-c', linha], {
     cwd, env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
   });
+  /* Um pedaço que chega do terminal pode cortar uma letra acentuada no meio (o "ç"
+     ocupa 2 bytes). O StringDecoder guarda esse resto e junta com o pedaço seguinte,
+     em vez de mostrar "�". Um por canal: saída e erro são fluxos separados. */
+  const deSaida = new StringDecoder('utf8');
+  const deErro = new StringDecoder('utf8');
   return {
-    onData(fn) { p.stdout.on('data', (d) => fn(d.toString('utf8'))); p.stderr.on('data', (d) => fn(d.toString('utf8'))); },
+    onData(fn) {
+      p.stdout.on('data', (d) => { const t = deSaida.write(d); if (t) fn(t); });
+      p.stderr.on('data', (d) => { const t = deErro.write(d); if (t) fn(t); });
+    },
     onErro(fn) { p.on('error', (e) => fn(e)); },
     onFim(fn) { p.on('close', (code) => fn(code)); },
     escrever(d) { p.stdin.write(d); },

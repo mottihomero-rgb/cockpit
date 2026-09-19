@@ -11,6 +11,37 @@ const TIPOS = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
   '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml',
   '.json': 'application/json', '.ico': 'image/x-icon' };
 
+/* O que o telefone PODE pedir ao Mac. E a mesma lista que o renderer/web.js usa, ou seja,
+   tudo que a tela do celular realmente faz — e nada alem disso. Antes valia qualquer nome de
+   comando do app: quem descobrisse a senha nao via so as conversas, rodava o que quisesse aqui.
+   Ficaram de fora de proposito os que abrem um terminal de verdade no Mac (term:run, term:input,
+   term:resize, term:kill) e o shell:open, que manda o Finder abrir um caminho — e abrir um .app
+   e rodar programa. Pelo celular esses cinco agora respondem "so funciona no Mac".
+   Mexeu no renderer/web.js? Ponha o nome novo aqui tambem, senao o telefone nao alcanca. */
+const PERMITIDOS = new Set([
+  'config:get', 'sys:home', 'fs:list', 'fs:read', 'fs:buscarArquivos',
+  'pane:start', 'pane:send', 'pane:respond', 'pane:settings', 'pane:steer',
+  'pane:compactar', 'pane:interrupt', 'pane:stop', 'pane:approve',
+  'codex:models', 'codex:api-status', 'codex:apps',
+  'sessions:claude', 'sessions:codex', 'sessions:cli', 'sessions:acp', 'sessions:history',
+  'sessions:titulo', 'sessions:buscar', 'sessions:claudeRemoto', 'sessions:historyRemoto',
+  'sessao:renomear', 'sessao:nomeCurto', 'sessao:fork',
+  'acp:config', 'skills:list', 'prompts:ler', 'prompts:salvar',
+  'anexo:ler', 'imagem:salvar', 'ocr:ler',
+  'quadro:salvar', 'quadro:rascunhoGravar', 'quadro:rascunhoLer',
+  'arquivo:ver', 'arquivo:verVps', 'term:linhaShell',
+  'conta:ler', 'uso:ler', 'agentes:claude', 'git:status', 'git:diff',
+  'motores:versoes', 'motores:disponiveis', 'rotinas:listar',
+  'mcp:list', 'mcp:acao', 'auth:acao',
+]);
+
+/* A sessao era procurada solta no meio do texto dos cookies: 'ck=' casa dentro de
+   'track=abc123', e o servidor lia o valor errado — o telefone ficava pedindo senha mesmo ja
+   logado. Agora o nome do cookie tem de comecar de verdade (no inicio ou logo depois do ';')
+   e o valor tem o tamanho certo do nosso token. */
+const pegarSessao = (cabecalho) =>
+  (String(cabecalho || '').match(/(?:^|;\s*)ck=([a-f0-9]{64})(?:;|$)/) || [])[1];
+
 function ipDaRede() {
   for (const lista of Object.values(os.networkInterfaces())) {
     for (const i of lista || []) if (i.family === 'IPv4' && !i.internal) return i.address;
@@ -58,6 +89,17 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
       ? { inicio: Date.now(), total: 0 } : anterior;
     item.total += 1; tentativas.set(endereco, item);
   };
+  // Le o corpo do POST da tela de senha. Teto pequeno de proposito: aqui so passa "s=<senha>",
+  // e assim ninguem enche a memoria do Mac mandando um corpo gigante.
+  const lerCorpo = (req, pronto) => {
+    let txt = '';
+    req.on('data', (p) => { if (txt.length <= 4096) txt += p; });
+    req.on('end', () => pronto(new URLSearchParams(txt.length > 4096 ? '' : txt)));
+  };
+  const paginaLogin = (res, status, errou, detalhe = '') => {
+    res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(paginaSenha(errou, detalhe));
+  };
 
   const servidor = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -67,21 +109,34 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     }
     // entrada com senha
     if (url.pathname === '/entrar') {
-      const endereco = ip(req);
-      if (!podeTentar(endereco)) {
-        res.writeHead(429, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-        return res.end(paginaSenha(true, 'Muitas tentativas. Espere 15 minutos.'));
-      }
-      if (igual(url.searchParams.get('s'), senha)) {
-        const t = crypto.randomBytes(32).toString('hex');
-        sessoes.set(t, Date.now() + VIDA_SESSAO);
-        tentativas.delete(endereco);
-        res.writeHead(302, { 'Set-Cookie': 'ck=' + t + '; Path=/; Max-Age=28800; HttpOnly; SameSite=Strict', Location: '/' });
+      // A senha vinha DENTRO do endereco (/entrar?s=...): ficava no historico do Safari, na
+      // sugestao da barra do iPhone, no backup do iCloud e em qualquer log de rede do caminho.
+      // Agora ela vem no corpo do POST. Endereco velho com a senha colada nao entra mais:
+      // e ignorado e so devolve para a porta de entrada.
+      if (req.method !== 'POST') {
+        res.writeHead(302, { Location: '/', 'Cache-Control': 'no-store' });
         return res.end();
       }
-      falhou(endereco);
-      res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8' });
-      return res.end(paginaSenha(true));
+      const endereco = ip(req);
+      const jaDentro = sessaoValida(pegarSessao(req.headers.cookie));
+      return lerCorpo(req, (campos) => {
+        // A senha certa entra SEMPRE. Antes a trava de 5 erros era conferida ANTES dela: como
+        // o Tailscale entrega todo mundo como 127.0.0.1, cinco erros de qualquer um (ou de uma
+        // pagina aberta no navegador do Mac) deixavam o dono 15 minutos de fora do proprio Mac.
+        if (igual(campos.get('s'), senha)) {
+          const t = crypto.randomBytes(32).toString('hex');
+          sessoes.set(t, Date.now() + VIDA_SESSAO);
+          tentativas.delete(endereco);
+          res.writeHead(302, { 'Set-Cookie': 'ck=' + t + '; Path=/; Max-Age=28800; HttpOnly; SameSite=Strict', Location: '/' });
+          return res.end();
+        }
+        // agora a trava so pega quem erra a senha, e nem isso para quem ja tem sessao valida
+        if (!jaDentro && !podeTentar(endereco)) {
+          return paginaLogin(res, 429, true, 'Muitas senhas erradas. Espere 15 minutos — ou entre com a senha certa.');
+        }
+        falhou(endereco);
+        paginaLogin(res, 401, true);
+      });
     }
     // o telefone busca estes sem cookie; sao inofensivos
     if (['/manifest.json', '/icone-180.png', '/icone-512.png', '/favicon.ico'].includes(url.pathname)) {
@@ -89,12 +144,8 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
       if (url.pathname === '/favicon.ico' || !fs.existsSync(pub)) { res.writeHead(204); return res.end(); }
       return mandarArquivo(res, pub);
     }
-    const cookie = String(req.headers.cookie || '');
-    const t = (cookie.match(/ck=([a-f0-9]+)/) || [])[1];
-    if (!t || !sessaoValida(t)) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      return res.end(paginaSenha(false));
-    }
+    const t = pegarSessao(req.headers.cookie);
+    if (!t || !sessaoValida(t)) return paginaLogin(res, 200, false);
 
     let arq = url.pathname === '/' ? '/index-web.html' : url.pathname;
     const alvo = path.join(pastaRenderer, path.normalize(arq).replace(/^(\.\.[/\\])+/, ''));
@@ -112,8 +163,7 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     // no celular poderia tentar falar com o Cockpit usando a sessão já existente.
     if (!redePermitida(req)) { ws.close(1008, 'fora do Tailscale'); return; }
     if (origin && origin !== esperado) { ws.close(1008, 'origem invalida'); return; }
-    const cookie = String(req.headers.cookie || '');
-    const t = (cookie.match(/ck=([a-f0-9]+)/) || [])[1];
+    const t = pegarSessao(req.headers.cookie);
     if (!t || !sessaoValida(t)) { ws.close(1008, 'sem sessao'); return; }
     ws.ck = t;                       // guarda a sessao deste telefone para reconferir depois
     ouvintes.add(ws);
@@ -126,6 +176,14 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
       if (!sessaoValida(ws.ck)) { try { ws.close(1008, 'sessao expirou'); } catch {} return; }
       let m; try { m = JSON.parse(bruto.toString()); } catch { return; }
       if (m.tipo !== 'chamada' || typeof m.nome !== 'string') return;
+      // So passa o que esta na lista PERMITIDOS la de cima. O resto nem chega no comando.
+      if (!PERMITIDOS.has(m.nome)) {
+        aoLog && aoLog('telefone pediu comando fora da lista: ' + m.nome);
+        // mesma resposta que o renderer/web.js ja da nos comandos so do Mac: a tela avisa na
+        // hora, em vez de o toque ficar dois minutos esperando uma resposta que nao vem
+        try { ws.send(JSON.stringify({ tipo: 'resposta', id: m.id, resposta: { error: 'Este comando só funciona no Mac.' }, erro: null })); } catch {}
+        return;
+      }
       const fn = handlers[m.nome];
       let resposta = null, erro = null;
       try { resposta = fn ? await fn({ remoto: true, ip: ip(req) }, m.arg) : null; if (!fn) erro = 'comando desconhecido: ' + m.nome; }
@@ -205,21 +263,31 @@ function paginaSenha(errou, detalhe = '') {
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Cockpit">
-<meta name="theme-color" content="#1e1e1e">
+<meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <link rel="manifest" href="/manifest.json"><link rel="apple-touch-icon" href="/icone-180.png">
 <title>Cockpit</title><style>
-body{margin:0;height:100dvh;display:grid;place-items:center;background:#1e1e1e;color:#ccc;
+/* As cores eram cravadas no escuro: quem usa o tema Claro tomava uma tela preta na cara e o
+   app saltava para o branco logo depois. Agora a porta de entrada segue o aparelho, com a
+   mesma paleta clara do app (style.css). */
+:root{--fundo:#1e1e1e;--texto:#ccc;--tit:#e8e8e8;--fraco:#8b8b8b;--campo:#252526;
+--borda:#474747;--laranja:#d97757;--erro:#e05252;--ajuda:#aaa}
+@media (prefers-color-scheme: light){
+:root{--fundo:#ffffff;--texto:#3b3b40;--tit:#1c1c20;--fraco:#71717a;--campo:#f5f5f6;
+--borda:#c8c8cb;--laranja:#c2521f;--erro:#c62828;--ajuda:#5f5f68}
+}
+body{margin:0;height:100dvh;display:grid;place-items:center;background:var(--fundo);color:var(--texto);
 font:15px -apple-system,system-ui,sans-serif}
 form{width:min(320px,86%);text-align:center}
-h1{font-size:19px;color:#e8e8e8;margin:0 0 6px}p{color:#8b8b8b;font-size:13px;margin:0 0 18px}
-input{box-sizing:border-box;width:100%;padding:13px;border-radius:11px;border:1px solid #474747;background:#252526;
-color:#ccc;font-size:16px;outline:none;text-align:center}
-input:focus{border-color:#d97757}
-button{width:100%;margin-top:10px;padding:13px;border:0;border-radius:11px;background:#d97757;
+h1{font-size:19px;color:var(--tit);margin:0 0 6px}p{color:var(--fraco);font-size:13px;margin:0 0 18px}
+input{box-sizing:border-box;width:100%;padding:13px;border-radius:11px;border:1px solid var(--borda);background:var(--campo);
+color:var(--texto);font-size:16px;outline:none;text-align:center}
+input:focus{border-color:var(--laranja)}
+button{width:100%;margin-top:10px;padding:13px;border:0;border-radius:11px;background:var(--laranja);
 color:#fff;font-size:15px;font-weight:600}
-.erro{color:#e05252;font-size:12.5px;margin-top:10px}
-details{margin-top:28px;color:#aaa;font-size:13px;line-height:1.6}summary{cursor:pointer}details p{margin-top:10px}
-</style></head><body><form action="/entrar">
+.erro{color:var(--erro);font-size:12.5px;margin-top:10px}
+details{margin-top:28px;color:var(--ajuda);font-size:13px;line-height:1.6}summary{cursor:pointer}details p{margin-top:10px}
+</style></head><body><form action="/entrar" method="post">
 <h1>Cockpit</h1><p>Digite a senha que aparece no Mac</p>
 <input name="s" type="password" autocomplete="current-password" aria-label="Senha do Cockpit" placeholder="senha mostrada no Mac" required>
 <button>Entrar</button>${errou ? '<div class="erro">' + (detalhe || 'Senha errada') + '</div>' : ''}

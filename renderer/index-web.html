@@ -136,14 +136,14 @@
     </div>
     <!-- leva 10.2: a torre é desenhada por pintarTorre() -->
     <div class="side-view hidden" data-view="torre">
-      <div class="side-head"><span>Torre de controle</span><button class="mini" id="btnTorreAtualizar" title="Atualizar agora"></button></div>
-      <p class="side-ajuda">Conversas trabalhando ou esperando você. Clique para abrir.</p>
+      <!-- a frase de ajuda saiu daqui e da Rotinas: comia 48px da tela do celular e
+           empurrava a lista para baixo. O texto virou dica do título (passar o mouse). -->
+      <div class="side-head"><span title="Conversas trabalhando ou esperando você. Clique para abrir.">Torre de controle</span><button class="mini" id="btnTorreAtualizar" title="Atualizar agora"></button></div>
       <div class="torre" id="torre"></div>
     </div>
     <!-- leva 11: a lista é desenhada por pintarRotinas() -->
     <div class="side-view hidden" data-view="rotinas">
-      <div class="side-head"><span>Rotinas do Mac</span><button class="mini" id="btnRotinasAtualizar" title="Atualizar agora"></button></div>
-      <p class="side-ajuda">Robôs agendados no Mac, com horários e falhas. “Disparar” roda agora.</p>
+      <div class="side-head"><span title="Robôs agendados no Mac, com horários e falhas. “Disparar” roda agora.">Rotinas do Mac</span><button class="mini" id="btnRotinasAtualizar" title="Atualizar agora"></button></div>
       <div class="rot" id="rotinas"></div>
     </div>
     <div class="side-view hidden" data-view="settings">
@@ -327,6 +327,8 @@
         <button class="cb p-plus" title="Anexar"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg></button>
         <button class="cb p-slash" title="Ações e comandos">/</button>
         <button class="cb p-modoenvio" title="O que fazer se ele já estiver trabalhando"></button>
+        <!-- Plano/Executar do Codex: o app.js desenha o ícone e só mostra em chat do Codex -->
+        <button class="cb p-plano hidden" aria-pressed="false" title="Planejar antes de executar"></button>
         <button class="p-compactar hidden" title="Resumir a conversa para liberar espaço">
           <svg class="an" viewBox="0 0 36 36">
             <circle class="an-fundo" cx="18" cy="18" r="15"></circle>

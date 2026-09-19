@@ -1713,10 +1713,14 @@ function acharNaConversa(file, alvo, engine) {
    limpo fica guardado em ~/.cockpit/indice-busca.json, e a busca roda em memoria: instantanea
    e completa. Arquivo que nao mudou (mesma data e mesmo tamanho) nem e reaberto. */
 const IND_ARQ = path.join(HOME, '.cockpit', 'indice-busca.json');
-const IND_MAX = 40000;              // caracteres de texto guardados por conversa
+/* Teto de texto guardado por conversa. Era 40 mil e, com 2769 conversas, isso da 110 MB de
+   indice: cada busca parava a janela por quase 1 segundo e o app ficava com 1 GB a mais de
+   memoria. Com 12 mil o indice cai para uns 33 MB e a busca continua achando pelo comeco da
+   conversa. O certo mesmo e um banquinho que busque no disco, mas isso e obra maior. */
+const IND_MAX = 12000;              // caracteres de texto guardados por conversa
 let indBusca = null, indiceSujo = false, indiceTimer = null;
 
-/* O indice inteiro pesa umas dezenas de MB. Carregar leva 150ms, entao nao vale manter na
+/* O indice inteiro pesa dezenas de MB e carregar leva uns 350ms, entao nao vale manter na
    memoria o dia todo: depois de 5 minutos sem ninguem buscar, ele e solto e o app volta ao
    tamanho de antes. A proxima busca recarrega sem ninguem notar. */
 let soltarIndTimer = null;
@@ -1725,7 +1729,19 @@ function lerIndiceBusca() {
   soltarIndTimer = setTimeout(() => { if (!indiceSujo) indBusca = null; }, 5 * 60000);
   if (indBusca) return indBusca;
   try { indBusca = JSON.parse(fs.readFileSync(IND_ARQ, 'utf8')); } catch { indBusca = {}; }
+  apararIndice();
   return indBusca;
+}
+/* O que ja esta gravado vem do tempo em que o teto nao funcionava: 1157 conversas passavam
+   de 40 mil letras. Essas entradas so seriam refeitas se o arquivo da conversa mudasse, ou
+   seja, o peso ficaria ali para sempre. Aqui elas sao aparadas na primeira leitura. */
+function apararIndice() {
+  let mexeu = 0;
+  for (const k of Object.keys(indBusca)) {
+    const e = indBusca[k];
+    if (e && typeof e.x === 'string' && e.x.length > IND_MAX) { e.x = e.x.slice(0, IND_MAX); mexeu++; }
+  }
+  if (mexeu) gravarIndiceDepois();
 }
 function gravarIndiceDepois() {
   indiceSujo = true;
@@ -1763,6 +1779,12 @@ function textoLegivel(file) {
     } catch { continue; }
     t = String(t).replace(/\s+/g, ' ').trim();
     if (!t) continue;
+    /* CORTA o pedaco antes de guardar. Antes ele entrava inteiro e so depois o codigo via se
+       tinha passado do teto: uma unica mensagem gigante (um arquivo colado no chat, um log)
+       entrava toda. Era por isso que o indice tinha entrada de 476 KB num teto de 40 mil. */
+    const cabe = IND_MAX - tam - 1;
+    if (cabe <= 0) break;
+    if (t.length > cabe) t = t.slice(0, cabe);
     partes.push(t); tam += t.length + 1;
     if (tam >= IND_MAX) break;
   }
@@ -3828,7 +3850,16 @@ function shutdown() {
 }
 
 /* ======================= IPC ======================= */
-handle('config:get', () => loadConfig());
+/* A senha fixa do iPhone (senhaWeb) NAO vai junto. Este mesmo comando e servido pelo Wi-Fi
+   e o app do celular chama ele assim que abre: quem entrou com a sessao de 8 horas lia ali a
+   senha permanente e podia voltar para sempre, mesmo depois de trocar a sessao. A tela do Mac
+   nao usa nenhuma destas chaves (quem mostra a senha e o web:estado), entao nada quebra.
+   O disco continua com tudo; o que sai daqui e uma copia sem elas. */
+handle('config:get', () => {
+  const d = { ...loadConfig() };
+  for (const k of CHAVES_DO_MAIN) delete d[k];
+  return d;
+});
 /* Estas tres chaves quem manda e o main (senha do iPhone e o liga/desliga do Wi-Fi). A tela
    trabalha com uma copia do config lida uma unica vez no boot, entao qualquer gravacao dela
    — e o savePanes() grava a cada chat aberto, fechado ou redimensionado — mandava de volta o
@@ -3851,6 +3882,11 @@ function lerChavesDoMain() {
 function anotarChaveDoMain(k, v) { lerChavesDoMain(); chavesDoMain[k] = v; }
 
 handle('config:set', (_e, c) => {
+  /* o celular nao grava config. Ele trabalha com um retrato antigo da tela, e gravar por
+     cima ja apagou as abas do Mac uma vez. O lado do celular ja nao pede mais, mas a trava
+     tem de estar AQUI: uma aba velha do Safari em cache continuava conseguindo gravar.
+     Responde "ok" e nao grava nada. */
+  if (souRemoto(_e)) return true;
   const novo = (c && typeof c === 'object') ? { ...c } : {};
   const donas = lerChavesDoMain();
   for (const k of CHAVES_DO_MAIN) {
@@ -5292,7 +5328,7 @@ function menu() {
       ]},
     ]},
     { label: 'Ver', submenu: [
-      { label: 'Mostrar/ocultar arquivos', accelerator: 'CmdOrCtrl+B', click: () => win && win.webContents.send('menu', 'toggleSidebar') },
+      { label: 'Mostrar/ocultar a coluna de conversas', accelerator: 'CmdOrCtrl+B', click: () => win && win.webContents.send('menu', 'toggleSidebar') },
       { label: 'Modo foco (só pergunta e resposta)', accelerator: 'CmdOrCtrl+Shift+F', click: () => win && win.webContents.send('menu', 'foco') },
       { type: 'separator' },
       // ele nao lembra atalho de cor: sem esta lista, metade do "o app travou" e atalho que
@@ -5344,21 +5380,34 @@ function senhaDoTelefone() {
   }
   return cfg.senhaWeb;
 }
+/* Quem atende o telefone é o Tailscale, não o Cockpit: o servidor só escuta dentro do próprio
+   Mac (127.0.0.1), de propósito, e quem leva a conexão de fora até ele é o "tailscale serve".
+   Esta função montava "http://IP:7788" na mão, e ninguém atende nessa porta pelo Tailscale: o
+   endereço escrito nos Ajustes só girava no Safari do iPhone até dar tempo esgotado. Agora
+   perguntamos ao próprio Tailscale qual endereço ele está entregando para a porta 7788. */
 function enderecoTailscale() {
   try {
     const { execFileSync } = require('child_process');
     const bin = acharBin('tailscale');
     const socket = path.join(HOME, '.tailscale', 'tailscaled.sock');
-    const args = fs.existsSync(socket) ? ['--socket=' + socket, 'status', '--json'] : ['status', '--json'];
-    const st = JSON.parse(execFileSync(bin, args, { encoding: 'utf8', timeout: 5000 }));
-    const dns = st && st.Self && String(st.Self.DNSName || '').replace(/\.$/, '');
-    // No iPhone deste Mac o MagicDNS não resolvia. O IP privado é estável e
-    // funciona também no Tailscale em userspace, sem depender do DNS do Safari.
-    const ip = st && st.TailscaleIPs && st.TailscaleIPs.find(v => /^100\./.test(v));
-    if (ip) return 'http://' + ip + ':7788';
-    if (dns) return 'http://' + dns + ':7788';
+    const pre = fs.existsSync(socket) ? ['--socket=' + socket] : [];
+    const sv = JSON.parse(execFileSync(bin, [...pre, 'serve', 'status', '--json'], { encoding: 'utf8', timeout: 5000 }));
+    const web = (sv && sv.Web) || {};
+    for (const alvo of Object.keys(web)) {
+      const hs = (web[alvo] && web[alvo].Handlers) || {};
+      // só vale o destino que aponta para a NOSSA porta
+      if (!Object.keys(hs).some(k => String((hs[k] && hs[k].Proxy) || '').includes(':7788'))) continue;
+      const m = String(alvo).match(/^(.*):(\d+)$/);
+      const host = m ? m[1] : String(alvo);
+      const porta = m ? m[2] : '443';
+      if (porta === '443') return 'https://' + host;
+      if (porta === '80') return 'http://' + host;
+      return 'http://' + host + ':' + porta;
+    }
+    anota('tailscale serve: nada apontando para a porta 7788');
   } catch (e) { anota('tailscale:', e.message); }
-  return '';
+  // nada de endereço inventado: se o Tailscale não está entregando, a tela diz isso
+  return 'Sem endereço: o Tailscale não está servindo a porta 7788';
 }
 handle('web:estado', () => ({
   ligado: !!web,

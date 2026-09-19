@@ -9,17 +9,23 @@ const WebSocket = require('ws');
 const { criar } = require('../servidor-web');
 
 async function servidor(t) {
-  const calls = [], ouvintes = new Set();
+  const calls = [], term = [], ouvintes = new Set();
   const s = criar({ pastaRenderer: path.resolve(__dirname, '../renderer'), porta: 0,
     senha: 'senha-apenas-de-teste', somenteTailscale: true, ouvintes,
-    handlers: { ler: (e, arg) => { calls.push({ e, arg }); return 'mesmo histórico'; } } });
+    handlers: {
+      'sessions:history': (e, arg) => { calls.push({ e, arg }); return 'mesmo histórico'; },
+      'term:run': (e, arg) => { term.push({ e, arg }); return { ok: true }; },
+    } });
   await s.pronto; t.after(() => s.fechar());
   const origin = 'http://127.0.0.1:' + s.servidor.address().port;
+  // a senha vai no CORPO do POST: dentro do endereço ela ficaria no histórico do Safari
+  const tentar = (senha, cookie) => fetch(origin + '/entrar', { method: 'POST', redirect: 'manual',
+    headers: cookie ? { Cookie: cookie } : {}, body: new URLSearchParams({ s: senha }) });
   const login = async () => {
-    const r = await fetch(origin + '/entrar?s=senha-apenas-de-teste', { redirect: 'manual' });
+    const r = await tentar('senha-apenas-de-teste');
     assert.equal(r.status, 302); return r.headers.get('set-cookie').split(';')[0];
   };
-  return { s, origin, login, calls, ouvintes };
+  return { s, origin, login, tentar, calls, term, ouvintes };
 }
 
 test('Tailscale userspace chega ao login por loopback, sem abrir uma porta na LAN', async t => {
@@ -45,23 +51,43 @@ test('WebSocket exige sessão e mesma origem; desligar remove todos os telefones
   const ws = new WebSocket(url, { headers: { Origin: origin, Cookie: cookie } });
   await once(ws, 'open');
   const resposta = once(ws, 'message');
-  ws.send(JSON.stringify({ tipo: 'chamada', id: 7, nome: 'ler', arg: 'conversa' }));
+  ws.send(JSON.stringify({ tipo: 'chamada', id: 7, nome: 'sessions:history', arg: 'conversa' }));
   assert.equal(JSON.parse(String((await resposta)[0])).resposta, 'mesmo histórico');
   assert.equal(calls[0].e.remoto, true); assert.equal(ouvintes.size, 1);
   const fim = once(ws, 'close'); s.fechar();
   assert.equal((await fim)[0], 1001); assert.equal(ouvintes.size, 0);
 });
 
-test('Senha mantém limite de tentativas e sessão expira dentro do WebSocket', async t => {
-  const { origin, login, calls } = await servidor(t);
+test('Senha certa nunca fica trancada, senha no endereço não entra e sessão expira no WebSocket', async t => {
+  const { origin, login, tentar, calls } = await servidor(t);
   const cookie = await login();
-  for (let i = 0; i < 5; i++) assert.equal((await fetch(origin + '/entrar?s=errada')).status, 401);
-  assert.equal((await fetch(origin + '/entrar?s=senha-apenas-de-teste', { redirect: 'manual' })).status, 429);
+  for (let i = 0; i < 5; i++) assert.equal((await tentar('errada')).status, 401);
+  assert.equal((await tentar('errada')).status, 429, 'insistir no erro continua trancando');
+  assert.equal((await tentar('senha-apenas-de-teste')).status, 302, 'o dono entra mesmo depois dos erros');
+  const velho = await fetch(origin + '/entrar?s=senha-apenas-de-teste', { redirect: 'manual' });
+  assert.equal(velho.status, 302); assert.equal(velho.headers.get('set-cookie'), null, 'senha no endereço não vale');
   const ws = new WebSocket(origin.replace('http:', 'ws:') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
   await once(ws, 'open');
   const agora = Date.now(); t.mock.method(Date, 'now', () => agora + 9 * 60 * 60 * 1000);
   const fechado = once(ws, 'close'); ws.send(JSON.stringify({ tipo: 'chamada', id: 1, nome: 'ler' }));
   assert.equal((await fechado)[0], 1008); assert.equal(calls.length, 0);
+});
+
+test('Telefone só alcança os comandos da tela dele, e cookie de outro site não derruba a sessão', async t => {
+  const { origin, login, term } = await servidor(t);
+  // 'track=abc123' tem 'ck=' dentro: a busca solta lia esse valor e pedia senha de novo
+  const cookie = 'track=abc123; ' + await login();
+  assert.doesNotMatch(await (await fetch(origin, { headers: { Cookie: cookie } })).text(), /Senha do Cockpit/);
+  const ws = new WebSocket(origin.replace('http:', 'ws:') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+  await once(ws, 'open');
+  const pedir = async (nome, arg) => {
+    const r = once(ws, 'message'); ws.send(JSON.stringify({ tipo: 'chamada', id: 1, nome, arg }));
+    return JSON.parse(String((await r)[0]));
+  };
+  assert.equal((await pedir('sessions:history', 'conversa')).resposta, 'mesmo histórico');
+  assert.match((await pedir('term:run', { linha: 'rm -rf ~' })).resposta.error, /só funciona no Mac/);
+  assert.equal(term.length, 0, 'abrir terminal no Mac não passa pelo celular');
+  ws.close();
 });
 
 function ponte() {

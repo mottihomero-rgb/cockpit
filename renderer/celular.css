@@ -1,13 +1,19 @@
 /* ajustes só para o telefone */
-/* recorte da camera (topo) e barra de gestos (base) do iPhone, em um lugar so.
-   Da para simular no navegador do Mac mexendo em --sat / --sab. */
-:root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
+/* recorte da camera (topo), barra de gestos (base) e, com o aparelho deitado, as
+   laterais do iPhone, em um lugar so. O 0px no fim e o valor usado onde nao existe
+   recorte nenhum (Mac, telefone antigo): nessas telas nada muda.
+   Da para simular no navegador do Mac mexendo em --sat / --sab / --sal / --sar. */
+:root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px);
+  --sal:env(safe-area-inset-left,0px);--sar:env(safe-area-inset-right,0px)}
 /* aqui a barra de titulo continua (38px) em cima da faixa de abas (50px), e nao ha
    semaforo do Mac na esquerda: as abas encostam na borda */
 :root{--topo-altura:88px;--veu-topo:38px;--recuo-semaforo:10px}
 .so-celular{display:none}
+/* o recuo de baixo tira o texto de tras da barrinha de gestos do iPhone: sem ele o
+   aviso nasce escondido bem na hora em que ele mais precisa ser lido */
 body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right:0;bottom:0;
-  z-index:999;background:var(--red);color:#fff;text-align:center;font-size:12px;padding:6px}
+  z-index:999;background:var(--red);color:#fff;text-align:center;font-size:12px;
+  padding:6px 6px calc(6px + var(--sab))}
 #btnInstalar{width:auto;padding:0 12px;font:inherit;font-size:12px}
 #btnInstalar[hidden]{display:none}
 #instalarApp{box-sizing:border-box;width:min(360px,calc(100% - 32px));padding:24px;margin:auto;max-height:calc(100dvh - 32px);overflow:auto;
@@ -52,7 +58,10 @@ body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right
 
   /* um chat por vez, deslizando de lado */
   .espaco{scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-  .pane{width:100vw !important;min-width:100vw !important;scroll-snap-align:center;border-left:none}
+  /* deitado, o recorte da camera fica na lateral. O chat continua ocupando a tela
+     inteira (o deslizar de lado depende disso), so o conteudo de dentro recua */
+  .pane{width:100vw !important;min-width:100vw !important;scroll-snap-align:center;border-left:none;
+    padding-left:var(--sal);padding-right:var(--sar)}
   .pane + .pane{border-left:1px solid var(--line)}
   .pane-split{display:none}
 

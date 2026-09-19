@@ -13,6 +13,7 @@ import os
 import sys
 import select
 import signal
+import time
 import struct
 import fcntl
 import termios
@@ -23,6 +24,53 @@ def set_size(fd, cols, rows):
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
     except Exception:
         pass
+
+
+def sinalizar_grupo(pid, sinal):
+    """Manda o sinal para o grupo do filho, nunca para o nosso.
+
+    O filho do forkpty vira dono de um grupo so dele, entao o sinal no grupo
+    alcanca tambem os netos (o que o comando abriu por dentro). Se por algum
+    motivo ele estiver no MESMO grupo que a ponte, mandar no grupo derrubaria
+    o Cockpit junto: nesse caso manda so para ele.
+    """
+    try:
+        grupo = os.getpgid(pid)
+        if grupo != os.getpgrp():
+            os.killpg(grupo, sinal)
+            return
+    except Exception:
+        pass
+    try:
+        os.kill(pid, sinal)
+    except Exception:
+        pass
+
+
+def encerrar_filho(pid):
+    """Fecha o comando do terminal e devolve o codigo de saida dele.
+
+    Primeiro pede para sair (SIGHUP). Se em 1,5 s ele nao saiu, mata na marra
+    (SIGKILL) para nao sobrar programa rodando escondido.
+    """
+    sinalizar_grupo(pid, signal.SIGHUP)
+    limite = time.time() + 1.5
+    while True:
+        try:
+            morto, status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            return 0
+        if morto == pid:
+            break
+        if time.time() > limite:
+            sinalizar_grupo(pid, signal.SIGKILL)
+            try:
+                _, status = os.waitpid(pid, 0)
+            except Exception:
+                return 0
+            break
+        time.sleep(0.05)
+    return os.waitstatus_to_exitcode(status) if hasattr(os, 'waitstatus_to_exitcode') else 0
 
 
 def main():
@@ -57,6 +105,11 @@ def main():
     fontes = [master, 0] + ([ctrl] if ctrl is not None else [])
     vivo = True
     while vivo:
+        # o Cockpit morreu de vez (Forcar a Sair, travada, kill -9)? Quem perde
+        # o pai passa a ser filho do launchd (pid 1). Sem ele a ponte nao serve
+        # para nada: sai e leva o comando junto, em vez de ficar comendo memoria.
+        if os.getppid() == 1:
+            break
         try:
             prontos, _, _ = select.select(fontes, [], [], 0.2)
         except (InterruptedError, OSError):
@@ -71,15 +124,22 @@ def main():
                 if not dados:
                     vivo = False
                     break
-                os.write(1, dados)
+                try:
+                    os.write(1, dados)
+                except OSError:
+                    # ninguem mais do outro lado para ler: fechar tudo
+                    vivo = False
+                    break
             elif f == 0:
                 try:
                     dados = os.read(0, 65536)
                 except OSError:
                     dados = b''
                 if not dados:
-                    fontes = [x for x in fontes if x != 0]
-                    continue
+                    # o Cockpit fechou nossa entrada (ou morreu): sem ele nao
+                    # tem quem digite nem quem leia. Encerrar o comando junto.
+                    vivo = False
+                    break
                 try:
                     os.write(master, dados)
                 except OSError:
@@ -122,15 +182,7 @@ def main():
                 os.write(1, resto)
             return os.waitstatus_to_exitcode(status) if hasattr(os, 'waitstatus_to_exitcode') else 0
 
-    try:
-        os.kill(pid, signal.SIGHUP)
-    except Exception:
-        pass
-    try:
-        _, status = os.waitpid(pid, 0)
-        return os.waitstatus_to_exitcode(status) if hasattr(os, 'waitstatus_to_exitcode') else 0
-    except Exception:
-        return 0
+    return encerrar_filho(pid)
 
 
 if __name__ == '__main__':

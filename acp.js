@@ -29,6 +29,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { StringDecoder } = require('string_decoder');
 
 const COMANDO_PADRAO = 'gemini --acp';
 const LIM_DIFF = 100 * 1024;
@@ -597,9 +598,14 @@ function criarAcp(dep) {
     catch (e) { throw new Error('Não consegui rodar "' + st.comando + '": ' + (e && e.message || e)); }
     st.proc = proc;
     proc.stdin.on('error', () => {});
+    /* a resposta chega em pedacos, e letra com acento ocupa 2 bytes: se o corte
+       cair no meio dela, virar texto pedaco a pedaco perde a letra para sempre
+       ("configuracao" com cedilha virava "configura??ao"). O decoder guarda o
+       resto do byte e so' entrega a letra quando ela fecha - igual cli-motors.js */
+    const decoder = new StringDecoder('utf8');
     proc.stdout.on('data', (chunk) => {
       if (paineis.get(paneId) !== st) return;
-      st.buf += chunk.toString('utf8');
+      st.buf += decoder.write(chunk);
       let i;
       while ((i = st.buf.indexOf('\n')) >= 0) {
         const linha = st.buf.slice(0, i).trim(); st.buf = st.buf.slice(i + 1);
@@ -675,12 +681,20 @@ function criarAcp(dep) {
       const msg = String(e && e.message || e);
       // sem login: tenta o metodo por chave se houver chave no ambiente; senao explica
       const porChave = metodosAuth.find((a) => /api[-_]?key/i.test(String(a.id || '')));
-      if (!opts.authMethod && /auth/i.test(msg) && porChave && (env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.ANTHROPIC_API_KEY || env.OPENAI_API_KEY)) {
+      const temChave = !!(env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.ANTHROPIC_API_KEY || env.OPENAI_API_KEY);
+      /* chave de API e' PAGA por token. Entrar por ela sozinho fazia o gasto cair
+         na fatura sem ninguem ver, achando que era a cota da conta. Agora so' entra
+         se foi pedido: opts.chaveApi (opcao do painel) ou COCKPIT_ACP_CHAVE_API=1
+         no ambiente. E quando entra, avisa na tela que este uso e' cobrado. */
+      const pediuChaveApi = opts.chaveApi === true || /^(1|true|sim)$/i.test(String(env.COCKPIT_ACP_CHAVE_API || ''));
+      if (!opts.authMethod && /auth/i.test(msg) && porChave && temChave && pediuChaveApi) {
         await mandar(st, 'authenticate', { methodId: porChave.id }, 60000);
         aberta = await abrirSessao();
+        emit(paneId, 'note', { text: 'Entrei com a chave de API (' + (porChave.name || porChave.id) + '). Este uso é cobrado por token na fatura da chave, não sai da cota da conta.', error: true });
       } else if (/auth/i.test(msg)) {
         const como = metodosAuth.map((a) => a.name || a.id).filter(Boolean).join(' / ');
-        throw new Error('O agente pede login' + (como ? ' (' + como + ')' : '') + '. Rode "' + bin + '" uma vez pelo terminal, entre na conta e volte aqui.');
+        throw new Error('O agente pede login' + (como ? ' (' + como + ')' : '') + '. Rode "' + bin + '" uma vez pelo terminal, entre na conta e volte aqui.'
+          + (porChave && temChave ? ' Para entrar pela chave de API (uso cobrado por token), ligue COCKPIT_ACP_CHAVE_API=1.' : ''));
       } else throw e;
     }
     const r = aberta.r;

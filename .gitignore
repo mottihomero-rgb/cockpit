@@ -3,6 +3,9 @@ dist/
 _backup-*/
 *.bak
 *.bak-*
+# copias de seguranca feitas a mao antes de mexer no codigo: ficam so no meu Mac
+*.antes-*
+*.bak.*
 .DS_Store
 *.log
 config.json
