@@ -158,8 +158,8 @@ body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right
   .modal.como-menu{place-items:end center}
   .modal.como-menu .modal-cx{width:100%;max-height:70%;margin:0;
     border-radius:18px 18px 0 0;padding-bottom:calc(14px + var(--sab))}
+  /* dedo: toda linha de menu com 44 de altura, venha do menu do "+" ou de qualquer outro */
   .mi{padding:13px 10px;min-height:44px;box-sizing:border-box}
-  .p-modal .mi{padding:12px 9px}   /* linha de menu com altura de dedo */
 
   /* janela do time de agentes: pedia 377px numa faixa util de 349 e nascia torta, com o canto
      direito para fora da tela. E abria em tela cheia mesmo sem nenhum agente dentro. */
