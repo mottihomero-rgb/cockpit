@@ -16,13 +16,40 @@
   const TETO = 512 * 1024;                // meio mega: a gaveta do navegador é pequena
   const sessao = P => P.sessaoId || P.resumeId || '';
 
+  const vv = window.visualViewport;
+  let remedida = 0;
+
+  /* Quanto do app o iPhone mostra de verdade AGORA. Com o teclado aberto a janela visível
+     encolhe (height) e às vezes ainda desce um pouco (offsetTop): somando os dois, o fim do
+     app cai exatamente em cima do teclado, nunca por baixo dele. */
+  function medida() { return vv ? Math.round(vv.height + vv.offsetTop) : innerHeight; }
+
   function altura() {
-    if (window.visualViewport && window.visualViewport.scale !== 1) return;
-    document.documentElement.style.setProperty('--altura-app', (window.visualViewport?.height || innerHeight) + 'px');
+    /* Ele deu zoom com os dedos: não mexer na tela enquanto isso. A folga de 5% existe porque
+       o iOS dá um micro-zoom sozinho no campo em foco — exigir zoom exato (scale !== 1)
+       congelava a altura bem na hora em que o teclado abria. */
+    if (vv && vv.scale > 1.05) return;
+    document.documentElement.style.setProperty('--altura-app', medida() + 'px');
+    /* O iOS rola a página inteira para revelar o campo em foco. Como o app encolheu no mesmo
+       instante, essa rolagem sobra e leva a barra de escrever para cima do relógio. Voltar ao
+       topo devolve a barra para o rodapé, colada no teclado. */
+    if (window.scrollY || window.pageYOffset) window.scrollTo(0, 0);
   }
+
+  /* Mede agora e mede DE NOVO quando a animação do teclado termina (~350ms). Sem a segunda
+     medida a altura fica gravada no meio do movimento e sobra uma faixa preta morta no
+     rodapé. Serve também para girar o aparelho, que o iPhone só acerta no fim do giro. */
+  function alturaDeNovo() { altura(); clearTimeout(remedida); remedida = setTimeout(altura, 350); }
+
   altura();
-  window.visualViewport?.addEventListener('resize', altura);
-  window.addEventListener('resize', altura);
+  vv?.addEventListener('resize', alturaDeNovo);
+  vv?.addEventListener('scroll', altura);          // a rolagem do iOS avisa aqui, não no resize
+  window.addEventListener('resize', alturaDeNovo);
+  window.addEventListener('orientationchange', alturaDeNovo);
+  window.addEventListener('pageshow', alturaDeNovo);
+  document.addEventListener('focusin', alturaDeNovo);   // tocou no campo: o teclado vem aí
+  // voltou do WhatsApp ou de outra aba: o iPhone às vezes devolve a tela com a medida velha
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) alturaDeNovo(); });
 
   function mostrarConversa() {
     requestAnimationFrame(() => {

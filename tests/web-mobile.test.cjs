@@ -8,14 +8,14 @@ const { once } = require('node:events');
 const WebSocket = require('ws');
 const { criar } = require('../servidor-web');
 
-async function servidor(t) {
+async function servidor(t, extras = {}) {
   const calls = [], term = [], ouvintes = new Set();
   const s = criar({ pastaRenderer: path.resolve(__dirname, '../renderer'), porta: 0,
     senha: 'senha-apenas-de-teste', somenteTailscale: true, ouvintes,
     handlers: {
       'sessions:history': (e, arg) => { calls.push({ e, arg }); return 'mesmo histórico'; },
       'term:run': (e, arg) => { term.push({ e, arg }); return { ok: true }; },
-    } });
+    }, ...extras });
   await s.pronto; t.after(() => s.fechar());
   const origin = 'http://127.0.0.1:' + s.servidor.address().port;
   // a senha vai no CORPO do POST: dentro do endereço ela ficaria no histórico do Safari
@@ -123,4 +123,126 @@ test('Queda não repete envio e sessão expirada volta ao login preservando rasc
   b.listeners.online(); b.sockets[1].abrir(); assert.equal(b.sockets[1].sent.length, 0);
   b.sockets[1].fechar(1008, 'sessao expirou');
   assert.equal(b.events.at(-1).type, 'cockpit:salvar-rascunhos'); assert.deepEqual(b.urls, ['/']);
+});
+
+/* ===================== foto e video do celular (rota /upload) ===================== */
+
+const os = require('node:os');
+const http = require('node:http');
+
+const pastaTemp = (t, nome) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), nome));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
+  return dir;
+};
+// bytes que PARECEM mesmo o que dizem ser: e assim que o servidor descobre o tipo
+const fotoPng = (n = 64) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(n, 7)]);
+const videoMov = (n = 64) => Buffer.concat([Buffer.from([0, 0, 0, 0x14]), Buffer.from('ftypqt  '), Buffer.alloc(n, 3)]);
+// pedido cru, para poder mentir no tamanho e para poder cortar a conexao no meio
+const cru = (origin, caminho, { metodo = 'POST', cabecalhos = {}, corpo = null, cortarEm = 0 } = {}) =>
+  new Promise((ok, falhou) => {
+    const u = new URL(origin + caminho);
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: metodo, headers: cabecalhos },
+      (res) => { let txt = ''; res.on('data', p => { txt += p; }); res.on('end', () => ok({ status: res.statusCode, txt, req })); });
+    req.on('error', () => ok({ status: 0, txt: '', req }));
+    if (cortarEm) { req.write(corpo.subarray(0, cortarEm)); return ok({ status: 0, txt: '', req, aberto: true }); }
+    req.end(corpo);
+  });
+const ate = async (cond, quanto = 4000) => {
+  const fim = Date.now() + quanto;
+  while (Date.now() < fim) { if (cond()) return true; await new Promise(r => setTimeout(r, 25)); }
+  return cond();
+};
+
+test('Vídeo e foto entram por /upload sem base64, com nome nosso e só dentro de colados/', async t => {
+  const colados = pastaTemp(t, 'cockpit-colados-');
+  const { origin, login } = await servidor(t, { pastaColados: colados });
+  const cookie = await login();
+  const raiz = fs.realpathSync(colados);
+  const mandar = (corpo, extra = {}) => fetch(origin + '/upload',
+    { method: 'POST', headers: { Cookie: cookie, Origin: origin, ...extra }, body: corpo });
+
+  // sem sessao nao passa nada, e o erro vem em JSON (a tela de login em HTML viraria "anexo")
+  const semSessao = await fetch(origin + '/upload', { method: 'POST', body: fotoPng() });
+  assert.equal(semSessao.status, 401);
+  assert.match((await semSessao.json()).error, /sessão/);
+  assert.equal((await fetch(origin + '/upload', { headers: { Cookie: cookie } })).status, 405, 'so POST');
+  // pagina de outro site nao manda arquivo para o Mac
+  assert.equal((await mandar(fotoPng(), { Origin: 'http://site-estranho.test' })).status, 403);
+
+  // o caminho normal: um video de 3 MB atravessa em varios pedacos e chega inteiro
+  const video = videoMov(3 * 1024 * 1024);
+  const r = await mandar(video);
+  assert.equal(r.status, 200);
+  const { arquivo, bytes } = await r.json();
+  assert.equal(bytes, video.length);
+  assert.equal(path.dirname(arquivo), raiz, 'gravou dentro de colados/, e so la');
+  assert.match(path.basename(arquivo), /^celular-\d+-[a-f0-9]{8}\.mov$/, 'o nome nasce no Mac');
+  assert.deepEqual(fs.readFileSync(arquivo), video, 'chegou byte a byte, sem base64');
+
+  // formulario (multipart) tambem serve, e o nome que vem do telefone e jogado fora:
+  // se ele valesse, este aqui escapava da pasta
+  const f = new FormData();
+  f.append('arquivo', new Blob([fotoPng(300)]), '../../fora-da-pasta.png');
+  const rf = await fetch(origin + '/upload', { method: 'POST', headers: { Cookie: cookie, Origin: origin }, body: f });
+  assert.equal(rf.status, 200);
+  const doForm = (await rf.json()).arquivo;
+  assert.equal(path.dirname(doForm), raiz);
+  assert.match(path.basename(doForm), /^celular-\d+-[a-f0-9]{8}\.png$/);
+  assert.equal(fs.readFileSync(doForm).length, 308);
+  assert.equal(fs.existsSync(path.join(raiz, '..', '..', 'fora-da-pasta.png')), false);
+
+  // o que nao e foto nem video e recusado pelo CONTEUDO, nao pela extensao, e nao sobra lixo
+  const antes = fs.readdirSync(raiz).length;
+  const texto = await mandar(Buffer.from('#!/bin/sh\nrm -rf ~\n'), { 'Content-Type': 'image/png' });
+  assert.equal(texto.status, 415);
+  assert.match((await texto.json()).error, /foto ou vídeo/);
+  assert.equal(fs.readdirSync(raiz).length, antes, 'recusado não deixa arquivo para tras');
+
+  // teto existe: um corpo maior que 500 MB e recusado antes de gastar disco
+  const enorme = await cru(origin, '/upload', { cabecalhos: { Cookie: cookie, 'Content-Length': String(600 * 1024 * 1024) }, corpo: fotoPng(), cortarEm: 8 });
+  assert.equal(await ate(() => fs.readdirSync(raiz).length === antes), true);
+  try { enorme.req.destroy(); } catch {}
+});
+
+test('Conexão cortada no meio do vídeo não deixa arquivo pela metade em colados/', async t => {
+  const colados = pastaTemp(t, 'cockpit-corte-');
+  const { origin, login } = await servidor(t, { pastaColados: colados });
+  const cookie = await login();
+  const raiz = fs.realpathSync(colados);
+  // diz que vem 40 MB, manda 1 MB e some (foi o que aconteceu com ele: saiu do app no meio)
+  const meio = videoMov(1024 * 1024);
+  const p = await cru(origin, '/upload', { cabecalhos: { Cookie: cookie, 'Content-Length': String(40 * 1024 * 1024) }, corpo: meio, cortarEm: meio.length });
+  assert.equal(await ate(() => fs.readdirSync(raiz).length === 1), true, 'o servidor começou a gravar');
+  p.req.destroy();
+  assert.equal(await ate(() => fs.readdirSync(raiz).length === 0), true, 'e apagou o pedaço quando a conexão caiu');
+});
+
+test('O celular só rebaixa o que mudou: 304 com etiqueta, e arquivo novo volta a baixar', async t => {
+  const pasta = pastaTemp(t, 'cockpit-tela-');
+  const tela = path.join(pasta, 'index-web.html');
+  fs.writeFileSync(tela, '<h1>versao um</h1>');
+  const { origin, login } = await servidor(t, { pastaRenderer: pasta });
+  const cookie = await login();
+  const pegar = (etiqueta) => fetch(origin + '/', { headers: etiqueta ? { Cookie: cookie, 'If-None-Match': etiqueta } : { Cookie: cookie } });
+
+  const primeira = await pegar();
+  assert.equal(primeira.status, 200);
+  const etiqueta = primeira.headers.get('etag');
+  assert.ok(etiqueta, 'todo arquivo sai com etiqueta');
+  // 'no-store' proibia guardar: era por isso que ele rebaixava ~900 KB toda abertura
+  assert.equal(primeira.headers.get('cache-control'), 'no-cache');
+  assert.match(await primeira.text(), /versao um/);
+
+  const denovo = await pegar(etiqueta);
+  assert.equal(denovo.status, 304, 'nao mudou: volta vazio, sem os ~900 KB');
+  assert.equal((await denovo.text()).length, 0);
+
+  // e o perigo do 304: ficar com a versao velha para sempre. Mexeu no arquivo, muda a etiqueta.
+  fs.writeFileSync(tela, '<h1>versao dois, bem maior que a primeira</h1>');
+  const depois = await pegar(etiqueta);
+  assert.equal(depois.status, 200, 'arquivo novo NUNCA volta como 304');
+  assert.notEqual(depois.headers.get('etag'), etiqueta);
+  assert.match(await depois.text(), /versao dois/);
+  assert.equal((await pegar(depois.headers.get('etag'))).status, 304);
 });

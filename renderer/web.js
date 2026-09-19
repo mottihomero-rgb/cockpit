@@ -56,40 +56,139 @@
   window.addEventListener('online', ligar);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) ligar(); });
 
-  /* Escolher imagem no telefone. O <input type="file"> e a unica janela de arquivo que o
-     Safari abre. A imagem vira texto (data URL) e sobe pelo MESMO cano da camera: quem grava
-     e o Mac, em colados/, e ele devolve o caminho de la — que e o que a tela espera receber. */
-  function escolherImagem() {
+  /* ---- escolher foto ou video pelo telefone ----
+     O <input type="file"> e a unica janela de arquivo que o Safari abre. O que ele escolher sobe
+     para o Mac, que grava em colados/ e devolve o caminho de la — e e esse caminho que a tela
+     espera receber.
+     Tres coisas quebravam no iPhone (video do dono, 19/09, quadros q101 a q107):
+      1. so aparecia foto: com accept 'image/*' a Fototeca do iPhone ESCONDE os videos;
+      2. o menu "Fototeca / Tirar Foto / Escolher Arquivo" abria no canto de CIMA da tela, longe
+         do "+" que ele tocou, porque o input nascia com display:none colado no <body>;
+      3. a pior: o app desistia 800ms depois de a janela receber 'focus' — e o 'focus' chega
+         quando o TECLADO fecha, antes de a Fototeca sequer abrir. Ele passou 3 segundos
+         escolhendo a foto e nao chegou nada. */
+
+  const MB = 1024 * 1024;
+  /* O cano do WebSocket leva 8 MB por mensagem e virar texto (data URL) engorda o arquivo em
+     1/3: passando disso a conexao com o Mac CAI em vez de dar erro. So vale para o cano antigo. */
+  const TETO_CANO_ANTIGO = 5 * MB;
+  let temUpload = null;   // o Mac ja tem a rota /upload? null = ainda nao sei
+
+  // qual painel esta em foco agora. So leitura: quem manda nele e o app.js.
+  function painelEmFoco() {
+    try { return (typeof focusPane !== 'undefined' && focusPane) || null; } catch (_) { return null; }
+  }
+
+  /* Cano novo: POST /upload grava o arquivo direto em colados/, sem virar texto. E o unico que
+     aguenta video. Devolve SEM_ROTA quando este Mac ainda nao tem a rota, e null quando a
+     tentativa em si falhou (rede, resposta estranha) — os dois caem no cano antigo, mas so o
+     primeiro vale para a sessao inteira. */
+  const SEM_ROTA = { semRota: true };
+  async function mandarPeloUpload(f) {
+    const nome = f.name || 'anexo';
+    let r;
+    try {
+      r = await fetch('/upload?nome=' + encodeURIComponent(nome), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': f.type || 'application/octet-stream', 'X-Nome': encodeURIComponent(nome) },
+        body: f,
+      });
+    } catch (_) { return null; }
+    if (r.status === 404 || r.status === 405 || r.status === 501) return SEM_ROTA;
+    let j = null;
+    try { j = await r.json(); } catch (_) { return null; }
+    const caminho = j && (j.arquivo || j.caminho || j.path);
+    if (r.ok && caminho) return { arquivo: String(caminho) };
+    return { error: (j && (j.error || j.erro)) || ('o Mac respondeu ' + r.status) };
+  }
+
+  /* Cano antigo: o arquivo vira texto (data URL) e sobe pelo MESMO WebSocket da camera. So serve
+     para imagem pequena — o Mac recusa o que nao for png/jpg/webp — e fica de reserva enquanto
+     o servidor do Mac nao tiver a rota /upload. */
+  async function mandarPeloWebSocket(f) {
+    if (/^video\//.test(f.type || '')) {
+      return { error: 'Mandar vídeo daqui só funciona com o Cockpit do Mac atualizado. Reinicie o Cockpit no Mac e tente de novo.' };
+    }
+    if (f.size > TETO_CANO_ANTIGO) {
+      return { error: 'Este arquivo tem ' + Math.round(f.size / MB) + ' MB e por aqui só passam 5 MB. Reinicie o Cockpit no Mac para mandar arquivo grande.' };
+    }
+    const dados = await new Promise((ok, nao) => {
+      const fr = new FileReader();
+      fr.onload = () => ok(String(fr.result || ''));
+      fr.onerror = () => nao(new Error('nao consegui abrir o arquivo'));
+      fr.readAsDataURL(f);
+    });
+    return (await chamar('imagem:salvar', { dados, prefixo: 'anexo' })) || { error: 'erro' };
+  }
+
+  async function mandarProMac(f) {
+    if (temUpload !== false) {
+      const r = await mandarPeloUpload(f);
+      if (r === SEM_ROTA) temUpload = false;         // este Mac nao tem a rota: nao insiste mais
+      else if (r) { temUpload = true; return r; }    // respondeu: a resposta dela e que vale
+      // r === null: so esta tentativa falhou. O cano antigo assume desta vez, e na proxima
+      // foto a gente tenta o /upload de novo.
+    }
+    return mandarPeloWebSocket(f);
+  }
+
+  function escolherArquivo() {
     return new Promise((res) => {
+      const P = painelEmFoco();   // guardado AGORA: se a escolha demorar, ainda sei onde anexar
+      const caixa = (P && P.el && P.el.querySelector('.pane-cmp'))
+        || document.querySelector('.pane.focus .pane-cmp')
+        || document.querySelector('.pane-cmp')
+        || document.body;
+
       const inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'image/*';
-      inp.style.display = 'none';
-      document.body.appendChild(inp);
-      let pronto = false, escolheu = false;
-      const terminar = (v) => { if (pronto) return; pronto = true; try { inp.remove(); } catch (_) {} res(v); };
+      inp.type = 'file';
+      inp.accept = 'image/*,video/*';   // sem o video/* a Fototeca do iPhone esconde os videos
+      /* Invisivel, de 1px, e DENTRO da caixa de escrever: assim o iPhone abre o menu junto do "+"
+         que ele tocou, em vez do canto de cima. A .pane-cmp ja e position:relative (style.css),
+         entao este input nao empurra nada nem faz a fileira de botoes rolar. */
+      inp.style.cssText = 'position:absolute;left:10px;bottom:8px;width:1px;height:1px;'
+        + 'opacity:0;border:0;padding:0;pointer-events:none';
+      caixa.appendChild(inp);
+
+      let respondeu = false, escolheu = false, desistir = null, folga = null;
+      const responder = (v) => { if (!respondeu) { respondeu = true; res(v); } };
+      const limpar = () => {
+        clearTimeout(desistir); clearTimeout(folga);
+        document.removeEventListener('visibilitychange', aoVoltar);
+        try { inp.remove(); } catch (_) {}
+      };
+      /* Quem avisa que ele voltou da Fototeca e o visibilitychange, nao o 'focus': o 'focus'
+         chega quando o teclado fecha, com a galeria ainda nem aberta. A folga de 2,5 s e porque
+         no iPhone o 'change' chega logo DEPOIS de a pagina reaparecer. */
+      function aoVoltar() {
+        if (document.hidden) return;        // a pagina sumiu: e agora que ele esta escolhendo
+        clearTimeout(folga);
+        folga = setTimeout(() => { if (!escolheu) { limpar(); responder([]); } }, 2500);
+      }
+
       inp.addEventListener('change', async () => {
         escolheu = true;
         const f = inp.files && inp.files[0];
-        if (!f) return terminar([]);
-        try {
-          const dados = await new Promise((ok, nao) => {
-            const fr = new FileReader();
-            fr.onload = () => ok(String(fr.result || ''));
-            fr.onerror = () => nao(new Error('nao consegui abrir o arquivo'));
-            fr.readAsDataURL(f);
-          });
-          const r = await chamar('imagem:salvar', { dados, prefixo: 'anexo' });
-          if (r && r.arquivo) return terminar([r.arquivo]);
-          alert('Não consegui mandar a imagem para o Mac: ' + ((r && r.error) || 'erro'));
-        } catch (e) {
-          alert('Não consegui mandar a imagem para o Mac: ' + ((e && e.message) || 'erro'));
-        }
-        terminar([]);
+        limpar();
+        if (!f) return responder([]);
+        let r;
+        try { r = await mandarProMac(f); }
+        catch (e) { r = { error: (e && e.message) || 'erro' }; }
+        const caminho = r && r.arquivo;
+        if (!caminho) { alert('Não consegui mandar para o Mac: ' + ((r && r.error) || 'erro')); return responder([]); }
+        if (!respondeu) return responder([caminho]);
+        /* Chegou atrasado: quem ia anexar ja desistiu. Em vez de jogar o arquivo fora (foi isso
+           que aconteceu no video dele), anexa direto no painel guardado la em cima. */
+        try { await window.anexar(P, [caminho]); }
+        catch (_) { alert('Mandei pro Mac, mas não consegui anexar. O arquivo está em: ' + caminho); }
       });
-      /* Cancelar o seletor nem sempre avisa: sem estas duas redes a promessa ficaria pendurada
+
+      /* Cancelar o seletor nem sempre avisa: sem estas tres redes a promessa ficaria pendurada
          pra sempre e o menu do + nunca terminaria. So valem se ele nao escolheu nada. */
-      inp.addEventListener('cancel', () => { if (!escolheu) terminar([]); });
-      window.addEventListener('focus', () => setTimeout(() => { if (!escolheu) terminar([]); }, 800), { once: true });
+      inp.addEventListener('cancel', () => { if (!escolheu) { limpar(); responder([]); } });
+      document.addEventListener('visibilitychange', aoVoltar);
+      desistir = setTimeout(() => { if (!escolheu) { limpar(); responder([]); } }, 120000);
       inp.click();
     });
   }
@@ -211,13 +310,14 @@
     promptsSalvar: (l) => chamar('prompts:salvar', l),
     buscarArquivos: (o) => chamar('fs:buscarArquivos', o),
     /* Os tres itens do menu Anexar caiam aqui e nao faziam NADA: o menu fechava e pronto.
-       Agora 'Enviar imagem' abre a galeria do proprio celular de verdade. Arquivo comum e
-       pasta nao tem cano ate o Mac: em vez do toque morrer calado, ele ouve o porque. */
+       Agora 'Enviar foto ou vídeo' abre a Fototeca do proprio celular de verdade. Arquivo comum
+       e pasta nao tem cano ate o Mac, e nem aparecem mais no menu do telefone: se alguem cair
+       aqui assim mesmo, ouve o porque em vez de o toque morrer calado. */
     pickFiles: (tipo) => {
-      if (tipo === 'image') return escolherImagem();
+      if (tipo === 'image') return escolherArquivo();
       alert(tipo === 'folder'
         ? 'No iPhone escreva o caminho da pasta na mensagem: a janela de pastas só abre no Mac.'
-        : 'No iPhone dá para anexar imagem (use "Enviar imagem" ou "Fotografar"). Outro tipo de arquivo, só pelo Mac.');
+        : 'No iPhone dá para anexar foto e vídeo (use "Enviar foto ou vídeo" ou "Fotografar"). Outro tipo de arquivo, só pelo Mac.');
       return Promise.resolve([]);
     },
     pickPhoto: () => Promise.resolve(null),

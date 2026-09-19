@@ -52,7 +52,170 @@ function ipDaRede() {
   return '127.0.0.1';
 }
 
-function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somenteTailscale = false, endereco = '' }) {
+/* ===================== foto e video do telefone (rota /upload) =====================
+   Antes TODO anexo do celular ia pelo WebSocket, em base64, e morria de tres jeitos: base64
+   engorda o arquivo um terco, o quadro do WebSocket tem teto, e o Mac ainda precisava segurar
+   o paredao inteiro na memoria antes de gravar. Video de 1m47 nao passava de jeito nenhum.
+   Aqui o arquivo desce direto para o disco enquanto chega. */
+
+const LIMITE_UPLOAD = 500 * 1024 * 1024;   // teto generoso, mas existe: 500 MB
+
+/* Onde o print colado ja mora hoje: userData/colados, a mesma pasta do imagem:salvar do
+   main.js, com a mesma faxina automatica de 7 dias. Quem chama criar() pode mandar o caminho
+   pronto (os testes mandam); dentro do app a gente pergunta ao Electron, igual o main faz. */
+function pastaDeColados(caminho) {
+  if (caminho) return String(caminho);
+  try {
+    const { app } = require('electron');
+    if (app && typeof app.getPath === 'function') return path.join(app.getPath('userData'), 'colados');
+  } catch {}
+  return path.join(os.homedir(), 'Library', 'Application Support', 'cockpit', 'colados');
+}
+
+/* O que os primeiros bytes DIZEM que o arquivo e'. O nome e a extensao que vem do telefone
+   nao valem nada (num nome cabe "../../" e um ".mov" pode ser qualquer coisa por dentro),
+   entao o tipo sai daqui. Cobre o que um iPhone manda: foto (png, jpg, gif, webp, heic) e
+   video (mov, mp4, webm). */
+function tipoPelosBytes(b) {
+  if (b.length < 12) return '';
+  const txt = (i, f) => b.subarray(i, f).toString('latin1');
+  if (txt(0, 8) === '\x89PNG\r\n\x1a\n') return 'png';
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
+  if (txt(0, 4) === 'GIF8') return 'gif';
+  if (txt(0, 4) === 'RIFF' && txt(8, 12) === 'WEBP') return 'webp';
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'webm';
+  if (txt(4, 8) === 'ftyp') {            // familia do .mov/.mp4/.heic: a marca vem logo depois
+    const marca = txt(8, 12);
+    if (marca === 'qt  ') return 'mov';
+    if (['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1', 'heim', 'heis'].includes(marca)) return 'heic';
+    return 'mp4';
+  }
+  return '';
+}
+
+/* Quando o navegador manda o arquivo dentro de um formulario (multipart), ele embrulha:
+   uma linha de fronteira, os cabecalhos do campo, uma linha em branco, o arquivo, e a
+   fronteira de novo no fim. Esta funcao devolve so' o miolo, pedaco por pedaco, sem nunca
+   juntar o arquivo inteiro na memoria. Guarda so' o rabinho de cada pedaco, porque a
+   fronteira pode chegar partida entre dois. */
+function cortadorMultipart(fronteira) {
+  const marca = Buffer.from('\r\n--' + fronteira);
+  let fase = 'cabecalho', resto = Buffer.alloc(0), acabou = false;
+  return (entrada) => {
+    if (acabou) return Buffer.alloc(0);
+    resto = resto.length ? Buffer.concat([resto, entrada]) : entrada;
+    if (fase === 'cabecalho') {
+      const i = resto.indexOf('\r\n\r\n');                  // a linha em branco abre o arquivo
+      if (i < 0) {
+        if (resto.length > 16384) throw new Error('formulario estranho');
+        return Buffer.alloc(0);
+      }
+      resto = resto.subarray(i + 4); fase = 'corpo';
+    }
+    const f = resto.indexOf(marca);
+    if (f >= 0) { acabou = true; const saida = resto.subarray(0, f); resto = Buffer.alloc(0); return saida; }
+    const guardar = Math.min(resto.length, marca.length - 1);
+    const saida = resto.subarray(0, resto.length - guardar);
+    resto = resto.subarray(resto.length - guardar);
+    return saida;
+  };
+}
+
+// pagina de outro site nao fala com o Cockpit. O cookie ja e' SameSite=Strict; isto e' o
+// cinto de seguranca do suspensorio, o mesmo cuidado que o WebSocket ja toma la embaixo.
+const mesmaOrigem = (req) => {
+  const o = String(req.headers.origin || '');
+  if (!o) return true;                   // pedido sem origem nao nasceu na pagina de outro site
+  try { return new URL(o).host === String(req.headers.host || ''); } catch { return false; }
+};
+
+/* POST /upload — recebe UM arquivo e grava em colados/, escrevendo enquanto recebe.
+   O corpo pode vir dos dois jeitos que o navegador usa: o arquivo cru
+   (fetch('/upload', { method: 'POST', body: arquivo })) ou um formulario multipart com o
+   arquivo no primeiro campo. Devolve { arquivo: "/caminho/no/mac" } — o mesmo formato do
+   imagem:salvar, para o renderer/web.js so' trocar de porta de entrada. */
+function receberUpload(req, res, { temSessao, pasta }) {
+  const responder = (status, corpo, fechar) => {
+    if (res.headersSent) return;
+    const cab = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+    if (fechar) {
+      cab.Connection = 'close';
+      cab['Content-Length'] = Buffer.byteLength(JSON.stringify(corpo));
+      // fecha a torneira DEPOIS que a resposta sai. Sem isto o Mac continuaria engolindo os
+      // 500 MB que ja recusou, e o telefone veria a conexao cair em vez de ler o aviso.
+      res.on('finish', () => { try { req.destroy(); } catch {} });
+    }
+    res.writeHead(status, cab);
+    res.end(JSON.stringify(corpo));
+  };
+  // toda recusa fecha a conexao: o arquivo ja esta subindo e nao adianta deixar o resto chegar
+  if (req.method !== 'POST') return responder(405, { error: 'use POST' }, true);
+  if (!temSessao) return responder(401, { error: 'sessão expirada, entre de novo no Cockpit' }, true);
+  if (!mesmaOrigem(req)) return responder(403, { error: 'origem inválida' }, true);
+
+  const grande = 'arquivo grande demais (o limite é 500 MB)';
+  const soFotoVideo = 'só foto ou vídeo (png, jpg, gif, webp, heic, mov, mp4, webm)';
+  if (Number(req.headers['content-length'] || 0) > LIMITE_UPLOAD) return responder(413, { error: grande }, true);
+
+  const fronteira = (String(req.headers['content-type'] || '').match(/boundary=(?:"([^"]+)"|([^;]+))/) || []).slice(1).find(Boolean);
+  let cortar; try { cortar = fronteira ? cortadorMultipart(fronteira.trim()) : (p) => p; }
+  catch { return responder(400, { error: 'não entendi o formulário' }, true); }
+
+  let fluxo = null, destino = '', cabeca = Buffer.alloc(0), total = 0, falhou = false, pronto = false;
+  // conexao cortada no meio (ele saiu do app, o Wi-Fi trocou) nao pode deixar meio video na pasta
+  const limpar = () => {
+    const f = fluxo; fluxo = null;
+    if (f) { try { f.destroy(); } catch {} }
+    if (destino) { try { fs.unlinkSync(destino); } catch {} destino = ''; }
+  };
+  const desistir = (status, msg) => { if (falhou) return; falhou = true; limpar(); responder(status, { error: msg }, true); };
+
+  req.on('data', (parte) => {
+    if (falhou || pronto) return;
+    let dados; try { dados = cortar(parte); } catch { return desistir(400, 'não entendi o formulário'); }
+    total += dados.length;
+    if (total > LIMITE_UPLOAD) return desistir(413, grande);
+    if (!dados.length) return;
+    if (!fluxo) {
+      cabeca = cabeca.length ? Buffer.concat([cabeca, dados]) : dados;
+      if (cabeca.length < 12) return;                        // ainda nao da para saber o que e'
+      const ext = tipoPelosBytes(cabeca);
+      if (!ext) return desistir(415, soFotoVideo);
+      try {
+        fs.mkdirSync(pasta, { recursive: true });
+        const raiz = fs.realpathSync(pasta);
+        // o nome nasce AQUI. Nada do que veio do telefone entra nele: e' por nome de fora que
+        // se escapa da pasta com ../../
+        const nome = 'celular-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex') + '.' + ext;
+        const caminho = path.resolve(raiz, nome);
+        // e ainda assim confere DEPOIS de resolver: tem de cair dentro de colados/
+        if (path.dirname(caminho) !== raiz) return desistir(400, 'caminho inválido');
+        destino = caminho;
+        // 'wx' = so' cria arquivo novo; nunca sobrescreve nem segue atalho plantado ali
+        fluxo = fs.createWriteStream(destino, { flags: 'wx' });
+        fluxo.on('error', () => desistir(500, 'não consegui gravar o arquivo no Mac'));
+      } catch { return desistir(500, 'não consegui gravar o arquivo no Mac'); }
+      dados = cabeca; cabeca = Buffer.alloc(0);
+    }
+    // segura a torneira quando o disco fica para tras (video grande)
+    if (!fluxo.write(dados)) { req.pause(); fluxo.once('drain', () => { try { req.resume(); } catch {} }); }
+  });
+
+  req.on('end', () => {
+    if (falhou || pronto) return;
+    if (!fluxo) return desistir(400, cabeca.length ? soFotoVideo : 'não chegou nenhum arquivo');
+    pronto = true;
+    const f = fluxo, caminho = destino; fluxo = null;
+    f.end(() => responder(200, { arquivo: caminho, bytes: total }));
+  });
+
+  const abortou = () => { if (pronto || falhou) return; falhou = true; limpar(); };
+  req.on('aborted', abortou);
+  req.on('error', abortou);
+  res.on('close', abortou);
+}
+
+function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somenteTailscale = false, endereco = '', pastaColados = '' }) {
   const { WebSocketServer } = require('ws');
   const sessoes = new Map();
   const tentativas = new Map();
@@ -145,20 +308,31 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     if (['/manifest.json', '/icone-180.png', '/icone-512.png', '/favicon.ico'].includes(url.pathname)) {
       const pub = path.join(pastaRenderer, url.pathname.replace(/^\//, ''));
       if (url.pathname === '/favicon.ico' || !fs.existsSync(pub)) { res.writeHead(204); return res.end(); }
-      return mandarArquivo(res, pub);
+      return mandarArquivo(req, res, pub);
     }
     const t = pegarSessao(req.headers.cookie);
+    // Foto e video do celular entram por aqui. Vem ANTES da pagina de senha porque quem perdeu
+    // a sessao precisa receber um erro curto em JSON, e nao a tela de login inteira em HTML
+    // (o app leria 200 "deu certo" e anexaria a pagina de login no lugar do video).
+    if (url.pathname === '/upload') {
+      return receberUpload(req, res, { temSessao: !!t && sessaoValida(t), pasta: pastaDeColados(pastaColados) });
+    }
     if (!t || !sessaoValida(t)) return paginaLogin(res, 200, false);
 
     let arq = url.pathname === '/' ? '/index-web.html' : url.pathname;
     const alvo = path.join(pastaRenderer, path.normalize(arq).replace(/^(\.\.[/\\])+/, ''));
     if (!alvo.startsWith(pastaRenderer) || !fs.existsSync(alvo)) { res.writeHead(404); return res.end('nao achei'); }
-    mandarArquivo(res, alvo);
+    mandarArquivo(req, res, alvo);
   });
 
   // 256 KB era pouco: o config do Mac tem mais de 2 MB (a foto de perfil em base64 sozinha
   // passa de 2 MB) e a conexao do telefone caia toda vez que uma mensagem grande passava.
-  const wss = new WebSocketServer({ server: servidor, path: '/ws', maxPayload: 8 * 1024 * 1024 });
+  // 8 MB tambem estava errado, por um motivo mais chato: era MENOS que o teto de 9 MB do
+  // imagem:salvar (main.js), entao um arquivo entre 8 e 9 MB DERRUBAVA a conexao em vez de
+  // voltar o aviso "imagem grande demais". Agora o cano e' maior que o teto de la e quem
+  // recusa e' sempre o main, com frase em portugues. Foto e video grandes nem passam por
+  // aqui: vao pela rota /upload, que grava direto no disco.
+  const wss = new WebSocketServer({ server: servidor, path: '/ws', maxPayload: 12 * 1024 * 1024 });
   wss.on('connection', (ws, req) => {
     const origin = String(req.headers.origin || '');
     const esperado = 'http://' + String(req.headers.host || '');
@@ -227,6 +401,11 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     servidor.once('error', caiu);
     wss.once('error', caiu);
   });
+  // O Node corta sozinho qualquer pedido que passe de 5 minutos. Um video de 100 MB subindo
+  // pelo 4G leva mais que isso e morria no meio, sem explicacao. Os 15 minutos valem so' para
+  // o corpo do pedido; o teto de 60 s para os cabecalhos continua igual, que e' o que segura
+  // conexao de araque aberta de proposito.
+  servidor.requestTimeout = 15 * 60 * 1000;
   servidor.listen(porta, somenteTailscale ? '127.0.0.1' : '0.0.0.0');
 
   // Desligar o acesso so parava de aceitar telefone NOVO: quem ja estava dentro continuava
@@ -242,11 +421,23 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
   return { servidor, fechar, pronto, endereco: endereco || (somenteTailscale ? '' : ('http://' + ipDaRede() + ':' + porta)) };
 }
 
-function mandarArquivo(res, arq) {
+function mandarArquivo(req, res, arq) {
   // guarda em memoria, mas solta a copia velha assim que o arquivo muda,
   // senao o telefone fica vendo a tela antiga depois de atualizar o app
   let st; try { st = fs.statSync(arq); } catch { res.writeHead(404); return res.end('nao achei'); }
   const selo = st.mtimeMs + ':' + st.size;
+  /* O mesmo selo (hora da ultima mudanca + tamanho) que solta a copia velha da memoria vira a
+     etiqueta que o telefone guarda. Antes ia 'no-store' em tudo: o iPhone rebaixava ~900 KB a
+     cada abertura e a tela ficava cinza quase um segundo. Agora ele pergunta "mudou?" e, se
+     nao mudou, volta um 304 vazio.
+     'no-cache' NAO e' "nao guarde": e' "guarde, mas pergunte antes de usar". Por isso nunca
+     fica com versao velha — mexeu no arquivo, muda a hora, muda o selo, e ele baixa na hora. */
+  const etiqueta = '"' + selo + '"';
+  const trazida = String((req && req.headers && req.headers['if-none-match']) || '');
+  if (trazida && trazida.split(',').some((x) => x.trim().replace(/^W\//, '') === etiqueta)) {
+    res.writeHead(304, { ETag: etiqueta, 'Cache-Control': 'no-cache' });
+    return res.end();
+  }
   let item = cacheArq.get(arq);
   if (!item || item.selo !== selo) {
     try { item = { selo, dados: fs.readFileSync(arq) }; cacheArq.set(arq, item); }
@@ -255,7 +446,8 @@ function mandarArquivo(res, arq) {
   res.writeHead(200, {
     'Content-Type': TIPOS[path.extname(arq)] || 'application/octet-stream',
     'Content-Length': item.dados.length,
-    'Cache-Control': 'no-store, must-revalidate',
+    ETag: etiqueta,
+    'Cache-Control': 'no-cache',
   });
   res.end(item.dados);
 }

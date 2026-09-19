@@ -25,10 +25,18 @@ body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right
 #fecharInstalar{width:100%;min-height:44px;border:0;border-radius:10px;background:var(--claude);color:#fff;font:inherit}
 
 @media (max-width: 820px), (pointer: coarse) and (max-width: 1100px) {
-  body{display:flex;flex-direction:column;height:var(--altura-app,100dvh);overscroll-behavior:none}
+  /* a pagina fica PRESA na tela. No iPhone so position:fixed segura o body quando o teclado
+     abre: sem isso o iOS rola a pagina inteira para mostrar o campo, e a barra de escrever vai
+     parar la em cima, por baixo do relogio. A outra metade do conserto esta no mobile.js, que
+     remede a altura e devolve a rolagem para o zero. */
+  body{position:fixed;inset:0;display:flex;flex-direction:column;
+    height:var(--altura-app,100dvh);overscroll-behavior:none}
   #titlebar,#abasTopo{flex-shrink:0}
   /* barra de titulo do telefone (46px + camera) + faixa de abas (50px): e onde a faixa de avisos comeca */
-  :root{--topo-altura:calc(96px + var(--sat))}
+  /* --veu-topo e onde COMECA toda janela flutuante: nova aba, time de agentes, atalhos e
+     avisos. Ficava nos 38px do Mac, entao no telefone as quatro nasciam por baixo da ilha
+     dinamica. Aqui ela comeca onde a barra de titulo do telefone acaba. */
+  :root{--topo-altura:calc(96px + var(--sat));--veu-topo:calc(46px + var(--sat))}
   #shell{flex:1;min-height:0;height:auto}
   .so-celular{display:grid !important}
   /* a faixa do topo desce a barra inteira para baixo da camera/ilha do iPhone */
@@ -66,9 +74,24 @@ body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right
   .pane-split{display:none}
 
   .pane-hd{height:auto;gap:3px 6px;padding:5px 6px}
+  /* dedo: o x fica 32 na tela e 44 no toque, pelo anel invisivel de 6px em volta.
+     Assim o alvo cresce sem o cabecalho inteiro crescer junto. */
+  .p-close{width:32px;height:32px;position:relative}
+  .p-close::after{content:"";position:absolute;inset:-6px}
   .p-cwd{max-width:110px;font-size:10.5px}
   .p-tokens{font-size:10px}
-  .ch-lado{padding:4px 8px;font-size:10.5px}
+  /* dedo: os quatro motores tinham 24px de altura, e trocar de motor e a coisa mais tocada do
+     app. Com 9px em cima e embaixo viram 34px, e o cabecalho so cresce 5px. Nao da para usar o
+     anel invisivel aqui porque a faixa .p-chave corta o que passa da borda (overflow). */
+  .ch-lado{padding:9px 8px;font-size:10.5px}
+
+  /* o nome da conversa ja aparece na barra de cima: aqui ele so comia 40px de conversa */
+  .pane-nome{display:none}
+  /* folga embaixo, senao a ultima linha encosta na caixa de escrever. O degrade de 12px no
+     topo troca a linha cortada ao meio na borda por um sumico suave. */
+  .pane-chat{padding-bottom:18px;
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 12px);
+    mask-image:linear-gradient(to bottom,transparent 0,#000 12px)}
 
   .msg{padding:0 12px 14px}
   .msg-body{font-size:14.5px}
@@ -76,23 +99,77 @@ body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right
   .exec{padding:2px 12px 8px}
   .trab{padding:6px 12px 14px}
 
-  .pane-cmp{margin:6px 8px calc(8px + var(--sab));border-radius:14px}
-  .p-input{font-size:16px}            /* 16px evita o iPhone dar zoom ao focar */
-  /* uma linha so: os botoes deslizam de lado e o enviar fica sempre a direita */
-  .cmp-bar{gap:6px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
-    scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-right:2px}
+  /* a folga da barrinha de gestos do iPhone vira recuo DENTRO da caixa: antes ela ficava do
+     lado de FORA e sobrava uma faixa preta morta de 42px no rodape.
+     O teto de 55% e por causa do que acontecia quando ele escrevia muito: a caixa crescia sem
+     limite, empurrava a fileira de botoes para fora do painel e o "enviar" era cortado fora.
+     Agora o texto rola por dentro do .cmp-top e a fileira nunca sai do lugar. */
+  .pane-cmp{margin:6px 8px;padding-bottom:calc(6px + var(--sab));border-radius:14px;
+    display:flex;flex-direction:column;flex:0 1 auto;max-height:55%}
+  /* quem encolhe quando falta espaco e SO o texto: a fileira de botoes, o aviso de limite e a
+     tira de anexos ficam do tamanho que sao */
+  .pane-cmp > *{flex:none}
+  /* o min-height segura pelo menos uma linha e meia do que ele esta escrevendo: sem ele, em
+     tela muito curta (celular pequeno deitado, com teclado) o campo sumia por completo */
+  .cmp-top{flex:0 1 auto;min-height:26px;overflow-y:auto}
+  /* 16px evita o iPhone dar zoom ao focar. O teto de 96px e o que devolve a conversa: em 190px
+     (a medida do Mac) o texto dele comia metade da tela e a conversa sumia. */
+  .p-input{font-size:16px;max-height:96px}
+  /* uma linha so, e agora ela CABE: os botoes encolhem ate caber em vez de vazar um por cima
+     do outro. A rolagem de lado continua como rede de seguranca para o chat do Codex, que
+     acende mais dois botoes (planejar e resumir). */
+  .cmp-bar{gap:4px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-right:0}
   .cmp-bar::-webkit-scrollbar{display:none}
-  .cmp-bar > *{flex:none}
-  .cmp-gap{flex:1 0 6px}
-  .p-send,.p-stop{position:sticky;right:0;z-index:2;
-    box-shadow:-14px 0 12px -4px var(--bg2)}
-  .cb,.p-send,.p-stop{width:32px;height:30px}
-  .p-modoenvio,.p-model,.modo-btn{padding:5px 9px;font-size:11px}
-  .modo-nome{max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .p-compactar{width:32px;height:30px}
+  /* os botoes encolhem para caber, mas nunca abaixo de 32: medido, com os dois botoes a mais
+     do chat do Codex eles caiam para 28px e o dedo pegava o do lado. Quando nem a 32 cabe, a
+     fileira volta a rolar de lado — o botao laranja grudado na direita mostra que tem mais. */
+  .cmp-bar > *{flex:0 1 auto;min-width:32px}
+  /* o espaco vazio do meio nao e botao: fica de fora do piso de 32 acima, senao ele sozinho
+     comia 26px da largura dos botoes de verdade */
+  .cmp-gap{flex:1 0 6px;min-width:0}
+  /* sombra SOLIDA, nao borrada: a antiga era desfocada e pintava um borrao por cima do nome do
+     modelo. O padding-right:0 la em cima fecha a fresta de 2px que sobrava a direita do botao. */
+  .p-send,.p-stop{position:sticky;right:0;z-index:2;box-shadow:-10px 0 0 0 var(--bg2)}
+  /* dedo: 44 de ALTURA em todos os botoes. A largura pede 44 e encolhe ate caber, porque dez
+     botoes de 44 nao entram numa tela de 393. */
+  .cb,.p-send,.p-stop,.p-compactar,.p-model,.modo-btn{width:44px;height:44px}
+  /* so o icone, igual ao que o Mac ja faz quando ha varios paineis abertos (#panes.multi, no
+     style.css): era o rotulo "Entra" que aparecia desenhado por cima da pastinha. */
+  .p-modoenvio span,.p-model span,.modo-nome{display:none}
+  .p-modoenvio,.p-model,.modo-btn{padding:0;gap:0;justify-content:center;font-size:11px}
+  /* a pasta deste chat ja esta escrita na barra de cima, e trocar de pasta tem linha propria
+     dentro do menu "/": aqui o botao so roubava largura dos outros */
+  .pane-cmp .p-cwd{display:none}
+
+  /* aviso de limite do plano: encolhia a frase E o "zera em" ao mesmo tempo, e cortava os dois.
+     Agora o aviso ocupa a primeira linha inteira e os numeros descem para a segunda. */
+  .p-uso{white-space:normal;flex-wrap:wrap}
+  .p-uso .uso-alerta,.p-uso .uso-zera{flex:none}
+  .uso-x{width:26px;height:26px;position:relative}
+  .uso-x::after{content:"";position:absolute;inset:-9px}
 
   .modal-cx{width:calc(100% - 20px);max-height:calc(100% - 90px);border-radius:16px}
-  .mi{padding:11px 10px}
+  /* menu do "+" e os outros: no Mac e um menuzinho ao lado do botao, no telefone virava um
+     cartao no meio da tela, tapando a conversa. Aqui ele sobe do rodape, junto do botao que
+     ele acabou de tocar, como em todo app de iPhone. */
+  .modal.como-menu{place-items:end center}
+  .modal.como-menu .modal-cx{width:100%;max-height:70%;margin:0;
+    border-radius:18px 18px 0 0;padding-bottom:calc(14px + var(--sab))}
+  .mi{padding:13px 10px;min-height:44px;box-sizing:border-box}
+  .p-modal .mi{padding:12px 9px}   /* linha de menu com altura de dedo */
+
+  /* janela do time de agentes: pedia 377px numa faixa util de 349 e nascia torta, com o canto
+     direito para fora da tela. E abria em tela cheia mesmo sem nenhum agente dentro. */
+  .ag-cx{width:100%;height:auto;max-height:100%}
+  .ag-sub{display:none}            /* "Pasta: … · nome do chat" ja esta na barra de cima */
+  .ag-x{width:44px;height:44px}
+
+  /* o x das abas: no telefone nao existe passar o mouse, entao nas abas de fora ele ficava
+     invisivel MAS continuava recebendo o toque — fechava chat sem querer. Aqui ele so existe
+     na aba aberta, e maior para o dedo. Maior que isto fecha aba no lugar de trocar de aba. */
+  .aba:not(.ativa) .aba-x{display:none}
+  .aba-x{width:30px;height:30px;top:1px;right:1px}
   .hist-item{padding:10px 9px}
   .hi-fav,.hi-edit{opacity:1}
   .bv-tit{font-size:18px}

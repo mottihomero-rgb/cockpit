@@ -3737,41 +3737,66 @@ handle('quadro:rascunhoLer', () => {
   } catch { return { cena: null, enviadoEm: 0 }; }   // rascunho quebrado nunca derruba a abertura do quadro
 });
 
-/* ---------- imagem que a TELA gerou vira arquivo em colados/ ----------
+/* ---------- imagem (ou video curto) que a TELA gerou vira arquivo em colados/ ----------
    Foto da webcam e recorte da tela nascem como base64 dentro da janela; aqui viram arquivo
    de verdade, no mesmo lugar do print colado (e com a mesma faxina de 7 dias).
    O telefone tambem pode gravar: nao ha janela do sistema envolvida, so escrita numa pasta
    nossa. Em troca, NADA do que chega vira caminho — o nome e montado aqui dentro — e o
    conteudo e conferido byte a byte, igual ao quadro:salvar. Sem essa conferencia qualquer
    base64 viraria um ".png" mentiroso.
-   O teto que vale e' o de 6 MB JA DECODIFICADO: e' o tamanho que ainda cabe no quadro de
-   8 MB do WebSocket do telefone (servidor-web.js:101) depois de virar base64 (que engorda um
-   terco). O teto do texto e' so' guarda de memoria — evita decodificar um paredao antes de
-   descobrir que ele nao serve — e por isso fica um pouco ACIMA, senao nunca daria a vez ao
-   outro e a conta de 6 MB seria letra morta. */
-const IMG_MAX_TXT = 9 * 1024 * 1024;
-const IMG_MAX = 6 * 1024 * 1024;
+   Os dois tetos saem do MESMO lugar: o quadro de 8 MB do WebSocket do telefone (o maxPayload
+   em servidor-web.js). Tudo que o celular manda viaja dentro de UMA mensagem desse tamanho;
+   passou disso, o ws corta a conexao ANTES de chegar aqui — ele ve o app reconectando e o
+   anexo sumir, sem erro nenhum. Por isso o teto do texto e' o quadro menos uma folga para o
+   resto do JSON (nome do comando, id, prefixo), e o teto dos bytes e' esse mesmo numero
+   desfeito do base64 (que engorda um terco). Antes o teto do texto era 9 MB, MAIOR que o
+   quadro: o arquivo entre 8 e 9 MB derrubava a conexao em vez de voltar com um erro legivel.
+   Video grande nao passa por aqui: vai pela rota POST /upload do servidor-web.js, que grava
+   em pedacos, sem base64. Este caminho continua sendo o da imagem colada e do arquivo pequeno. */
+const WS_QUADRO = 8 * 1024 * 1024;                 // tem de bater com o maxPayload do servidor-web.js
+const IMG_MAX_TXT = WS_QUADRO - 64 * 1024;         // o que sobra do quadro para o texto em base64
+const IMG_MAX = Math.floor(IMG_MAX_TXT / 4) * 3;   // o mesmo teto, ja desfeito do base64 (~6 MB)
+const ERRO_GRANDE = 'arquivo grande demais para mandar por aqui (o limite é ~6 MB)';
 const SELO_JPG = Buffer.from([0xff, 0xd8, 0xff]);
-function tipoDaImagem(buf) {
+const SELO_EBML = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);   // inicio do webm (e do mkv)
+/* Que tipo os BYTES dizem ser — nunca o que o texto promete. Imagem e video moram na mesma
+   funcao porque o mp4, o mov do iPhone e a foto HEIC usam a MESMA caixa ("ftyp"): separar
+   daria duas funcoes lendo os mesmos 12 primeiros bytes. */
+function tipoDoAnexo(buf) {
   if (buf.length >= 8 && buf.subarray(0, 8).equals(SELO_PNG)) return 'png';
   if (buf.length >= 3 && buf.subarray(0, 3).equals(SELO_JPG)) return 'jpg';
+  if (buf.length >= 6 && ['GIF87a', 'GIF89a'].includes(buf.subarray(0, 6).toString('latin1'))) return 'gif';
   // WEBP: "RIFF" ....(4 bytes de tamanho).... "WEBP"
   if (buf.length >= 12 && buf.subarray(0, 4).toString('latin1') === 'RIFF'
     && buf.subarray(8, 12).toString('latin1') === 'WEBP') return 'webp';
+  if (buf.length >= 4 && buf.subarray(0, 4).equals(SELO_EBML)) return 'webm';
+  /* Caixa ISO: os bytes 4 a 8 sao "ftyp" e a marca logo depois diz qual e. "qt" e o video do
+     iPhone (mov), heic/heix/mif1/msf1 e a foto do iPhone, o resto dessa caixa e mp4. */
+  if (buf.length >= 12 && buf.subarray(4, 8).toString('latin1') === 'ftyp') {
+    const marca = buf.subarray(8, 12).toString('latin1');
+    if (marca.startsWith('qt')) return 'mov';
+    if (['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].includes(marca)) return 'heic';
+    return 'mp4';
+  }
   return '';
 }
+const TIPO_VIDEO = ['mp4', 'mov', 'webm'];
 handle('imagem:salvar', (_e, { dados, prefixo } = {}) => {
   try {
     const cru = String(dados || '');
-    if (cru.length > IMG_MAX_TXT) return { error: 'imagem grande demais (o limite é ~6 MB)' };
-    const m = /^data:image\/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=\s]+)$/.exec(cru);
-    if (!m) return { error: 'isso não chegou como imagem' };
+    if (cru.length > IMG_MAX_TXT) return { error: ERRO_GRANDE };
+    const m = /^data:(image|video)\/[\w.+-]+;base64,([A-Za-z0-9+/=\s]+)$/.exec(cru);
+    if (!m) return { error: 'isso não chegou como imagem nem como vídeo' };
     const bytes = Buffer.from(m[2].replace(/\s+/g, ''), 'base64');
-    if (bytes.length > IMG_MAX) return { error: 'imagem grande demais (o limite é ~6 MB)' };
-    const tipo = tipoDaImagem(bytes);
-    // o que o texto DIZ ser tem de bater com o que os bytes SAO
-    const prometido = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : 'jpg';
-    if (!tipo || tipo !== prometido) return { error: 'isso não é uma imagem de verdade' };
+    if (bytes.length > IMG_MAX) return { error: ERRO_GRANDE };
+    const tipo = tipoDoAnexo(bytes);
+    /* O que o texto DIZ ser tem de bater com o que os bytes SAO — mas quem manda na extensao
+       do arquivo e a leitura dos bytes, nunca o rotulo que veio de fora: o iPhone chama o
+       mesmo .mov ora de video/quicktime, ora de video/mp4, e a foto ora de jpeg, ora de jpg. */
+    const familia = tipo ? (TIPO_VIDEO.includes(tipo) ? 'video' : 'image') : '';
+    if (familia !== m[1]) {
+      return { error: m[1] === 'video' ? 'isso não é um vídeo de verdade' : 'isso não é uma imagem de verdade' };
+    }
     const dir = path.join(app.getPath('userData'), 'colados');
     fs.mkdirSync(dir, { recursive: true });
     const nome = (String(prefixo || 'imagem').replace(/[^\w-]/g, '').slice(0, 24) || 'imagem')
@@ -4232,6 +4257,8 @@ handle('vault:salvar', (_e, { titulo, cwd, motor, texto }) => {
 const VOZ_MODELO = path.join(HOME, '.cockpit', 'modelos', 'ggml-small.bin');
 handle('voz:transcrever', async (_e, { audio }) => {
   try {
+    // o audio do celular viaja no MESMO quadro de 8 MB do ws: mesmo teto do anexo
+    if (String(audio || '').length > IMG_MAX_TXT) return { error: 'gravação longa demais (o limite é ~6 MB)' };
     if (!fs.existsSync(VOZ_MODELO)) return { error: 'falta o modelo de voz em ~/.cockpit/modelos' };
     const whisper = acharBin('whisper-cli');
     const ff = acharBin('ffmpeg');

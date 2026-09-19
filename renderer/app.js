@@ -4671,9 +4671,15 @@ function menuAnexo(P) {
   m.appendChild(tituloPopup('Anexar'));
   m.appendChild(subPopup('Manda o caminho do arquivo junto com a sua mensagem.'));
   const itens = [
-    { ic: 'upload', nome: 'Enviar do computador', desc: 'escolher arquivos', act: 'file' },
-    { ic: 'image', nome: 'Enviar imagem', desc: 'png, jpg, webp', act: 'image' },
-    { ic: 'folder', nome: 'Adicionar pasta', desc: 'manda o caminho da pasta', act: 'folder' },
+    /* Escolher arquivo e escolher pasta sao janelas do MAC. No telefone os dois so davam um
+       alerta dizendo que nao dava: dois becos sem saida dentro do menu. Fora da lista, do
+       mesmo jeito que o "Recortar a tela" ja fazia. */
+    ...(window.SEM_ELECTRON ? [] : [{ ic: 'upload', nome: 'Enviar do computador', desc: 'escolher arquivos', act: 'file' }]),
+    /* No telefone este vira o UNICO caminho de arquivo, e a galeria do iPhone tambem entrega
+       video — por isso o nome muda la. No Mac o seletor continua aceitando so imagem. */
+    { ic: 'image', nome: window.SEM_ELECTRON ? 'Enviar foto ou vídeo' : 'Enviar imagem',
+      desc: window.SEM_ELECTRON ? 'da galeria do celular' : 'png, jpg, webp', act: 'image' },
+    ...(window.SEM_ELECTRON ? [] : [{ ic: 'folder', nome: 'Adicionar pasta', desc: 'manda o caminho da pasta', act: 'folder' }]),
     { ic: 'map-pin', nome: 'Pasta deste painel', desc: shortPath(P.cwd), act: 'cwd' },
     /* Recortar a tela esconde a janela do MAC e abre uma tela preta por cima de tudo la: pelo
        telefone isso ficaria preso a quilometros de distancia. Por isso o item nem existe la. */

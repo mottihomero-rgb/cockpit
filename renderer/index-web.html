@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-7MDLgtz5Nvww7/4cnFsY0yGgj2afKGDctkqwa0E2N1I='; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
 <title>Cockpit</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
@@ -16,8 +16,59 @@
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="celular.css">
 <link rel="stylesheet" href="quadro.css">
+<!-- Capa de abertura: a caixa #abrindo, a primeira coisa do corpo da pagina. Este estilo vem
+     DEPOIS dos .css de proposito, para nenhuma regra de fora mexer nela. Cor so por variavel. -->
+<style>
+#abrindo{position:fixed;inset:0;z-index:99999;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:20px;
+  /* o #1e1e1e aqui e so rede de seguranca se o style.css demorar: nunca piscar branco */
+  background:var(--bg,#1e1e1e);transition:opacity .22s ease}
+#abrindo.foi{opacity:0;pointer-events:none}
+#abrindo .ab-marca{width:76px;height:76px;border-radius:18px}
+#abrindo .ab-risco{position:relative;width:110px;height:3px;border-radius:2px;
+  background:var(--bg4);overflow:hidden}
+#abrindo .ab-risco::after{content:"";position:absolute;top:0;bottom:0;width:38%;border-radius:2px;
+  background:var(--claude);animation:ab-anda 1.05s ease-in-out infinite}
+@keyframes ab-anda{from{transform:translateX(-110%)}to{transform:translateX(300%)}}
+@media (prefers-reduced-motion:reduce){#abrindo .ab-risco::after{animation:none;width:100%}}
+</style>
 </head>
 <body>
+
+<!-- Capa de abertura: so a marca do app e um risco que anda. Aparece no primeiro pixel e
+     some sozinha quando o app termina de montar. Sem ela a tela ficava cinza e vazia por
+     cerca de um segundo toda vez que o app abria no celular. -->
+<div id="abrindo" aria-hidden="true">
+  <img class="ab-marca" src="icone-180.png" alt="" width="76" height="76">
+  <span class="ab-risco"></span>
+</div>
+<script>
+/* Mora aqui no HTML porque precisa estar de pe ANTES do app.js (527 KB) comecar e continuar
+   depois que ele termina. O selo sha256 deste pedaco esta na linha do Content-Security-Policy
+   la em cima: mexeu aqui, refaz o selo, senao o Safari se recusa a rodar. */
+(function () {
+  var capa = document.getElementById('abrindo');
+  var meta = document.querySelector('meta[name="theme-color"]');
+  // a cor da barra do Safari segue o fundo do tema escolhido (escuro, claro ou jornal)
+  function corDaBarra() {
+    var bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    if (meta && bg) meta.setAttribute('content', bg);
+  }
+  function tirarCapa() {
+    corDaBarra();
+    if (!capa) return;
+    capa.classList.add('foi');
+    var indo = capa; capa = null;
+    setTimeout(function () { indo.remove(); }, 250);
+  }
+  // o app.js avisa que terminou de montar; o prazo e so a rede de seguranca
+  window.addEventListener('cockpit:pronto', tirarCapa, { once: true });
+  setTimeout(tirarCapa, 12000);
+  // o tema so chega depois dos Ajustes, e muda de novo quando ele troca de tema
+  new MutationObserver(corDaBarra)
+    .observe(document.documentElement, { attributes: true, attributeFilter: ['data-tema'] });
+})();
+</script>
 
 <div id="titlebar">
   <div class="tb-drag"></div>
@@ -352,13 +403,16 @@
   </section>
 </template>
 
-<script src="web.js"></script>
-<script src="vendor/marked.min.js"></script>
-<script src="vendor/xterm.js"></script>
-<script src="quadro-texto.js"></script>
-<script src="quadro.js"></script>
-<script src="layout-hugo.js"></script>
-<script src="app.js"></script>
-<script src="mobile.js"></script>
+<!-- "defer" e o que faz a capa de abertura aparecer DE CARA: sem ele o Safari trava a
+     montagem da pagina no primeiro arquivo .js e so pinta depois de baixar os ~900 KB.
+     A ordem continua a mesma (defer roda na ordem de cima para baixo). -->
+<script defer src="web.js"></script>
+<script defer src="vendor/marked.min.js"></script>
+<script defer src="vendor/xterm.js"></script>
+<script defer src="quadro-texto.js"></script>
+<script defer src="quadro.js"></script>
+<script defer src="layout-hugo.js"></script>
+<script defer src="app.js"></script>
+<script defer src="mobile.js"></script>
 </body>
 </html>
