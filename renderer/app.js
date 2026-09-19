@@ -305,15 +305,49 @@ function pintarAba(A) {
   $('.aba-proj', A.el).textContent = nomeProjeto(A.cwd);
   $('.aba-tit', A.el).textContent = (naVps ? 'VPS · ' : '') + (n === 0 ? 'sem chat' : (n === 1 ? '1 chat' : n + ' chats'));
   A.el.title = shortPath(A.cwd) + '\n' + (n === 1 ? '1 chat aberto' : n + ' chats abertos');
-  // a bolinha da aba mostra se algum chat dela esta trabalhando — inclusive quando só os
-  // agentes em segundo plano seguem rodando e o turno do chat já acabou
+  /* A bolinha da aba mostra se algum chat dela esta trabalhando — inclusive quando só os
+     agentes em segundo plano seguem rodando e o turno do chat já acabou.
+     'espera' ganha de tudo e é a única que aparece em aba parada: chat travado pedindo
+     permissão ou fazendo uma pergunta não anda sozinho, e antes ficava idêntico a uma aba
+     parada até ele abrir a Torre de Controle na mão. */
   let estado = 'off';
   for (const pid of A.ordem) {
     const P = panes.get(pid); if (!P) continue;
-    if (P.busy || agTrabalhando(P)) { estado = 'busy'; break; }
-    if (P.started) estado = 'idle';
+    if (estadoDoPainel(P).cls === 'espera') { estado = 'espera'; break; }
+    if (P.busy || agTrabalhando(P)) { estado = 'busy'; continue; }
+    if (P.started && estado !== 'busy') estado = 'idle';
   }
   $('.aba-dot', A.el).className = 'aba-dot dot ' + estado;
+}
+
+/* Tarja na faixa de avisos para o chat que travou esperando ELE e está FORA da vista (outra
+   aba, ou sem foco). No chat que ele está olhando a tarja seria ruído: o pedido já está na
+   frente dele. O aviso do sistema não resolvia isto — ele só dispara com a janela do Cockpit
+   atrás, ou seja, justamente quando ele NÃO está usando o app. */
+function avisarQuemEspera() {
+  if (!$('#faixaAvisos')) return;
+  const vivos = new Set();
+  for (const P of panes.values()) {
+    const e = estadoDoPainel(P);
+    // episódio novo de espera: o X que ele deu na espera anterior não vale para esta
+    if (e.cls !== 'espera') { P.esperaDesde = 0; continue; }
+    if (!P.esperaDesde) P.esperaDesde = Date.now();
+    if (P === focusPane && abaDe(P) === abaAtiva) continue;
+    const id = 'espera-' + P.id + '-' + P.esperaDesde;
+    vivos.add(id);
+    mostrarAviso({
+      id, tipo: 'alerta', fixo: true, acao: 'ir', aoClicar: () => irAoChat(P),
+      texto: nomeDoMotor(P.engine) + ' · ' + (P.titulo || nomePasta(P.cwd)) + ' · ' + e.txt,
+    });
+  }
+  // atendido: some da faixa na hora, sem esperar prazo nenhum
+  try { $$('#faixaAvisos [data-aviso^="espera-"]').forEach((t) => { if (!vivos.has(t.dataset.aviso)) t.remove(); }); } catch {}
+}
+// a espera começou ou acabou: repinta a bolinha da aba daquele chat e refaz a faixa
+function marcarEspera(P) {
+  const A = P && abaDe(P);
+  if (A) pintarAba(A);
+  avisarQuemEspera();
 }
 
 function pintarTodasAbas() { for (const A of abas.values()) pintarAba(A); }
@@ -356,6 +390,7 @@ function ativarAbaProjeto(A) {
   pintarMulti();          // a barra de baixo (modelo, modo, envio) segue a aba que abriu:
                           // sem isto, vir de uma aba de 3 chats deixava a de 1 chat comprimida
   lateralSegueAPasta();   // a lista de conversas segue o cliente da aba
+  avisarQuemEspera();     // chegou no chat que esperava: a tarja dele sai da faixa
 }
 
 async function fecharAba(A) {
@@ -399,6 +434,7 @@ function conversaDaPastaNova(P, pasta) {
   P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
   pararTrabalho(P); limparPassos(P); limparContinuar(P);
   P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null;
+  zerarContexto(P);          // conversa nova: o medidor volta ao zero
   // leva 8.3: o fio mudou de conversa — a intenção de ramificar não pode ir junto, senão a
   // próxima mensagem forkaria a conversa ERRADA, em silêncio
   P.forkPendente = false;
@@ -707,6 +743,11 @@ function newPane(opts = {}) {
 
   // modelo
   $('.p-model', el).addEventListener('click', (e) => { e.stopPropagation(); menuModelos(P); });
+
+  /* O anel do contexto sempre disse "clique para resumir" na dica, mas nunca teve clique
+     ligado — nem no Mac nem no celular. Agora tem: é o mesmo resumir do menu de ações. */
+  const btCompactar = $('.p-compactar', el);
+  if (btCompactar) btCompactar.addEventListener('click', (e) => { e.stopPropagation(); compactarConversa(P); });
 
   // pasta
   const btnCwd = $('.p-cwd', el);
@@ -1185,6 +1226,7 @@ async function trocarMotor(P, novo) {
   if (novo === 'codex' && P.mode === 'plan') P.mode = 'manual';
   if (novo === 'claude' && estavaPlanejando) P.mode = 'plan';
   P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
+  zerarContexto(P);          // conversa nova, e a janela do motor novo nem e a mesma
   // leva 8.3: o fio mudou de conversa — a intenção de ramificar não pode ir junto, senão a
   // próxima mensagem forkaria a conversa ERRADA, em silêncio
   P.forkPendente = false;
@@ -1305,6 +1347,7 @@ function setFocus(P) {
   if (window.SEM_ELECTRON) window.dispatchEvent(new CustomEvent('cockpit:foco', { detail: { paneId: P.id } }));
   if (focusPane === P) return;
   focusPane = P;
+  avisarQuemEspera();   // o chat que ele acabou de abrir nao precisa mais de tarja
   for (const q of panes.values()) q.el.classList.toggle('focus', q === P);
   loadTree(P.cwd);
   atualizarGit(P);   // leva 10.4: o chip do git segue o chat que está em foco
@@ -1398,6 +1441,14 @@ function pintarTokens(P) {
     el.title = 'Tamanho da conversa até agora.';
   }
 }
+
+/* Conversa NOVA no MESMO painel (trocou de motor, trocou a pasta, entrou ou saiu do worktree):
+   o medidor de contexto tem de voltar ao zero junto com o resto. Sem isto o painel mostrava
+   "390k / 1000k" e o anel no vermelho numa conversa que acabou de nascer e nao tem uma palavra
+   — e os numeros so se corrigiam quando o motor novo mandasse o primeiro aviso, o que no Codex
+   so acontece depois da resposta inteira. Pior: o "esta enchendo" mentia, e mandar resumir
+   resumia uma conversa vazia. Painel NOVO nao precisa disto: ele ja nasce zerado. */
+function zerarContexto(P) { P.tokens = 0; P.janela = 0; pintarTokens(P); }
 
 async function compactarConversa(P) {
   if (P.busy) { avisoEnvio(P, 'Espere ele terminar para resumir a conversa.'); return; }
@@ -1907,7 +1958,7 @@ function botBlock(P, key, semNome) {
   d.innerHTML = (semNome ? '' : '<div class="msg-role"><span class="av">' + svgMotor(P.engine) + '</span>'
     + nomeDoMotor(P.engine) + '</div>') + '<div class="msg-body"></div>';   // [EDITA 12.4] o ACP dizia "Claude"
   P.chat.appendChild(d);
-  const b = { el: $('.msg-body', d), raw: '' };
+  const b = { el: $('.msg-body', d), raw: '', corte: 0, fixos: 0 };
   P.blocks.set(key, b); scroll(P);
   return b;
 }
@@ -1920,18 +1971,68 @@ function thinkBlock(P) {
   P.blocks.set('__think', b); scroll(P);
   return b;
 }
+/* ---- desenhar a resposta enquanto ela chega ----
+   Cada pedacinho de texto que chegava fazia o app refazer o markdown do bloco INTEIRO. Como a
+   resposta so cresce, cada redesenho custava mais que o anterior: numa resposta de 40 KB o app
+   refazia uns 2.000 pedacos de tela 20 vezes por segundo so pra mostrar mais 30 letras — e era
+   o motivo principal de o Cockpit ir engasgando (rolar travando, digitar atrasado no chat do
+   lado, cursor pulando).
+   Agora o bloco tem duas partes. Linha em branco separa um paragrafo do outro no markdown,
+   entao tudo que vem ANTES da ultima linha em branco nao muda mais: e desenhado UMA vez e
+   fica quieto. So a PONTA (o trecho depois dela) e refeita a cada pedaco que chega, e ela e
+   curta. No fim do turno o 'texto final' refaz o bloco inteiro de uma vez, entao o que fica
+   na tela e exatamente o mesmo de antes. */
+
+/* Bloco de codigo comprido e a unica ponta que cresce sem parar: linha em branco dentro do
+   ``` nao fecha nada. Passando de 4 KB, a ponta passa a ser redesenhada 5 vezes por segundo
+   em vez de 20 — o olho nao ve diferenca e o 'texto final' acerta tudo no fim. */
+const PONTA_GRANDE = 4000, PAUSA_PONTA = 200;
+
+/* Ate onde o texto ja fechou. So olha o pedaco que veio DEPOIS do ultimo corte: o que fechou
+   nao muda mais. O que esta dentro de bloco de codigo (```) nao conta — la a linha em branco
+   faz parte do codigo e o bloco so termina mais pra frente. */
+function avancarFechado(b) {
+  const linhas = b.raw.slice(b.corte).split('\n');
+  let dentro = false, novo = b.corte, i = b.corte;
+  for (let n = 0; n < linhas.length - 1; n++) {   // a ultima linha ainda pode estar crescendo
+    const linha = linhas[n];
+    if (/^\s{0,3}(```|~~~)/.test(linha)) dentro = !dentro;
+    i += linha.length + 1;                        // +1 = o \n que o split comeu
+    if (!dentro && !linha.trim()) novo = i;
+  }
+  if (novo > b.corte) b.corte = novo;
+}
+
+function pintarPonta(b) {
+  const antes = b.corte;
+  avancarFechado(b);
+  if (b.corte > antes) {
+    // fechou mais um pedaco: ele sai do lugar de ponta e vira parte fixa do bloco
+    while (b.el.childNodes.length > b.fixos) b.el.removeChild(b.el.lastChild);
+    b.el.insertAdjacentHTML('beforeend', marked.parse(b.raw.slice(antes, b.corte)));
+    b.fixos = b.el.childNodes.length;
+    b.pintadoEm = 0;                              // pedaco novo: pode redesenhar a ponta ja
+  }
+  const ponta = b.raw.slice(b.corte);
+  const agora = Date.now();
+  if (ponta.length > PONTA_GRANDE && agora - (b.pintadoEm || 0) < PAUSA_PONTA) return;
+  b.pintadoEm = agora;
+  while (b.el.childNodes.length > b.fixos) b.el.removeChild(b.el.lastChild);
+  if (ponta.trim()) b.el.insertAdjacentHTML('beforeend', marked.parse(ponta));
+}
+
 function textDelta(P, key, text) {
   let b = P.blocks.get('resp');
   const depoisDeComando = P.execEl && P.execEl.isConnected;
   if (!b || P.blocks.get('respKey') !== key || depoisDeComando) {
     // texto que vem depois de comandos entra num bloco novo, abaixo do cartao
-    if (b && !depoisDeComando) { b.raw = ''; b.el.innerHTML = ''; }
+    if (b && !depoisDeComando) { b.raw = ''; b.el.innerHTML = ''; b.corte = 0; b.fixos = 0; }
     else { b = botBlock(P, 'resp', depoisDeComando); }
     P.blocks.set('respKey', key);
     P.blocks.set('resp', b);
     P.execEl = null;                                  // proximo comando abre cartao novo
   }
-  b.raw += text; b.el.innerHTML = marked.parse(b.raw);
+  b.raw += text; pintarPonta(b);
   // o texto ACUMULADO, nao o pedaco de 50ms que chegou agora: sozinho ele quase nunca
   // e uma frase inteira
   legendarTrabalho(P, b.raw);
@@ -2270,7 +2371,11 @@ async function ditadoWhisper(P) {
       fr.onload = () => ok(String(fr.result).split(',')[1] || '');
       fr.readAsDataURL(blob);
     });
-    const r = await window.api.ditar({ audio: b64 });
+    /* Sem este try o botao ficava preso em "pensando" para sempre quando a resposta nao vinha
+       (Wi-Fi caiu no meio do envio do audio), e so recarregar a pagina soltava. */
+    let r = null;
+    try { r = await window.api.ditar({ audio: b64 }); }
+    catch (e) { r = { error: String((e && e.message) || e) }; }
     if (bt) bt.classList.remove('pensando');
     if (!r || r.error) { avisoEnvio(P, 'Não entendi o áudio: ' + ((r && r.error) || 'erro')); return; }
     const inp = $('.p-input', P.el);
@@ -2442,16 +2547,54 @@ function avisarQueTerminou(P) {
 
 /* ---- copiar com um clique: a resposta inteira e cada bloco de codigo ----
    Antes nao havia botao nenhum: a unica saida era arrastar o mouse pelo texto. */
+/* Copia da era antiga: uma caixa de texto escondida, marcada e copiada. E o unico jeito que
+   funciona no iPhone, porque o Safari so libera o clipboard moderno em endereco seguro (https)
+   e o Cockpit no celular e servido em http. Tem de rodar JUNTO com o toque, sem esperar nada
+   antes, senao o Safari entende que nao foi o dedo dele e recusa. */
+function copiarNaMarra(txt) {
+  try {
+    const cx = document.createElement('textarea');
+    cx.value = String(txt == null ? '' : txt);
+    cx.setAttribute('readonly', '');
+    // font-size 16: abaixo disso o iPhone da zoom na tela ao focar um campo
+    cx.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px';
+    document.body.appendChild(cx);
+    cx.select();
+    cx.setSelectionRange(0, cx.value.length);   // no iPhone o select() sozinho nao marca nada
+    const deu = document.execCommand('copy');
+    cx.remove();
+    return !!deu;
+  } catch (_) { return false; }
+}
+
 async function copiarTexto(txt, botao) {
-  // quem copia e o processo principal: dentro do app o clipboard do navegador as vezes e
-  // barrado, e um botao de copiar que as vezes nao copia e pior do que nao ter botao
-  try { await window.api.copiar(txt); }
-  catch { try { await navigator.clipboard.writeText(txt); } catch { return; } }
-  if (!botao) return;
+  const texto = String(txt == null ? '' : txt);
+  /* No telefone o jeito antigo vem PRIMEIRO, colado no toque. Antes o botao tentava o atalho
+     do Mac (que la nao existe) e depois o clipboard do navegador (que o Safari barra em http):
+     as duas falhavam e o codigo desistia calado — tocar no icone nao fazia absolutamente nada. */
+  let deu = window.SEM_ELECTRON ? copiarNaMarra(texto) : false;
+  if (!deu) {
+    // no Mac quem copia e o processo principal: dentro do app o clipboard do navegador as vezes
+    // e barrado, e um botao de copiar que as vezes nao copia e pior do que nao ter botao
+    try { await window.api.copiar(texto); deu = true; }
+    catch {
+      try { await navigator.clipboard.writeText(texto); deu = true; }
+      catch { deu = copiarNaMarra(texto); }
+    }
+  }
+  if (!deu) {
+    // some da memoria antes de mostrar: um X dado um dia nao pode calar o aviso para sempre
+    avisosFechados.delete('copiar-nao-deu');
+    mostrarAviso({ id: 'copiar-nao-deu', tipo: 'erro',
+      texto: 'Não consegui copiar. Segure o dedo no texto e use o Copiar do aparelho.' });
+    return false;
+  }
+  if (!botao) return true;
   const antes = botao.innerHTML;
   botao.innerHTML = ico('check');
   botao.classList.add('copiou');
   setTimeout(() => { botao.innerHTML = antes; botao.classList.remove('copiou'); }, 1400);
+  return true;
 }
 function botaoCopiar(titulo, pegarTexto) {
   const b = document.createElement('button');
@@ -2586,12 +2729,13 @@ function textFinal(P, key, text) {
   let b = P.blocks.get('resp');
   const depoisDeComando = P.execEl && P.execEl.isConnected;
   if (!b || P.blocks.get('respKey') !== key || depoisDeComando) {
-    if (b && !depoisDeComando) { b.raw = ''; b.el.innerHTML = ''; }
+    if (b && !depoisDeComando) { b.raw = ''; b.el.innerHTML = ''; b.corte = 0; b.fixos = 0; }
     else { b = botBlock(P, 'resp', depoisDeComando); }
     P.blocks.set('respKey', key); P.blocks.set('resp', b);
     P.execEl = null;
   }
-  b.raw = text; b.el.innerHTML = marked.parse(text);
+  // aqui o bloco e refeito INTEIRO, de uma vez so: e o desenho que vale no fim do turno
+  b.raw = text; b.el.innerHTML = marked.parse(text); b.corte = 0; b.fixos = 0;
   legendarTrabalho(P, text);
   linkarArquivos(P, b.el); marcarLinksWeb(b.el); botoesDeCopia(b); marcarRecibo(b.el);
   if (P.trabEl) P.chat.appendChild(P.trabEl);
@@ -3185,6 +3329,18 @@ async function send(P) {
         worktree: (P.engine === 'claude' && !NA_VPS(P.cwd) && P.worktree) || undefined,
         ...pedidoCodex,
       });
+      /* Esta mesma conversa ja esta aberta em outra tela. O Mac recusou subir um segundo agente
+         nela — seriam dois mexendo no mesmo historico e na mesma pasta ao mesmo tempo. A fala
+         volta inteira pro campo, com os anexos, e o chat conta o que houve. Mandar de novo
+         assume a conversa aqui e desliga o agente do outro lado. */
+      if (inicio && inicio.jaAberta) {
+        P.busy = false; concluirEscolhasEnvio(P, escolhasDoEnvio, false);
+        recuperarEnvio(P, bolha, text, anexos);
+        setDot(P, 'off');
+        note(P, 'Esta conversa já está aberta ' + (inicio.onde || 'em outra tela')
+          + '. Mande de novo para trazer ela para cá — o chat de lá para.', true);
+        return;
+      }
       // Uma versao antiga podia guardar aqui o numero da conversa do outro motor. O processo
       // principal se recupera abrindo outra; antes de mandar a fala, esta tela repoe o contexto.
       if (inicio && inicio.nova && P.hist.length && !P.passarContexto) {
@@ -3321,6 +3477,7 @@ function receberEventoPane(ev) {
     // o Claude disse que essa conversa nao existe mais: agora sim o fio se solta
     case 'sessao-sumiu':
       P.sessaoId = null; P.resumeId = null; P.fioSolto = Date.now();
+      zerarContexto(P);         // a conversa velha sumiu: o medidor nao pode continuar com o numero dela
       P.forkPendente = false;   // leva 8.3: fio solto, a intencao de ramificar morre junto
       note(P, 'Esta conversa não existe mais no Claude. A próxima mensagem começa uma nova, levando junto o que já foi dito aqui.', true);
       savePanes();
@@ -3466,13 +3623,15 @@ function escondePerm(P, encerrarTodas = true) {
       $$('.cxq-input, button, input, select, textarea', q.el).forEach(x => { x.disabled = true; });
       const status = $('.cxq-status', q.el); if (status) status.textContent = 'Pedido encerrado.'; }
   }
+  marcarEspera(P);                    // acabou a espera: a bolinha vermelha e a tarja saem juntas
 }
 
 function showApproval(P, ev) {
   const bar = $('.pane-perm', P.el);
   $('.pp-txt', bar).textContent = ev.title + '\n' + (ev.detail || '') + (ev.reason ? '\n' + ev.reason : '');
   bar.classList.remove('hidden');
-  const done = (allow) => { bar.classList.add('hidden'); window.api.approve({ key: ev.key, allow }); };
+  marcarEspera(P);                    // a aba tem de mudar de cara AGORA, mesmo estando no fundo
+  const done = (allow) => { bar.classList.add('hidden'); window.api.approve({ key: ev.key, allow }); marcarEspera(P); };
   $('.pp-yes', bar).onclick = () => done(true);
   $('.pp-no', bar).onclick = () => done(false);
 }
@@ -3659,6 +3818,7 @@ function encerrarPerguntaCodex(P, key, texto = 'Resposta enviada.') {
   q.done = true; q.el.classList.add('encerrada');
   $$('input, select, textarea, button', q.el).forEach(x => { x.disabled = true; });
   $('.cxq-status', q.el).textContent = texto;
+  marcarEspera(P);
 }
 function campoSchemaCodex(schema, nome, obrigatorio) {
   const wrap = document.createElement('div'); wrap.className = 'cxq-campo';
@@ -3739,6 +3899,7 @@ function perguntaCodex(P, ev, historico = false) {
   const estado = { el, done: false, isBlocking: ev.isBlocking !== false,
     persisteEntreTurnos: tipo === 'async' || tipo === 'elicitation' || ev.isBlocking === false };
   P.questions.set(key, estado);
+  marcarEspera(P);                    // pergunta esperando resposta também trava o chat
   const responder = async (action) => {
     if (estado.done) return;
     const answers = Object.create(null), content = Object.create(null);
@@ -4365,6 +4526,7 @@ async function menuModelos(P) {
         if (mudouOrigem) {
           if (P.hist.length) P.passarContexto = montarContexto(P, true, 'troca-de-cobranca');
           P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
+          zerarContexto(P);         // conversa nova: o medidor volta ao zero
           P.forkPendente = false;   // leva 8.3: conversa nova, sem ramo pendente
           note(P, vaiPorCreditos
             ? 'A próxima mensagem usa créditos da API dentro do limite escolhido.'
@@ -4380,6 +4542,7 @@ async function menuModelos(P) {
       await desligarMotor(P);
       if (P.hist.length) P.passarContexto = montarContexto(P, true, 'troca-de-agente');
       P.model = comando.trim(); P.sessaoId = null; P.resumeId = null; P.sessaoFile = '';
+      zerarContexto(P);          // conversa nova: o medidor volta ao zero
       fillModels(P); savePanes();
     }));
     if (['acp', 'grok'].includes(P.engine) && P.acpInfo?.modelos?.length) {
@@ -4565,14 +4728,23 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Contexto', ic: 'file-text', nome: 'Resumir a conversa', desc: 'libera espaço sem perder o fio', act: () => compactarConversa(P) },
     { sec: 'Contexto', ic: 'search', nome: 'Buscar nesta conversa', desc: '⌘F', act: () => abrirBuscaConversa(P) },
     { sec: 'Contexto', ic: 'lock', nome: 'Modo foco', desc: 'esconde os passos, deixa só pergunta e resposta · ⌘⇧F', tag: document.body.classList.contains('foco') ? 'ligado' : '', act: () => alternarFoco() },
-    { sec: 'Contexto', ic: 'plug', nome: 'Puxar a aba aberta do navegador', desc: 'manda o endereço e o título da aba de agora', act: () => puxarAbaDoNavegador(P) },
-    { sec: 'Contexto', ic: 'book', nome: 'Salvar no Obsidian', desc: 'vira nota no vault, na pasta do cliente', act: () => salvarConversaNoVault(P) },
+    /* Estes dois so acontecem no MAC: o navegador que se le e o de la, e o vault mora no disco
+       de la. No telefone o toque nao fazia nada e o app nao dizia por que — entao aqui eles
+       nem aparecem, do mesmo jeito que o "Recortar a tela" ja fazia no menu do +. */
+    ...(window.SEM_ELECTRON ? [] : [
+      { sec: 'Contexto', ic: 'plug', nome: 'Puxar a aba aberta do navegador', desc: 'manda o endereço e o título da aba de agora', act: () => puxarAbaDoNavegador(P) },
+      { sec: 'Contexto', ic: 'book', nome: 'Salvar no Obsidian', desc: 'vira nota no vault, na pasta do cliente', act: () => salvarConversaNoVault(P) },
+    ]),
+    // ditar FICA no telefone: ele grava pelo microfone do proprio celular e o Mac so passa o
+    // texto a limpo (o mesmo caminho da foto e do OCR)
     { sec: 'Contexto', ic: 'mic', nome: 'Ditar', desc: 'falar em vez de digitar · ⌘⇧D', act: () => alternarDitado(P) },
     { sec: 'Chat', ic: 'plus', nome: 'Abrir outro chat nesta aba', act: () => { novoChatNaAba(P.engine); } },
     { sec: 'Chat', ic: 'rotate-cw', nome: 'Reabrir o último chat fechado', desc: '⌘⇧W', act: () => reabrirUltimoFechado() },
     { sec: 'Chat', ic: 'columns-2', nome: 'Perguntar aos dois motores', desc: 'a mesma pergunta no Claude e no Codex · ⌘D', act: () => perguntarAosDois(P) },
     { sec: 'Painel', ic: 'folder-open', nome: 'Trocar a pasta deste painel', tag: nomePasta(P.cwd), act: () => $('.p-cwd', P.el).click() },
-    { sec: 'Painel', ic: 'sliders-horizontal', nome: 'Configurar o Claude', desc: 'memória, agentes, hooks e permissões', act: () => janelaConfiguracao(P) },
+    // a memoria, os agentes e os hooks sao arquivos do MAC: no telefone a janela so abria para
+    // dizer que nao conseguiu ler. Fora da lista, como o "Recortar a tela".
+    ...(window.SEM_ELECTRON ? [] : [{ sec: 'Painel', ic: 'sliders-horizontal', nome: 'Configurar o Claude', desc: 'memória, agentes, hooks e permissões', act: () => janelaConfiguracao(P) }]),
     { sec: 'Painel', ic: 'terminal', nome: 'terminal', desc: 'rodar comandos aqui dentro, sem abrir o Terminal do Mac', act: () => janelaTerminal(P, 'cd ' + JSON.stringify(P.cwd) + ' 2>/dev/null; exec ${SHELL:-/bin/zsh} -l', 'Terminal — ' + nomePasta(P.cwd)) },
     /* Item NOVO, ao lado do terminal de sempre (que continua abrindo aqui no Mac). So aparece
        em painel da VPS. Quem monta a linha do ssh e o main: host e usuario nao saem de la. */
@@ -5092,12 +5264,54 @@ function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
   $('.mo-tit', cx).textContent = titulo || 'Terminal';
   if (op.orientacao) $('.mo-sub', cx).textContent = op.orientacao;
 
+  /* ---- o tamanho de verdade da caixa preta ----
+     O terminal nascia preso em 92 colunas por 22 linhas escritas no codigo, e o programa la
+     dentro acreditava nesse tamanho. Em painel estreito (dois ou tres chats lado a lado) a
+     linha quebrava no lugar errado, e barra de progresso e tabela saiam tortas.
+     Agora a conta sai do tamanho REAL da caixa. A fonte do terminal e monoespacada (toda
+     letra tem a mesma largura), entao basta medir uma regua escondida com a mesma fonte. */
+  const TERM_FONTE = 12, TERM_ENTRELINHA = 1.25;
+  const tela = $('.term-tela', cx);
+  // 'fixed' e so 10 letras de proposito: a regua nao pode empurrar nada nem criar barra de
+  // rolagem na janelinha. Invisivel, mas com caixa — e por isso que da para medir.
+  const regua = document.createElement('span');
+  regua.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;visibility:hidden;'
+    + 'white-space:pre;font:' + TERM_FONTE + 'px/1 ui-monospace, SFMono-Regular, Menlo, monospace';
+  regua.textContent = 'WWWWWWWWWW';
+  cx.appendChild(regua);
+  const medirTerminal = () => {
+    const letra = (regua.getBoundingClientRect().width / 10) || 7.2;
+    const caixa = tela.getBoundingClientRect();
+    // -2 px de folga: melhor sobrar um fio de tela do que o texto ser cortado na direita
+    return {
+      cols: Math.max(20, Math.min(400, Math.floor(((caixa.width || 660) - 2) / letra))),
+      rows: Math.max(6, Math.min(200, Math.floor((caixa.height || 340) / (TERM_FONTE * TERM_ENTRELINHA)))),
+    };
+  };
+  const tam = medirTerminal();
+
   const term = new Terminal({
-    cols: 92, rows: 22, fontSize: 12, lineHeight: 1.25, cursorBlink: true, scrollback: 4000,
+    cols: tam.cols, rows: tam.rows, fontSize: TERM_FONTE, lineHeight: TERM_ENTRELINHA,
+    cursorBlink: true, scrollback: 4000,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
     theme: { background: '#141416', foreground: '#dcdcdc', cursor: '#d8bd8a', selectionBackground: '#ffffff30' },
   });
-  term.open($('.term-tela', cx));
+  term.open(tela);
+
+  /* O painel muda de largura o tempo todo (arrastar o divisor, fechar a barra lateral, girar o
+     iPad) e quem esta rodando la dentro so sabe do tamanho novo se alguem contar. O canal
+     term:resize ja existia no app e nunca era chamado por ninguem. */
+  let medidaAtual = tam.cols + 'x' + tam.rows;
+  const ajustarTerminal = () => {
+    const m = medirTerminal();
+    const chave = m.cols + 'x' + m.rows;
+    if (chave === medidaAtual) return;
+    medidaAtual = chave;
+    try { term.resize(m.cols, m.rows); } catch (_) {}
+    Promise.resolve(window.api.termResize({ id, cols: m.cols, rows: m.rows })).catch(() => {});
+  };
+  const olhoTerminal = new ResizeObserver(ajustarTerminal);
+  olhoTerminal.observe(tela);
   term.onData((d) => window.api.termInput({ id, data: d }));
 
   const elLink = $('.term-link', cx), txtLink = $('.mono', elLink);
@@ -5126,6 +5340,8 @@ function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
   const fechar = () => {
     P.fecharTerminal = null;              // evita voltar aqui pelo fecharModal
     window.api.termKill({ id });
+    try { olhoTerminal.disconnect(); } catch {}
+    try { regua.remove(); } catch {}
     try { term.dispose(); } catch {}
     termsVivos.delete(id);
     cx.className = 'modal-cx';
@@ -5140,7 +5356,7 @@ function janelaTerminal(P, linha, titulo, aoFechar, opcoes) {
   $('#tmFecha', cx).onclick = fechar;
   $('#tmCancela', cx).onclick = () => { window.api.termInput({ id, data: '\x03' }); term.focus(); };
 
-  window.api.termRun({ id, linha, cols: 92, rows: 22 }).then((r) => {
+  window.api.termRun({ id, linha, cols: tam.cols, rows: tam.rows }).then((r) => {
     if (r && r.error) term.write('\r\n\x1b[31m[não consegui rodar: ' + r.error + ']\x1b[0m\r\n');
   });
   setTimeout(() => term.focus(), 60);
@@ -8457,6 +8673,7 @@ async function aplicarWorktree(P, nome) {
   P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
   pararTrabalho(P); limparPassos(P); limparContinuar(P);
   P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null; P.forkPendente = false;
+  zerarContexto(P);          // conversa nova: o medidor volta ao zero
   P.titulo = ''; P.nomeManual = false; P.nomeCurto = false; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.blocks.clear(); P.tools.clear();
   P.started = false; setDot(P, 'off');

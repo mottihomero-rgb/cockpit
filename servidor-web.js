@@ -28,6 +28,9 @@ const PERMITIDOS = new Set([
   'sessao:renomear', 'sessao:nomeCurto', 'sessao:fork',
   'acp:config', 'skills:list', 'prompts:ler', 'prompts:salvar',
   'anexo:ler', 'imagem:salvar', 'ocr:ler',
+  // ditar do celular: ele grava pelo microfone DELE e o Mac so passa o texto a limpo,
+  // igual ao ocr:ler da foto. Sem este nome aqui o audio era gravado e jogado fora.
+  'voz:transcrever',
   'quadro:salvar', 'quadro:rascunhoGravar', 'quadro:rascunhoLer',
   'arquivo:ver', 'arquivo:verVps', 'term:linhaShell',
   'conta:ler', 'uso:ler', 'agentes:claude', 'git:status', 'git:diff',

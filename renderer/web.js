@@ -86,8 +86,9 @@
         }
         terminar([]);
       });
-      /* Cancelar o seletor nao avisa ninguem: sem esta rede a promessa ficaria pendurada pra
-         sempre e o menu do + nunca terminaria. So vale se ele nao escolheu nada. */
+      /* Cancelar o seletor nem sempre avisa: sem estas duas redes a promessa ficaria pendurada
+         pra sempre e o menu do + nunca terminaria. So valem se ele nao escolheu nada. */
+      inp.addEventListener('cancel', () => { if (!escolheu) terminar([]); });
       window.addEventListener('focus', () => setTimeout(() => { if (!escolheu) terminar([]); }, 800), { once: true });
       inp.click();
     });
@@ -239,7 +240,7 @@
     /* leva 12: estas oito a tela chama e aqui nao existiam. Cada uma derrubava o telefone num
        TypeError no meio da tarefa (o app.js e o MESMO arquivo nos dois). As tres de baixo sao
        trabalho de arquivo e de leitura, e o main ja as serve pelo Wi-Fi: vao pelo mesmo cano,
-       quem faz e o Mac. */
+       quem faz e o Mac. As de baixo delas ficam so aqui mesmo. */
     desfazerEdicao: (o) => chamar('arquivo:desfazer', o),
     salvarNoVault: (o) => chamar('vault:salvar', o),
     configClaude: () => chamar('config:claude'),

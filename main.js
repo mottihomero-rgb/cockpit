@@ -768,6 +768,46 @@ function claudeSettingsSemBypass() {
   } catch { return null; }
 }
 
+/* ---------- uma conversa, um dono so ----------
+   O Mac e o iPhone falam com ESTE mesmo processo, e cada tela batiza os paineis de um jeito
+   ("p1" no Mac, "w7k3p1" no telefone) para uma nao desligar o chat da outra. So que o NUMERO
+   da conversa e o mesmo nos dois. Sem esta trava, escrever pelo celular numa conversa ja
+   aberta no Mac subia um SEGUNDO agente no mesmo historico e na mesma pasta: os dois editando
+   arquivo ao mesmo tempo, cada tela vendo so metade. Agora quem chega depois ouve que a
+   conversa ja esta aberta, em vez de subir por cima. */
+const donoDoFio = new Map();   // numero da conversa -> { paneId, engine } que esta com ela
+const insistiuNoFio = new Map();  // painel -> conversa que ele ja tentou abrir uma vez
+
+// painel com motor de pe. E o que separa "aberta agora" de "sobrou de uma janela que fechou".
+const paneVivo = (paneId) => claudePanes.has(paneId) || codex.paneToThread.has(paneId);
+
+// de que tela e o painel: o telefone poe um "w" na frente dos ids (renderer/app.js:11)
+const telaDoPane = (paneId) => (/^w/.test(String(paneId || '')) ? 'celular' : 'Mac');
+
+/* Quem esta com esta conversa, se nao for o proprio painel que pergunta. Dono que ja morreu
+   (janela fechada, motor derrubado) sai do mapa na hora: trava nao pode virar cadeado. */
+function outroDonoDoFio(fio, paneId) {
+  const chave = String(fio || '');
+  const dono = chave ? donoDoFio.get(chave) : null;
+  if (!dono || dono.paneId === paneId) return null;
+  if (!paneVivo(dono.paneId)) { donoDoFio.delete(chave); return null; }
+  return dono;
+}
+
+// o painel larga a conversa que era dele (fechou o chat, trocou de pasta, abriu outra)
+function soltarFio(paneId) {
+  for (const [fio, dono] of donoDoFio) if (dono.paneId === paneId) donoDoFio.delete(fio);
+  insistiuNoFio.delete(paneId);
+}
+
+// guarda quem esta com a conversa; um painel so pode estar em uma por vez
+function marcarDonoDoFio(paneId, fio, engine) {
+  if (!fio) return;
+  const antes = donoDoFio.get(String(fio));
+  soltarFio(paneId);
+  donoDoFio.set(String(fio), { paneId, engine: engine || (antes && antes.engine) || 'claude' });
+}
+
 /* ======================= motor CLAUDE ======================= */
 /* um processo `claude` por painel, protocolo stream-json */
 const claudePanes = new Map();  // paneId -> {proc, buf, blocks}
@@ -1058,6 +1098,8 @@ function claudeMessage(paneId, m) {
     return;
   }
   if (m.type === 'system' && m.subtype === 'init' && m.session_id) {
+    // o numero REAL da conversa so aparece aqui (ao ramificar ele nasce diferente do pedido)
+    marcarDonoDoFio(paneId, m.session_id, 'claude');
     emit(paneId, 'sessao', { id: m.session_id, file: path.join(CLAUDE_PROJ, encodeCwd(claudeCwd.get(paneId) || HOME), m.session_id + '.jsonl') });
     return;
   }
@@ -4279,6 +4321,7 @@ function attachCodexThread(paneId, threadId, response, settings) {
   codexPaneSettings.set(paneId, { ...settings, collaborationMode: previousMode });
   codexPendingSettings.set(paneId, settings);
   codexEffectiveSettings(paneId, response);
+  marcarDonoDoFio(paneId, threadId, 'codex');   // esta conversa passa a ser deste painel
   emit(paneId, 'sessao', { id: threadId, file: response.thread && response.thread.path || '' });
 }
 
@@ -4419,6 +4462,35 @@ handle('sessions:acp', () => {
 
 handle('pane:start', async (_e, data) => {
   const { paneId, engine, cwd, model, approval, resumeId, effort, billing } = data;
+  /* Esta conversa ja esta aberta em outra tela (ou em outro chat)? Entao NAO sobe um segundo
+     agente nela de cara: seriam dois mexendo no mesmo historico e na mesma pasta ao mesmo
+     tempo, os dois sem pedir permissao.
+     A primeira tentativa e recusada com o recado. Se ele MANDAR DE NOVO, e porque quer mesmo:
+     o agente do outro lado e desligado de verdade e a conversa passa para ca. Avisar uma vez e
+     obedecer na segunda evita o outro extremo — ficar preso sem conseguir escrever, que e o que
+     aconteceria quando o dono fosse um processo esquecido de uma janela recarregada.
+     Ramificar e a excecao, de proposito: o --fork-session abre uma conversa NOVA levando o
+     historico junto, sem escrever dentro da de origem. */
+  const donoAtual = data.fork ? null : outroDonoDoFio(resumeId, paneId);
+  if (donoAtual && insistiuNoFio.get(paneId) !== String(resumeId)) {
+    insistiuNoFio.set(paneId, String(resumeId));
+    const onde = telaDoPane(donoAtual.paneId) === telaDoPane(paneId)
+      ? 'em outro chat desta tela'
+      : 'no ' + telaDoPane(donoAtual.paneId);
+    return { jaAberta: true, onde, error: 'Esta conversa já está aberta ' + onde + '.' };
+  }
+  if (donoAtual) {
+    // ele mandou de novo: a conversa muda de dono e o agente que estava nela para de verdade
+    try { await HANDLERS['pane:stop'](null, { paneId: donoAtual.paneId, engine: donoAtual.engine }); }
+    catch (e) { anota('nao consegui desligar o dono anterior da conversa:', e && e.message); }
+    emit(donoAtual.paneId, 'note', { text: 'Esta conversa foi aberta ' + (telaDoPane(paneId) === 'Mac' ? 'no Mac' : 'no celular') + ' e passou para lá. Este chat parou.', error: true });
+  }
+  insistiuNoFio.delete(paneId);
+  /* Daqui pra frente a conversa e deste painel. Se o motor nao subir, o paneVivo solta sozinho.
+     No RAMO nao: la o resumeId e a conversa de ORIGEM, que continua sendo de quem a abriu —
+     marcar aqui roubaria o dono dela e deixaria a de origem sem protecao nenhuma. O numero do
+     ramo, que nasce novo, ganha dono quando o motor o anuncia. */
+  if (!data.fork) marcarDonoDoFio(paneId, resumeId, engine);
   if (engine === 'gemini') {
     try { return cli.start(paneId, { cwd, model, approval, resumeId }); }
     catch (e) { emit(paneId, 'note', { text: e.message, error: true }); return false; }
@@ -4605,6 +4677,7 @@ handle('pane:interrupt', async (_e, { paneId, engine }) => {
 });
 
 handle('pane:stop', async (_e, { paneId, engine }) => {
+  soltarFio(paneId);   // parou: a conversa fica livre para a outra tela abrir
   if (engine === 'gemini') { cli.parar(paneId); return true; }
   // ramo NOVO na frente: mata o processo do agente e devolve o "cancelled" a quem esperava
   if (motorAcp(engine)) { descartarPermissoesAcp(paneId); acp.parar(paneId); return true; }

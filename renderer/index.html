@@ -291,6 +291,8 @@
         <button class="ch-lado" data-motor="grok"><span></span>Grok</button>
       </div>
       <div class="hd-lado hd-dir">
+      <!-- medidor de contexto: existia so no molde do celular e a tela do Mac ficava sem ele -->
+      <span class="p-tokens" title="Tamanho da conversa agora, comparado ao que cabe neste modelo"></span>
       <span class="p-dot dot off"></span>
       <button class="p-close" title="Fechar este chat (⌘W)"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></svg></button>
       </div>
@@ -324,6 +326,14 @@
         <button class="cb p-slash" title="Ações e comandos">/</button>
         <button class="cb p-modoenvio" title="O que fazer se ele já estiver trabalhando"></button>
         <button class="cb p-plano hidden" aria-pressed="false" title="Planejar antes de executar"></button>
+        <!-- o anel que enche conforme a conversa cresce; clicar resume e libera espaço -->
+        <button class="p-compactar hidden" title="Resumir a conversa para liberar espaço">
+          <svg class="an" viewBox="0 0 36 36">
+            <circle class="an-fundo" cx="18" cy="18" r="15"></circle>
+            <circle class="an-fio" cx="18" cy="18" r="15"></circle>
+          </svg>
+          <span class="cp-txt"></span>
+        </button>
         <!-- a pasta do chat mora aqui como ícone; o nome aparece ao passar o mouse -->
         <button class="cb p-cwd" title="Trocar pasta deste painel"></button>
         <span class="cmp-gap"></span>
