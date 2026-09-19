@@ -1,0 +1,245 @@
+'use strict';
+/* Os quatro avisos que o app JA SABIA e nao mostrava:
+   1. chat travado esperando ELE ficava igual a um chat parado (o ponto do painel);
+   2. robo agendado que parou so aparecia se ele lembrasse de abrir a coluna de Rotinas;
+   3. motor que nao esta instalado aparecia igual aos outros tres, e so falhava depois;
+   4. o limite do plano so nascia na tela em 90% de sessao — abaixo disso, nada.
+   Estes testes travam os quatro. */
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const raiz = path.resolve(__dirname, '..');
+const app = fs.readFileSync(path.join(raiz, 'renderer/app.js'), 'utf8');
+const html = fs.readFileSync(path.join(raiz, 'renderer/index.html'), 'utf8');
+const css = fs.readFileSync(path.join(raiz, 'renderer/style.css'), 'utf8');
+
+/* Recorta uma funcao inteira do app.js contando chaves. Recortar e o jeito da casa
+   (ver medidor-contexto.test.cjs): o app.js e da tela, nao da para carregar aqui. */
+function pegar(nome) {
+  const i = app.indexOf('function ' + nome + '(');
+  assert.ok(i > 0, 'a funcao ' + nome + ' tem de existir no app.js');
+  let n = 0;
+  for (let k = app.indexOf('{', i); k < app.length; k++) {
+    if (app[k] === '{') n++;
+    else if (app[k] === '}' && --n === 0) return app.slice(i, k + 1);
+  }
+  throw new Error('nao achei o fim de ' + nome);
+}
+const linha = (comeco) => {
+  const l = app.split('\n').find((x) => x.startsWith(comeco));
+  assert.ok(l, 'nao achei a linha que comeca com ' + comeco);
+  return l;
+};
+
+/* ---------- 1. o ponto do painel tem de ficar vermelho quando ele e o gargalo ---------- */
+test('ponto do chat fica vermelho e parado quando o chat espera ELE', () => {
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext('function $(sel, el){ return el.achados[sel] || null; }\n'
+    + 'function estadoDoPainel(P){ return { cls: P.finge }; }\n'
+    + pegar('pintarPonto') + '\nthis.pintarPonto = pintarPonto;', ctx);
+
+  const pt = { className: '' };
+  const P = { el: { achados: { '.p-dot': pt } }, dotEstado: 'busy', finge: 'espera' };
+  ctx.pintarPonto(P);
+  assert.equal(pt.className, 'p-dot dot espera', 'espera ganha ate de quem esta trabalhando');
+
+  P.finge = 'ocupado';
+  ctx.pintarPonto(P);
+  assert.equal(pt.className, 'p-dot dot busy', 'acabou a espera: volta ao estado do motor');
+
+  P.dotEstado = null; P.finge = 'vazio';
+  ctx.pintarPonto(P);
+  assert.equal(pt.className, 'p-dot dot off', 'sem estado nenhum o ponto fica apagado');
+});
+
+test('quem liga e desliga a espera tem de repintar o ponto do painel', () => {
+  const m = pegar('marcarEspera');
+  assert.ok(/pintarPonto\(P\)/.test(m), 'sem isto o ponto do chat fica mentindo');
+  assert.ok(/pintarAba\(A\)/.test(m), 'a bolinha da aba continua sendo repintada');
+  // a regra vermelha existe no CSS e o app.js TEM de usar: era o defeito original
+  assert.ok(/\.dot\.espera\{background:var\(--red\)\}/.test(css), 'a regra .dot.espera saiu do CSS');
+  assert.ok(app.includes("'p-dot dot ' + (espera ? 'espera'"), 'o ponto do painel parou de usar a espera');
+});
+
+/* ---------- 2. selo de rotina parada no icone, sem precisar abrir a coluna ---------- */
+function montarRotinas() {
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(`
+    var avisos = [];
+    var rotinasCache = { itens: [] };
+    var rotinasFalhasVistas = null;
+    var selo = { textContent: '', escondido: true, classList: { toggle: (c, on) => { selo.escondido = on; } } };
+    var botao = { title: '' };
+    function $(sel, dentro){ return sel === '.act-selo' ? selo : botao; }
+    function mostrarAviso(o){ avisos.push(o); }
+    function abrirRotinas(){}
+    ${linha('const nomeCurtoDaRotina')}
+    ${pegar('avisarRotinaNova')}
+    ${pegar('pintarSeloRotinas')}
+    this.pintar = (itens) => { rotinasCache.itens = itens; pintarSeloRotinas(); };
+    this.selo = selo; this.botao = botao; this.avisos = avisos;
+  `, ctx);
+  return ctx;
+}
+
+test('o icone de Rotinas ganha o numero de robos DELE que pararam', () => {
+  const c = montarRotinas();
+  c.pintar([{ nome: 'com.homero.espelho', dele: true, falhou: true },
+    { nome: 'com.homero.radar', dele: true, falhou: false },
+    { nome: 'com.apple.qualquer', dele: false, falhou: true }]);
+  assert.equal(c.selo.textContent, '1', 'robo do sistema nao conta, e o que esta em dia tambem nao');
+  assert.equal(c.selo.escondido, false);
+  assert.equal(c.botao.title, 'Rotinas · 1 parada');
+
+  c.pintar([{ nome: 'com.homero.espelho', dele: true, falhou: false }]);
+  assert.equal(c.selo.escondido, true, 'robo voltou: o selo some');
+  assert.ok(!/·/.test(c.botao.title), 'sem falha o titulo volta ao normal');
+});
+
+test('so a falha NOVA vira tarja; a primeira leitura nunca vira parede de tarjas', () => {
+  const c = montarRotinas();
+  // 1a leitura do app: ja tem duas paradas, mas isso e passado — nao avisa nada
+  c.pintar([{ nome: 'com.homero.a', dele: true, falhou: true },
+    { nome: 'com.homero.b', dele: true, falhou: true }]);
+  assert.equal(c.avisos.length, 0, 'abrir o Cockpit nao pode virar parede de tarja velha');
+
+  // 2a leitura, mesma situacao: nada de novo
+  c.pintar([{ nome: 'com.homero.a', dele: true, falhou: true },
+    { nome: 'com.homero.b', dele: true, falhou: true }]);
+  assert.equal(c.avisos.length, 0, 'falha repetida nao repete tarja');
+
+  // agora um robo NOVO caiu
+  c.pintar([{ nome: 'com.homero.a', dele: true, falhou: true },
+    { nome: 'com.homero.b', dele: true, falhou: true },
+    { nome: 'com.adsure.wa', dele: true, falhou: true }]);
+  assert.equal(c.avisos.length, 1);
+  assert.equal(c.avisos[0].texto, 'Rotina parada · wa', 'so rotulo e nome, sem o prefixo comum');
+  assert.equal(c.avisos[0].acao, 'ver');
+});
+
+test('leitura que nao trouxe lista nenhuma nao mexe no que ja foi visto', () => {
+  const c = montarRotinas();
+  c.pintar([]);                       // launchd nao respondeu ainda
+  assert.equal(c.selo.escondido, true);
+  c.pintar([{ nome: 'com.homero.a', dele: true, falhou: true }]);
+  assert.equal(c.avisos.length, 0, 'a 1a lista boa e o ponto de partida, nao um alarme');
+  assert.equal(c.selo.textContent, '1', 'mas o selo aparece na hora');
+});
+
+test('o Mac e lido de 5 em 5 minutos mesmo com a coluna de Rotinas fechada', () => {
+  assert.ok(/if \(!rotinasVisivel\(\)\) pintarRotinas\(true\);\s*\}, 300000\)/.test(app),
+    'sem esta leitura de fundo o selo so existiria para quem ja abriu a coluna');
+  // o selo tem de ser pintado ANTES do return que corta a coluna fechada
+  const f = pegar('pintarRotinas');
+  const iSelo = f.indexOf('pintarSeloRotinas()');
+  const iSai = f.indexOf('if (!rotinasVisivel()) return;');
+  assert.ok(iSelo > 0 && iSai > iSelo, 'o selo tem de ser pintado antes de a funcao desistir');
+});
+
+/* ---------- 3. motor que nao esta instalado neste Mac ---------- */
+function montarMotores() {
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(`
+    var MOTORES_OK = null;
+    function NA_VPS(c){ return String(c || '').startsWith('vps:'); }
+    const nomeDoMotor = (e) => ({ claude:'Claude', codex:'Codex', gemini:'Gemini', grok:'Grok' }[e] || e);
+    ${pegar('motorIndisponivelNaPasta')}
+    this.motivo = motorIndisponivelNaPasta;
+    this.radar = (m) => { MOTORES_OK = m; };
+  `, ctx);
+  return ctx;
+}
+
+test('motor que falta neste Mac diz o motivo ANTES de criar o chat', () => {
+  const c = montarMotores();
+  assert.equal(c.motivo('grok', '/Users/homeromotti'), '', 'radar mudo ainda: nao acusa ninguem');
+  c.radar({ claude: true, codex: true, gemini: true, grok: false });
+  assert.equal(c.motivo('grok', '/Users/homeromotti'), 'Grok não está instalado neste Mac.');
+  assert.equal(c.motivo('gemini', '/Users/homeromotti'), '', 'instalado continua liberado');
+  assert.equal(c.motivo('grok', 'vps:/opt/adsure'), '',
+    'na VPS quem roda e o motor DE LA: o que falta no Mac nao vem ao caso');
+});
+
+test('Claude e Codex nunca sao apagados por leitura de PATH', () => {
+  const c = montarMotores();
+  c.radar({ claude: false, codex: false, gemini: true, grok: true });
+  assert.equal(c.motivo('claude', '/Users/homeromotti'), '');
+  assert.equal(c.motivo('codex', '/Users/homeromotti'), '',
+    'apagar a base por um PATH estranho deixaria o app sem nenhum chat');
+});
+
+test('o Gemini na VPS continua com o recado de sempre', () => {
+  const c = montarMotores();
+  c.radar({ gemini: true, grok: true });
+  assert.ok(/pasta do Mac/.test(c.motivo('gemini', 'vps:/opt')), 'o aviso antigo nao pode ter sumido');
+});
+
+test('a chave de motores e a tela Nova aba marcam o indisponivel como apagado', () => {
+  assert.ok(/\.ch-lado\.apagado\{opacity:/.test(css), 'falta o estilo apagado na chave do cabecalho');
+  assert.ok(/\.na-motor\.apagado\{opacity:/.test(css), 'falta o estilo apagado na tela Nova aba');
+  assert.ok(/b\.classList\.toggle\('apagado', !!naoDa\)/.test(app), 'ninguem esta marcando os botoes');
+  assert.equal((app.match(/b\.classList\.toggle\('apagado', !!naoDa\)/g) || []).length, 2,
+    'tem de ser nos DOIS lugares: a chave do chat e a tela Nova aba');
+  // o radar chega depois dos paineis: sem repintar, o motor que falta segue com cara de bom
+  assert.ok(/MOTORES_OK = m \|\| null;[\s\S]{0,400}for \(const P of panes\.values\(\)\) paintEngine\(P\);/.test(app),
+    'o radar tem de repintar os paineis quando a resposta chega');
+});
+
+/* ---------- 4. o limite do plano, com folga ---------- */
+test('o numero do plano aparece no rodape muito antes do alarme', () => {
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(`
+    var USO = { claude: null };
+    const usoPct = (j) => j ? Math.min(100, Math.max(0, Math.round(j.pct || 0))) : null;
+    const nomeDoMotor = () => 'Claude';
+    var campo = { textContent: null, title: null };
+    function $(sel, el){ return sel === '.p-limite' ? campo : null; }
+    ${pegar('pintarLimiteMini')}
+    this.pintar = (u) => { USO.claude = u; pintarLimiteMini({ engine: 'claude', el: {} }); };
+    this.campo = campo;
+  `, ctx);
+
+  ctx.pintar({ sessao: { pct: 42 }, semana: { pct: 18 } });
+  assert.equal(ctx.campo.textContent, 'sessão 42% · semana 18%', 'so rotulo e numero, sem frase');
+
+  // plano sem janela de sessao (Codex Pro): nao inventa um "—"
+  ctx.pintar({ sessao: null, semana: { pct: 7 } });
+  assert.equal(ctx.campo.textContent, 'semana 7%');
+
+  // leitura falhou: o rodape fica limpo em vez de mostrar numero velho sem aviso
+  ctx.pintar(null);
+  assert.equal(ctx.campo.textContent, '');
+  assert.equal(ctx.campo.title, '');
+});
+
+test('a tarja de alarme dos 90% continua como era', () => {
+  assert.ok(/const USO_AVISO_SESSAO = 90;/.test(app));
+  assert.ok(/const USO_AVISO_SEMANA = 50;/.test(app));
+  // o numero pequeno e pintado ANTES de qualquer desistencia da tarja
+  const f = pegar('pintarUso');
+  assert.ok(f.indexOf('pintarLimiteMini(P)') < f.indexOf("if (!faixa) return;"),
+    'o rodape nao pode depender da tarja de alarme para existir');
+});
+
+/* ---------- o molde da tela e as tres cores ---------- */
+test('a tela do Mac tem o selo do icone e o numero do plano', () => {
+  assert.ok(/data-view="rotinas"[\s\S]{0,300}act-selo/.test(html), 'o selo tem de morar no botao de Rotinas');
+  assert.ok(/<span class="p-limite"><\/span>\s*\n\s*<button class="p-model"/.test(html),
+    'o numero do plano fica ao lado do botao do modelo');
+});
+
+test('nenhuma cor nova escrita na mao: tudo sai de variavel de tema', () => {
+  for (const regra of ['.act-selo{', '.p-limite{', '.ch-lado.apagado{']) {
+    const i = css.indexOf(regra);
+    assert.ok(i > 0, 'falta a regra ' + regra);
+    const bloco = css.slice(i, css.indexOf('}', i));
+    assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(bloco), regra + ' tem cor escrita na mao: quebra os 3 temas');
+  }
+});

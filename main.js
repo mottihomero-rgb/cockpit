@@ -112,23 +112,56 @@ function loadConfig() {
 /* Rede contra perder aba sem perceber: quando a gravacao nova traz MENOS abas do que a
    anterior, guarda o retrato de antes como config.json.anterior. Se uma restauracao falhar no
    meio (ou qualquer outra coisa comer abas), da pra voltar.
+   So guardar a copia nao adiantava: o log tinha 108 perdas em poucos dias e ele perdia as abas
+   do mesmo jeito. Agora a perda e BARRADA. Quem grava diz de onde a gravacao veio: a tela so
+   marca `origem.fechou` quando o dono fechou a aba com as proprias maos (o X da aba, o ⌘W no
+   ultimo chat dela, ou arrastar o ultimo chat pra outra aba). Gravacao sem essa marca —
+   boot, restauracao que falhou no meio, retrato velho da tela — nao pode mais comer aba:
+   as que faltam voltam pro que vai ao disco e a tela recebe o recado.
+   COMO A ABA E RECONHECIDA: pelo numero das conversas que estao dentro dela (`sessao`), nunca
+   pela pasta. A pasta muda sozinha — quando o app agrupa por cliente, `Projetos-claude/X/demanda`
+   vira `Projetos-claude/X` — e casar por pasta fazia a trava nao reconhecer as abas e devolver
+   copia de todas, virando aba repetida. Numero de conversa nao muda. Aba nova, ainda sem
+   conversa nenhuma, cai no criterio antigo da pasta.
    A contagem fica na MEMORIA de proposito: reler e reinterpretar o arquivo de 2,2 MB a cada
    gravacao — e o savePanes grava a cada chat aberto, fechado ou redimensionado — custaria
-   mais caro do que o problema que estamos evitando. */
+   mais caro do que o problema que estamos evitando. So o caminho da perda (raro) le o disco. */
 let abasNoDisco = -1;
-function saveConfig(cfg) {
-  const nAgora = Array.isArray(cfg && cfg.abas) ? cfg.abas.length : 0;
-  if (abasNoDisco < 0) {
-    const d = loadConfig();
-    abasNoDisco = Array.isArray(d && d.abas) ? d.abas.length : 0;
-  }
+const listaDeAbas = (d) => (Array.isArray(d && d.abas) ? d.abas : []);
+function saveConfig(cfg, origem) {
+  const nAgora = listaDeAbas(cfg).length;
+  if (abasNoDisco < 0) abasNoDisco = listaDeAbas(loadConfig()).length;
+  let aGravar = cfg, devolvidas = 0;
   if (abasNoDisco > 0 && nAgora < abasNoDisco) {
-    try {
-      fs.copyFileSync(CONFIG_PATH(), CONFIG_PATH() + '.anterior');
-      anota('abas caindo de ' + abasNoDisco + ' para ' + nAgora + ': guardei config.json.anterior');
-    } catch {}
+    // a rede de seguranca continua: o retrato de antes fica guardado nos dois casos
+    try { fs.copyFileSync(CONFIG_PATH(), CONFIG_PATH() + '.anterior'); } catch {}
+    if (origem && origem.fechou) {
+      anota('abas caindo de ' + abasNoDisco + ' para ' + nAgora + ' (ele fechou): guardei config.json.anterior');
+    } else {
+      // numeros de conversa que o retrato novo trouxe, de todas as abas juntas
+      const idsDaAba = (a) => (Array.isArray(a && a.chats) ? a.chats : [])
+        .map(c => String((c && (c.sessao || c.arquivo)) || '')).filter(Boolean);
+      const tenhoIds = new Set(listaDeAbas(cfg).flatMap(idsDaAba));
+      const tenhoPastas = new Set(listaDeAbas(cfg).map(a => String((a && a.cwd) || '')));
+      const sumiu = (a) => {
+        const ids = idsDaAba(a);
+        // aba com conversa: so sumiu se NENHUMA das conversas dela aparece no retrato novo
+        if (ids.length) return !ids.some(id => tenhoIds.has(id));
+        // aba vazia (sem conversa ainda): so resta comparar a pasta
+        return !tenhoPastas.has(String((a && a.cwd) || ''));
+      };
+      const faltando = listaDeAbas(loadConfig()).filter(sumiu);
+      if (faltando.length) {
+        // as abas que sumiram do retrato voltam no fim da fila: assim o numero de cada aba
+        // que VEIO no retrato nao muda e o cfg.abaAberta continua apontando pra aba certa
+        aGravar = { ...cfg, abas: listaDeAbas(cfg).concat(faltando) };
+        devolvidas = faltando.length;
+        anota('barrei perda de aba: o retrato trazia ' + nAgora + ', devolvi ' + devolvidas + ' do disco');
+      }
+    }
   }
-  if (gravarSeguro(CONFIG_PATH(), JSON.stringify(cfg, null, 2))) abasNoDisco = nAgora;
+  if (gravarSeguro(CONFIG_PATH(), JSON.stringify(aGravar, null, 2))) abasNoDisco = listaDeAbas(aGravar).length;
+  return devolvidas;
 }
 
 // app GUI nao herda o PATH do shell: monta um PATH completo (ver plataforma.js)
@@ -3958,7 +3991,7 @@ function lerChavesDoMain() {
 }
 function anotarChaveDoMain(k, v) { lerChavesDoMain(); chavesDoMain[k] = v; }
 
-handle('config:set', (_e, c) => {
+handle('config:set', (_e, c, origem) => {
   /* o celular nao grava config. Ele trabalha com um retrato antigo da tela, e gravar por
      cima ja apagou as abas do Mac uma vez. O lado do celular ja nao pede mais, mas a trava
      tem de estar AQUI: uma aba velha do Safari em cache continuava conseguindo gravar.
@@ -3970,8 +4003,10 @@ handle('config:set', (_e, c) => {
     if (Object.prototype.hasOwnProperty.call(donas, k)) novo[k] = donas[k];
     else delete novo[k];
   }
-  saveConfig(novo);
-  return true;
+  /* `origem` so vem de dentro do Mac (o preload passa). Sem ela, uma gravacao que perde aba
+     e barrada. O numero de abas devolvidas volta pra tela poder dar o recado. */
+  const devolvidas = saveConfig(novo, origem);
+  return { ok: true, abasDevolvidas: devolvidas };
 });
 handle('sys:home', () => HOME);
 
@@ -5404,12 +5439,12 @@ function menu() {
       { label: 'Fechar chat', accelerator: 'CmdOrCtrl+W', click: () => win && win.webContents.send('menu', 'closePane') },
       { label: 'Reabrir o último chat fechado', accelerator: 'CmdOrCtrl+Shift+W', click: () => win && win.webContents.send('menu', 'reabrirFechado') },
       { type: 'separator' },
-      { label: 'Trocar a pasta desta aba…', accelerator: 'CmdOrCtrl+O', click: () => win && win.webContents.send('menu', 'pickFolder') },
-      { label: 'Limpar conversa', accelerator: 'CmdOrCtrl+K', click: () => win && win.webContents.send('menu', 'clearPane') },
+      { label: 'Trocar a pasta deste chat…', accelerator: 'CmdOrCtrl+O', click: () => win && win.webContents.send('menu', 'pickFolder') },
+      { label: 'Limpar a tela (a conversa continua)', accelerator: 'CmdOrCtrl+K', click: () => win && win.webContents.send('menu', 'clearPane') },
       { type: 'separator' },
       { label: 'Buscar nesta conversa', accelerator: 'CmdOrCtrl+F', click: () => win && win.webContents.send('menu', 'buscarNaConversa') },
       { label: 'Buscar conversa…', accelerator: 'CmdOrCtrl+P', click: () => win && win.webContents.send('menu', 'buscarConversa') },
-      { label: 'Perguntar aos dois motores', accelerator: 'CmdOrCtrl+D', click: () => win && win.webContents.send('menu', 'perguntarAosDois') },
+      { label: 'Perguntar aos outros motores', accelerator: 'CmdOrCtrl+D', click: () => win && win.webContents.send('menu', 'perguntarAosDois') },
       { label: 'Ditar (segure para falar)', accelerator: 'CmdOrCtrl+Shift+D', click: () => win && win.webContents.send('menu', 'ditar') },
       { label: 'Desenhar um fluxo (quadro branco)', accelerator: 'CmdOrCtrl+Shift+E', click: () => win && win.webContents.send('menu', 'quadro') },
       { type: 'separator' },

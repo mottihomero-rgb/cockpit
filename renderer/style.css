@@ -96,6 +96,15 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
    antes usava var(--accent), que so existe dentro do .pane: fora dele caia no azul do Codex,
    entao o Claude seleccionado aparecia marcado de azul. */
 .act.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:currentColor;border-radius:0 2px 2px 0}
+/* Selo no icone da barra: quantos robos agendados DELE pararam. Existe para o aviso chegar
+   sem ele precisar abrir a coluna de Rotinas — que era o defeito: o painel feito para avisar
+   que um robo morreu so avisava quem ja tinha ido olhar. So rotulo e numero, sem frase. */
+.act-selo{position:absolute;top:4px;right:5px;min-width:14px;height:14px;padding:0 3px;
+  box-sizing:border-box;border-radius:7px;background:var(--red);color:var(--sobre-accent);
+  font:700 9px/14px var(--sans);text-align:center;opacity:1}
+/* o icone inteiro vive a 55% de opacidade, e isso apagaria justo o selo vermelho: com
+   robo parado o icone acende por inteiro — o aceso ja e parte do aviso. */
+.act:has(.act-selo:not(.hidden)){opacity:1}
 
 #sidebar{width:230px;flex:none;background:var(--bg2);display:flex;flex-direction:column;overflow:hidden}
 .side-view{display:flex;flex-direction:column;height:100%;overflow:hidden}
@@ -866,6 +875,13 @@ textarea.cxq-input{min-height:62px;resize:vertical}
 .hist-item.com-trecho{display:block;position:relative;padding-right:52px}
 .hist-item.com-trecho .hi-t{display:block}
 .hist-item.com-trecho .hi-w{float:right;margin-left:8px}
+/* etiqueta "Codex · Pedro" do resultado de busca: a busca olha os quatro motores e
+   todas as pastas, entao cada linha diz de onde veio. LINHA PROPRIA, embaixo do titulo:
+   ao lado dele a etiqueta comia a coluna (medido: 230px de coluna, sobravam 20px pro
+   titulo e aparecia uma letra so) — e o titulo e justamente o que ele esta procurando.
+   Mesmo tamanho e mesma cor do "ha 2 dias" — cor por variavel, serve nos tres temas. */
+.hi-onde{display:block;font-size:9.5px;color:var(--fg-fraco);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hist-item.com-trecho .hi-fav,
 .hist-item.com-trecho .hi-edit{position:absolute;top:5px}
 .hist-item.com-trecho .hi-fav{right:29px}
@@ -1056,6 +1072,10 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 .ch-lado[aria-pressed="true"]{color:var(--sobre-accent);background:var(--accent)}
 .ch-lado[aria-pressed="true"] span{opacity:1}
 .ch-lado:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* motor que nao esta instalado neste Mac: apagado, igual ao .na-motor.apagado da tela
+   "Nova aba". Antes aparecia identico aos outros tres e so falhava depois do chat criado. */
+.ch-lado.apagado{opacity:.35;cursor:not-allowed}
+.ch-lado.apagado:hover{background:transparent;color:var(--fg-fraco)}
 .pane-hd .p-git{max-width:110px}
 /* As logos ficam no meio: os dois lados crescem por igual, então o centro é o centro de verdade. */
 .hd-lado{flex:1 1 0;min-width:0;display:flex;align-items:center;gap:6px}
@@ -1087,6 +1107,12 @@ html[data-tema="jornal"] .pane.eng-acp{--accent:#2aa198}
 #panes.multi .p-modoenvio{width:26px;padding:0;justify-content:center;gap:0}
 #panes.multi .p-model{width:26px;height:24px;padding:0;justify-content:center;gap:0;max-width:26px}
 #panes.multi .modo-btn{width:26px;height:24px;padding:0;justify-content:center;gap:0}
+#panes.multi .p-limite{display:none}
+/* quanto do plano ja foi usado, no rodape do painel: so rotulo e numero, sem cor e sem frase.
+   Ele planejava o dia sem saber se dava pra comecar tarefa grande — abaixo de 90% a tela nao
+   mostrava nada, e o numero ja estava pronto na memoria o tempo todo. A tarja de alarme dos
+   90% continua igual; esta linha e o aviso COM FOLGA. */
+.p-limite{color:var(--fg-fraco);font-size:10.5px;white-space:nowrap;flex:none}
 
 /* ---------- aviso de limite do plano, grudado no topo da caixa de texto ---------- */
 .p-uso{display:flex;align-items:center;gap:5px;font-size:10.5px;line-height:1.3;
@@ -1293,9 +1319,14 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
   .na-caminho{font-size:16px;padding:9px 12px}
 }
 .na-atalhos{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+/* a fileira do lado do Mac fica ENTRE o rotulo e o botao de escolher a pasta: precisa de
+   respiro embaixo, senao ela encosta no botao */
+#naAtalhosMac{margin-top:0;margin-bottom:8px}
 .na-atalho{padding:4px 9px;border-radius:20px;background:var(--bg3);border:1px solid var(--line);
   font:10.5px var(--mono);color:var(--fg-dim)}
 .na-atalho:hover{background:var(--bg4);color:var(--fg-strong);border-color:var(--accent)}
+/* a pasta escolhida fica acesa na fileira, como o motor escolhido em cima */
+.na-atalho.on{background:var(--bg4);color:var(--fg-strong);border-color:var(--accent);font-weight:600}
 
 /* aba de projeto que vive na VPS */
 .aba.vps{--aba-cor:var(--green)}
@@ -1582,6 +1613,29 @@ body.arrastando-aba,body.arrastando-aba *{cursor:grabbing !important}
 .hist-item.com-trecho .hi-grupo{right:29px}
 .hist-item.com-trecho .hi-edit{right:52px}
 .hist-item.com-trecho .hi-fav{right:75px}
+/* O resultado de busca SEM trecho vira display:block pelo mesmo motivo daqui de cima: a
+   etiqueta "Codex · Pedro" ganhou uma linha propria embaixo do titulo, e linha propria so
+   existe fora do flex. Mesmos numeros das regras acima: 98px de folga e os quatro botoes
+   ancorados no canto direito. Com trecho as duas marcas convivem e dao no mesmo. */
+.hist-item.com-onde{display:block;position:relative;padding-right:0}
+/* a folga dos quatro botoes vale so na LINHA DO TITULO, que e onde eles ficam ancorados (no
+   alto). No item inteiro ela estreitava tambem a etiqueta e o trecho, que passam por baixo
+   deles sem esbarrar — e a etiqueta ficava em "Codex · Pe…". */
+.hist-item.com-onde .hi-t{display:block;padding-right:98px}
+/* o "ha 2 dias" desce pro canto de baixo: em cima ele comia 53px da linha do titulo e o
+   pedaco marcado em laranja (a palavra procurada) ficava fora da tela. Os 52px de folga
+   embaixo sao o lugar dele. */
+.hist-item.com-onde .hi-w{position:absolute;right:6px;bottom:4px;float:none;margin:0}
+.hist-item.com-onde .hi-onde,
+.hist-item.com-onde .hi-trecho{padding-right:52px}
+.hist-item.com-onde .hi-fav,
+.hist-item.com-onde .hi-edit,
+.hist-item.com-onde .hi-grupo,
+.hist-item.com-onde .hi-mais{position:absolute;top:5px}
+.hist-item.com-onde .hi-mais{right:6px}
+.hist-item.com-onde .hi-grupo{right:29px}
+.hist-item.com-onde .hi-edit{right:52px}
+.hist-item.com-onde .hi-fav{right:75px}
 
 /* faixa de grupos, acima da lista de conversas */
 .grp-abas{display:flex;flex-wrap:wrap;gap:3px;padding:0 8px 6px}

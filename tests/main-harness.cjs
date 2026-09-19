@@ -129,7 +129,9 @@ function loadMain() {
   return {
     HOME, files, ipc, events, wire, spawned, timers, violations, appEvents,
     attachCodex, evaluate,
-    call(name, args, event = null) { if (!ipc.has(name)) throw new Error('Handler ausente: ' + name); return ipc.get(name)(event, args); },
+    // `resto` leva os argumentos extras de um handler que recebe mais de um (ex.: o
+    // config:set, que alem do config recebe a ORIGEM da gravacao)
+    call(name, args, event = null, ...resto) { if (!ipc.has(name)) throw new Error('Handler ausente: ' + name); return ipc.get(name)(event, args, ...resto); },
     incoming(destino, message) { return ctx.__replyTransport(destino, message); },
     notify(method, params, destino = 'local') { return ctx.__replyTransport(destino, { method, params }); },
     paneEvents(kind) { return events.filter(e => e.canal === 'pane:event').map(e => e.dados).filter(e => !kind || e.kind === kind); },

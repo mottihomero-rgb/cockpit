@@ -2,7 +2,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   getConfig: () => ipcRenderer.invoke('config:get'),
-  setConfig: (c) => ipcRenderer.invoke('config:set', c),
+  // `origem` diz de onde veio a gravacao. So o fechar de aba feito por ele manda
+  // { fechou: true }; sem isso o Mac nao deixa a gravacao diminuir a lista de abas.
+  setConfig: (c, origem) => ipcRenderer.invoke('config:set', c, origem),
   home: () => ipcRenderer.invoke('sys:home'),
 
   pickFolder: (start) => ipcRenderer.invoke('dialog:pickFolder', start),

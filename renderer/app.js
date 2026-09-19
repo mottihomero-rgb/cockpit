@@ -347,6 +347,7 @@ function avisarQuemEspera() {
 function marcarEspera(P) {
   const A = P && abaDe(P);
   if (A) pintarAba(A);
+  pintarPonto(P);          // o ponto do próprio chat muda junto com a bolinha da aba
   avisarQuemEspera();
 }
 
@@ -422,7 +423,7 @@ async function fecharAba(A) {
   const resto = [...abas.values()];
   if (!resto.length) { abaAtiva = null; telaNovaAba(true); }
   else ativarAbaProjeto(resto[Math.max(0, i - 1)] || resto[0]);
-  savePanes();
+  savePanes(true);   // foi ELE que fechou: esta e a unica gravacao que pode ter menos abas
 }
 
 // pasta nova = vida nova: a memoria, o historico e o trabalho passam a ser os da pasta,
@@ -502,7 +503,8 @@ function moverPane(P, A, indice) {
   if (abaAtiva !== A) ativarAbaProjeto(A);
   setFocus(P);
   lateralSegueAPasta();
-  savePanes();
+  // arrastar o ultimo chat pra outra aba esvazia a de origem, e ela some: tambem e ele pedindo
+  savePanes(true);
   } finally { guardaTravada = false; }
 }
 
@@ -1026,7 +1028,12 @@ let restaurando = false;
    arquivo justamente as abas que faltaram — logo depois de o aviso dizer que nada foi perdido. */
 let abasQueNaoVoltaram = [];
 let clienteQueEstavaAberto = '';
-function savePanes() {
+/* `fechou` = esta gravacao PODE diminuir a lista de abas, porque foi ele quem fechou.
+   Sem essa marca o Mac recusa a perda e devolve as abas que faltam (ver saveConfig no
+   main.js). E a trava contra o defeito que comeu 108 abas: uma gravacao com o retrato
+   incompleto da tela — boot, restauracao que falhou no meio, foto velha — apagava do
+   arquivo as abas que ainda nao estavam montadas. */
+function savePanes(fechou) {
   // todo vai-e-vem de chat passa por aqui: e o lugar certo pra acender/apagar a borda
   // das conversas que estao abertas na lista lateral
   marcarAbertas();
@@ -1058,7 +1065,15 @@ function savePanes() {
     }).filter(Boolean),
   })).filter(a => a.chats.length).concat(abasQueNaoVoltaram);
   cfg.abaAberta = Math.max(0, listaAbas.indexOf(abaAtiva));
-  window.api.setConfig(cfg);
+  Promise.resolve(window.api.setConfig(cfg, fechou ? { fechou: true } : null))
+    .then(r => { if (r && r.abasDevolvidas) avisarAbasGuardadas(r.abasDevolvidas); })
+    .catch(() => {});
+}
+
+// o Mac barrou uma gravacao que ia comer aba: recado curto, so o numero
+function avisarAbasGuardadas(devolvidas) {
+  const total = (Array.isArray(cfg.abas) ? cfg.abas.length : 0) + devolvidas;
+  mostrarAviso({ id: 'abas-guardadas', tipo: 'alerta', texto: 'Guardei suas ' + total + ' abas' });
 }
 
 /* ============ voltar como estava ============ */
@@ -1103,7 +1118,11 @@ async function restaurarAbas() {
   } finally {
     restaurando = false;
   }
-  savePanes();
+  /* Quando TODAS as abas gravadas voltaram, a lista pode legitimamente encolher: duas abas do
+     mesmo cliente viram uma so (agruparPorCliente). Essa gravacao tem licenca pra diminuir.
+     Se sobrou alguma que nao voltou, nao tem: ai a conta so pode cair por causa da falha, e o
+     Mac guarda as abas de volta. */
+  savePanes(!abasQueNaoVoltaram.length);
   return true;
 }
 
@@ -1176,13 +1195,25 @@ async function restaurarAbasCorpo(salvas) {
   return true;
 }
 
+/* Por que só gemini e grok na segunda checagem: são os dois que podem faltar nesta máquina.
+   O Claude e o Codex são a base do app, e apagar a base por causa de um PATH estranho seria
+   trocar um aviso tardio por um app que não abre chat nenhum. É a mesma dupla que o
+   avisarInstalacaoMotor já usa aqui embaixo. */
 function motorIndisponivelNaPasta(engine, cwd) {
-  return engine === 'gemini' && NA_VPS(cwd)
-    ? 'O Gemini está disponível neste Mac. Escolha uma pasta do Mac para usar o Gemini.' : '';
+  if (engine === 'gemini' && NA_VPS(cwd)) return 'O Gemini está disponível neste Mac. Escolha uma pasta do Mac para usar o Gemini.';
+  // na VPS quem roda é o motor DE LÁ: o que falta neste Mac não vem ao caso
+  if (!NA_VPS(cwd) && ['gemini', 'grok'].includes(engine) && MOTORES_OK?.[engine] === false) {
+    return nomeDoMotor(engine) + ' não está instalado neste Mac.';
+  }
+  return '';
 }
 function avisarInstalacaoMotor(P) {
   if (!NA_VPS(P.cwd) && ['gemini', 'grok'].includes(P.engine) && MOTORES_OK?.[P.engine] === false) {
-    note(P, nomeDoMotor(P.engine) + ' ainda não está instalado neste Mac. Instale o programa e entre na conta pelo terminal para usar este chat.', true);
+    /* recado do APP, nao erro do agente: ia em VERMELHO dentro do chat, no lugar das falhas do
+       motor — e num chat recem-aberto ele ainda comia a tela de "Escreva embaixo pra comecar",
+       deixando so a linha vermelha. Vai na faixa de avisos da janela, que e feita pra isso. */
+    mostrarAviso({ id: 'falta-motor-' + P.engine, tipo: 'alerta',
+      texto: nomeDoMotor(P.engine) + ' não está instalado neste Mac' });
   }
 }
 function menuMotores(P) {
@@ -1196,6 +1227,18 @@ function menuMotores(P) {
   }
 }
 
+/* Perguntar ANTES de cortar o que esta em andamento — e SO quando ha o que perder.
+   Trocar de motor e trocar de modo matam o processo que esta rodando, igual a fechar o chat.
+   Fechar ja perguntava (closePane); esses dois nao perguntavam nada, e sao botoes no meio do
+   cabecalho, faceis de acertar sem querer. Chat parado nao pergunta nada: pergunta a toa cansa
+   e ele acaba clicando em "sim" sem ler. Mesmo texto e mesmo jeito de perguntar do fechar. */
+function confirmarCorte(P, oQueVaiFazer) {
+  if (!P || (!P.busy && !agTrabalhando(P))) return true;
+  const nome = (P.titulo || '').trim().slice(0, 40) || 'este chat';
+  return confirm('O ' + nomeDoMotor(P.engine) + ' está trabalhando em “' + nome + '”.\n\n'
+    + oQueVaiFazer + ' joga fora o que ele está fazendo. Continuar mesmo assim?');
+}
+
 async function trocarMotor(P, novo) {
   // P.trocando trava o clique repetido: sem ele, clicar rapido nos dois lados fazia o segundo
   // clique ser engolido em silencio, e uma mensagem enviada nesse meio-tempo subia o motor errado.
@@ -1204,6 +1247,8 @@ async function trocarMotor(P, novo) {
     avisoTemp(P, motorIndisponivelNaPasta(novo, P.cwd), true);
     return;
   }
+  // um clique aqui mata o que estiver rodando e comeca conversa nova: pergunta antes de cortar
+  if (!confirmarCorte(P, 'Trocar para o ' + nomeDoMotor(novo))) return;
   // trocar de motor reinicia o chat: o microfone não pode ficar ditando por cima da troca
   vozSoltar(P);
   const antigo = nomeDoMotor(P.engine);   // [EDITA 12.4] mesma coisa nos dois de sempre; o ACP deixa de virar "Claude"
@@ -1336,7 +1381,14 @@ function paintEngine(P) {
     if (!etiqueta) { etiqueta = document.createElement('span'); etiqueta.className = 'motor-extra'; $('.p-chave', P.el).after(etiqueta); }
     etiqueta.textContent = nomeDoMotor(P.engine);
   } else if (etiqueta) etiqueta.remove();
-  $$('.ch-lado', P.el).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.motor === P.engine)));
+  $$('.ch-lado', P.el).forEach(b => {
+    b.setAttribute('aria-pressed', String(b.dataset.motor === P.engine));
+    // mesma marca da tela "Nova aba": motor que não existe nesta máquina fica apagado. O
+    // clique segue ligado porque o trocarMotor é quem diz o porquê, em cima da caixa de texto.
+    const naoDa = motorIndisponivelNaPasta(b.dataset.motor, P.cwd);
+    b.classList.toggle('apagado', !!naoDa);
+    b.title = naoDa || '';
+  });
   pintarControlesCodex(P);
   if (P === focusPane) pintarCorFoco();
 }
@@ -1476,11 +1528,23 @@ function pintarAnel(P) {
 }
 
 function setDot(P, state) {
+  P.dotEstado = state;                 // o estado do motor; a espera pinta por cima dele
   P.el.classList.toggle('ocupado', state === 'busy');
-  $('.p-dot', P.el).className = 'p-dot dot ' + state;
+  pintarPonto(P);
   { const A = abaDe(P); if (A) pintarAba(A); }
   $('.p-stop', P.el).classList.toggle('hidden', state !== 'busy');
   $('.p-send', P.el).disabled = false;   // dá para enviar durante o trabalho: vai pela fila ou entra nele
+}
+
+/* O ponto do cabeçalho do chat segue a MESMA regra da bolinha da aba: travado esperando ELE
+   (permissão ou pergunta) fica vermelho e parado, e isso ganha de tudo. Quem pisca está
+   trabalhando; quem está parado em vermelho está esperando ele. */
+function pintarPonto(P) {
+  if (!P || !P.el) return;
+  const pt = $('.p-dot', P.el);
+  if (!pt) return;
+  const espera = estadoDoPainel(P).cls === 'espera';
+  pt.className = 'p-dot dot ' + (espera ? 'espera' : (P.dotEstado || 'off'));
 }
 
 /* ============ desenho das mensagens ============ */
@@ -2170,27 +2234,59 @@ function aplicarEscolhaDaPasta(P) {
   return true;
 }
 
-/* ---- a mesma pergunta nos dois motores (⌘D) ----
-   Dava para abrir Claude e Codex lado a lado, mas a pergunta era digitada duas vezes. */
-async function perguntarAosDois(P) {
+/* ---- a mesma pergunta nos outros motores (⌘D) ----
+   Dava para abrir os motores lado a lado, mas a pergunta era digitada uma vez em cada.
+   O par Claude/Codex estava CRAVADO aqui: num painel do Gemini o atalho abria um chat do
+   Codex, e nao havia jeito de confrontar Gemini com Grok nem de perguntar aos quatro.
+   Agora a pergunta vai para todos os outros motores JA ABERTOS nesta aba — que e o caso de
+   sempre e continua sem clique nenhum. So quando nao ha nenhum outro aberto o app pergunta
+   qual abrir, em vez de adivinhar errado. */
+async function perguntarAosOutros(P) {
   const inp = $('.p-input', P.el);
   const texto = inp.value.trim();
-  if (!texto) { avisoEnvio(P, 'Escreva a pergunta primeiro — ela vai para os dois.'); return; }
-  const outro = P.engine === 'codex' ? 'claude' : 'codex';
+  if (!texto) { avisoEnvio(P, 'Escreva a pergunta primeiro — ela vai para os outros motores.'); return; }
   const A = abaDe(P);
-  let Q = A ? A.ordem.map(id => panes.get(id)).find(q => q && q !== P && q.engine === outro) : null;
-  if (!Q) {
-    Q = novoChatNaAba(outro);
-    if (!Q) return;
-    Q.cwd = P.cwd;                       // os dois olham a MESMA pasta, senao a resposta muda
-    pintarPasta(Q, nomePasta(Q.cwd));
-    aplicarEscolhaDaPasta(Q);
+  // um por motor: dois chats do Codex abertos nao viram duas copias da mesma pergunta
+  const jaAbertos = [];
+  const vistos = new Set([P.engine]);
+  if (A) for (const id of A.ordem) {
+    const Q = panes.get(id);
+    if (Q && Q !== P && !vistos.has(Q.engine)) { vistos.add(Q.engine); jaAbertos.push(Q.engine); }
   }
-  const outroInp = $('.p-input', Q.el);
-  outroInp.value = texto;
-  outroInp.dispatchEvent(new Event('input'));
+  if (jaAbertos.length) return mandarAosOutros(P, texto, jaAbertos);
+
+  const podem = MOTORES_VISIVEIS.filter(m => m !== P.engine && !motorIndisponivelNaPasta(m, P.cwd));
+  if (!podem.length) { avisoEnvio(P, 'Não há outro motor disponível nesta pasta.'); return; }
+  if (podem.length === 1) return mandarAosOutros(P, texto, podem);
+  const pop = abrirPopGlobal(inp);
+  for (const m of podem) pop.appendChild(popItem({ nome: nomeDoMotor(m), ic: 'columns-2' }, () => mandarAosOutros(P, texto, [m])));
+  pop.appendChild(elLinha());
+  pop.appendChild(popItem({ nome: 'Todos', ic: 'columns-2' }, () => mandarAosOutros(P, texto, podem)));
+}
+
+/* Poe o mesmo texto no campo de cada motor da lista e manda todo mundo de uma vez.
+   O chat que falta e aberto aqui, na mesma pasta do painel de origem — pasta diferente da
+   resposta diferente, e ai a comparacao nao vale nada. */
+async function mandarAosOutros(P, texto, motores) {
+  const A = abaDe(P);
+  const destinos = [];
+  for (const m of motores) {
+    let Q = A ? A.ordem.map(id => panes.get(id)).find(q => q && q !== P && q.engine === m) : null;
+    if (!Q) {
+      Q = novoChatNaAba(m);
+      if (!Q) continue;                  // motor que nao da nesta pasta ja avisou o motivo
+      Q.cwd = P.cwd;                     // todos olham a MESMA pasta, senao a resposta muda
+      pintarPasta(Q, nomePasta(Q.cwd));
+      aplicarEscolhaDaPasta(Q);
+    }
+    const outroInp = $('.p-input', Q.el);
+    outroInp.value = texto;
+    outroInp.dispatchEvent(new Event('input'));
+    destinos.push(Q);
+  }
+  if (!destinos.length) return;
   await send(P);
-  await send(Q);
+  for (const Q of destinos) await send(Q);
   setFocus(P);
 }
 
@@ -4490,9 +4586,15 @@ function menuModos(P) {
 
   for (const mo of MODOS[P.engine]) {
     m.appendChild(elItem({ ic: mo.ic, nome: mo.nome, desc: mo.desc, on: mo.id === modoDe(P).id }, async () => {
+      // trocar de modo desliga o motor: com trabalho rodando, pergunta antes (igual ao fechar)
+      const estavaRodando = !!P.busy || agTrabalhando(P);
+      if (!confirmarCorte(P, 'Trocar de modo')) return;
       P.mode = mo.id; cfg.defMode = mo.id; window.api.setConfig(cfg); pintarModo(P);
       await desligarMotor(P);
-      note(P, 'Modo: ' + mo.nome + ' — ' + mo.desc.toLowerCase() + '. O que estava em andamento parou aqui.');
+      /* era note(), que so aparece quando e erro: o recado nunca chegou na tela. E a frase
+         "parou aqui" so entra quando alguma coisa realmente parou. */
+      avisoTemp(P, 'Modo: ' + mo.nome + ' — ' + mo.desc.toLowerCase() + '.'
+        + (estavaRodando ? ' O que estava em andamento parou aqui.' : ''));
       savePanes();
     }));
   }
@@ -4724,7 +4826,6 @@ async function menuSkills(P, filtroInicial, focar) {
     { sec: 'Contexto', ic: 'upload', nome: 'Anexar arquivo…', act: () => menuAnexo(P) },
     { sec: 'Contexto', ic: 'folder', nome: 'Mencionar a pasta deste painel', act: () => inserirNoInput(P, P.cwd) },
     { sec: 'Contexto', ic: 'eraser', nome: 'Limpar a tela', desc: 'a conversa continua', act: () => { P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); P.rolagem = null; } },
-    { sec: 'Contexto', ic: 'sparkles', nome: 'Começar conversa nova', act: () => novaConversa(P.engine) },
     { sec: 'Contexto', ic: 'file-text', nome: 'Resumir a conversa', desc: 'libera espaço sem perder o fio', act: () => compactarConversa(P) },
     { sec: 'Contexto', ic: 'search', nome: 'Buscar nesta conversa', desc: '⌘F', act: () => abrirBuscaConversa(P) },
     { sec: 'Contexto', ic: 'lock', nome: 'Modo foco', desc: 'esconde os passos, deixa só pergunta e resposta · ⌘⇧F', tag: document.body.classList.contains('foco') ? 'ligado' : '', act: () => alternarFoco() },
@@ -4738,9 +4839,13 @@ async function menuSkills(P, filtroInicial, focar) {
     // ditar FICA no telefone: ele grava pelo microfone do proprio celular e o Mac so passa o
     // texto a limpo (o mesmo caminho da foto e do OCR)
     { sec: 'Contexto', ic: 'mic', nome: 'Ditar', desc: 'falar em vez de digitar · ⌘⇧D', act: () => alternarDitado(P) },
-    { sec: 'Chat', ic: 'plus', nome: 'Abrir outro chat nesta aba', act: () => { novoChatNaAba(P.engine); } },
+    /* UMA linha so para "abrir chat novo", e com o MESMO nome que o menu do Mac (⌘T), o botao
+       do topo e a coluna lateral usam. Antes havia outra linha aqui em cima, na secao Contexto
+       ("Comecar conversa nova"), que por dentro chamava esta mesma funcao: duas portas com
+       nomes diferentes para a mesma coisa. */
+    { sec: 'Chat', ic: 'plus', nome: 'Novo chat nesta aba', desc: '⌘T', act: () => { novoChatNaAba(P.engine); } },
     { sec: 'Chat', ic: 'rotate-cw', nome: 'Reabrir o último chat fechado', desc: '⌘⇧W', act: () => reabrirUltimoFechado() },
-    { sec: 'Chat', ic: 'columns-2', nome: 'Perguntar aos dois motores', desc: 'a mesma pergunta no Claude e no Codex · ⌘D', act: () => perguntarAosDois(P) },
+    { sec: 'Chat', ic: 'columns-2', nome: 'Perguntar aos outros motores', desc: 'a mesma pergunta nos outros chats desta aba · ⌘D', act: () => perguntarAosOutros(P) },
     { sec: 'Painel', ic: 'folder-open', nome: 'Trocar a pasta deste painel', tag: nomePasta(P.cwd), act: () => $('.p-cwd', P.el).click() },
     // a memoria, os agentes e os hooks sao arquivos do MAC: no telefone a janela so abria para
     // dizer que nao conseguiu ler. Fora da lista, como o "Recortar a tela".
@@ -6274,7 +6379,24 @@ function esconderUso(P) {
   if (faixa) { faixa.className = 'p-uso hidden'; faixa.innerHTML = ''; }
 }
 
+/* O numero pequeno do rodape, ao lado do modelo. Vive FORA da tarja de alarme de proposito:
+   a tarja so nasce em 90% de sessao ou 50% de semana, e abaixo disso a tela nao dizia nada —
+   ele planejava o dia no escuro com o numero ja pronto na memoria. Sem cor: quem grita e a
+   tarja. Some sozinho no motor que nao tem cota de ler daqui (Gemini, Grok, ACP). */
+function pintarLimiteMini(P) {
+  const el = $('.p-limite', P.el);
+  if (!el) return;
+  const u = USO[P.engine];
+  const ps = u ? usoPct(u.sessao) : null, pw = u ? usoPct(u.semana) : null;
+  const partes = [];
+  if (ps !== null) partes.push('sessão ' + ps + '%');
+  if (pw !== null) partes.push('semana ' + pw + '%');
+  el.textContent = partes.join(' · ');
+  el.title = partes.length ? 'Quanto do plano do ' + nomeDoMotor(P.engine) + ' já foi usado' : '';
+}
+
 function pintarUso(P) {
+  pintarLimiteMini(P);          // o numero do rodape nao depende da tarja de alarme
   const faixa = $('.p-uso', P.el);
   if (!faixa) return;
   const u = USO[P.engine];
@@ -6401,12 +6523,19 @@ async function contaAcao(P, acao, motorPedido) {
   }, { abrirSozinho: !!r.esperaLink && !r.naVps, orientacao: r.orientacao });
 }
 
-function avisoTemp(P, texto) {
+/* ehErro: quatro chamadas ja mandavam o terceiro valor ("isto e erro") e ele era jogado fora —
+   "o Gemini nao esta instalado aqui" saia no mesmo cinza de "Foto anexada". A regra .note.err
+   (vermelho, e vermelho de variavel: vale nos 3 temas) ja existia no style.css.
+   O `vazio`: num chat que ainda nao tem conversa, o clearEmpty tira a tela de "Escreva embaixo
+   pra comecar" — e 12 segundos depois o recado sumia e sobrava um retangulo em branco. Agora a
+   tela de chat vazio volta junto, mas so se nada tiver comecado nesse meio-tempo. */
+function avisoTemp(P, texto, ehErro) {
+  const vazio = !!$('.pane-empty', P.el);
   clearEmpty(P);
   const d = document.createElement('div');
-  d.className = 'note'; d.textContent = texto;
+  d.className = 'note' + (ehErro ? ' err' : ''); d.textContent = texto;
   P.chat.appendChild(d); scroll(P, true);
-  setTimeout(() => d.remove(), 12000);
+  setTimeout(() => { d.remove(); if (vazio && !P.chat.children.length) voltarVazio(P); }, 12000);
 }
 
 /* ===================== leva 6: faixa de avisos da JANELA =====================
@@ -7000,10 +7129,48 @@ function filtrarPorPasta(engine, lista) {
   if (!alvo) return lista;
   return lista.filter(s => dentroDe(s.cwd, alvo));
 }
+
+/* Todas as conversas do Mac, dos quatro motores juntos e sem filtro de pasta: e nesta lista
+   que a busca procura. Tira repetida (a mesma conversa pode chegar pelo cache local e pela
+   copia da VPS) e devolve da mais nova para a mais velha. */
+function todasAsConversas() {
+  const vistas = new Set();
+  const tudo = [];
+  for (const m of MOTORES) {
+    for (const s of (histCache[m] || [])) {
+      const k = (s.engine || m) + ':' + s.id;
+      if (vistas.has(k)) continue;
+      vistas.add(k);
+      tudo.push(s);
+    }
+  }
+  return tudo.sort((a, b) => (b.when || 0) - (a.when || 0));
+}
+
+/* A busca olha os quatro motores, mas a lista de cada motor so e lida quando a coluna dele
+   abre. Antes de procurar, le as que ainda faltam — uma vez so — e redesenha quando chegam. */
+let lendoTodoHistorico = false;
+// motor que ja foi pedido uma vez nao e pedido de novo a cada letra digitada, mesmo que a
+// leitura tenha falhado (motor que nao esta instalado neste Mac cai aqui)
+const historicoJaPedido = new Set();
+async function lerHistoricoDeTodosOsMotores(engine) {
+  if (lendoTodoHistorico) return;
+  const faltam = MOTORES_VISIVEIS.filter(m => !histCache[m] && !historicoJaPedido.has(m));
+  if (!faltam.length) return;
+  lendoTodoHistorico = true;
+  for (const m of faltam) historicoJaPedido.add(m);
+  try { await Promise.all(faltam.map(m => loadHist(m).catch(() => {}))); } catch {}
+  lendoTodoHistorico = false;
+  if (histCache[engine]) paintHist(engine, histCache[engine]);   // agora com todas na mao
+}
+
 function pintarBotaoFiltro(engine) {
   const bt = $('.side-filtro[data-filtro="' + engine + '"]');
   if (!bt) return;
-  const alvo = pastaDoFiltro(engine);
+  /* Digitando, a busca olha o Mac inteiro e os quatro motores: o botao tem de DIZER isso.
+     Senao a tela mostra "Pedro" enquanto a lista embaixo traz conversa de todo mundo. */
+  const buscando = !!(buscaAtual[engine] || '').trim();
+  const alvo = buscando ? '' : pastaDoFiltro(engine);
   $('.sf-txt', bt).textContent = alvo ? nomeProjeto(alvo) : 'Mac inteiro';
   bt.classList.toggle('on', !!alvo);
 }
@@ -7040,7 +7207,9 @@ async function pintarPastas(engine) {
 
 // a coluna lateral acompanha a pasta da aba aberta
 function lateralSegueAPasta() {
-  for (const eng of ['claude', 'codex']) {
+  // os QUATRO motores (antes so Claude e Codex): a coluna do Gemini ficava com o nome da
+  // pasta da aba anterior, dizendo uma coisa e listando outra
+  for (const eng of MOTORES) {
     if (filtroPasta[eng] !== 'ABA') continue;
     pintarBotaoFiltro(eng);
     if (histCache[eng]) paintHist(eng, histCache[eng]);
@@ -7262,9 +7431,9 @@ function alternarGrupoRecolhido(id) {
   if (i >= 0) cfg.gruposRecolhidos.splice(i, 1); else cfg.gruposRecolhidos.push(id);
   window.api.setConfig(cfg);
 }
-// grupo é dos DOIS motores: mexeu em um, as duas listas se redesenham
+// grupo é de TODOS os motores: mexeu em um, as listas se redesenham
 function repintarGrupos() {
-  for (const eng of ['claude', 'codex']) {
+  for (const eng of MOTORES) {
     pintarAbasGrupo(eng);
     if (histCache[eng]) paintHist(eng, histCache[eng]);
   }
@@ -7456,7 +7625,10 @@ function linhaConversa(s, termo, trecho) {
   bf.addEventListener('click', async (e) => {
     e.stopPropagation();
     trocarFavorita(s);
-    histCache[s.engine] && paintHist(s.engine, histCache[s.engine]);
+    /* repinta TODAS as colunas com lista carregada, nao so a do motor da conversa: na busca a
+       coluna do Claude mostra conversa do Codex, e so o Codex se redesenhava — a estrela ficava
+       sem mudar na tela que ele estava olhando. */
+    for (const m of MOTORES) if (histCache[m]) paintHist(m, histCache[m]);
   });
   /* ---- botões novos da leva 8, pendurados por DOM (a linha do innerHTML acima não foi
      tocada): a pastinha manda a conversa para um grupo, o "⋯" abre o menu com o Apagar. ---- */
@@ -7512,6 +7684,23 @@ function linhaConversa(s, termo, trecho) {
   return d;
 }
 
+/* Linha de RESULTADO de busca. E a mesma linha de sempre, com uma etiqueta a mais: agora a
+   busca mistura os quatro motores e todas as pastas, entao sem dizer "Codex · Pedro" ele nao
+   sabe de onde aquela conversa veio. So rotulo, sem frase.
+   A etiqueta entra DEPOIS do titulo, e a marca com-onde poe cada um na sua linha: ao lado do
+   titulo ela ficava com o nome inteiro do cliente e o titulo aparecia com uma letra so. */
+function linhaDaBusca(s, termo, trecho) {
+  const d = linhaConversa(s, termo, trecho);
+  d.classList.add('com-onde');
+  const et = document.createElement('span');
+  et.className = 'hi-onde';
+  const cliente = nomeProjeto(clienteDe(s.cwd));
+  et.textContent = nomeDoMotor(s.engine) + (cliente ? ' · ' + cliente : '');
+  const tit = $('.hi-t', d);
+  d.insertBefore(et, tit.nextSibling);
+  return d;
+}
+
 /* Cada desenho da lista ganha um numero. Como a busca dentro das conversas demora segundos,
    dava tempo de outro desenho comecar (mais uma letra digitada, troca de aba, fim de resposta):
    quando o antigo acordava, despejava os resultados VELHOS por cima do desenho novo e a lista
@@ -7528,11 +7717,20 @@ async function paintHist(engine, listaCrua) {
      "Todos" — visível na tela, em vez de o filtro ser jogado fora em silêncio. */
   if (termo && filtroGrupo[engine]) filtroGrupo[engine] = null;
   pintarAbasGrupo(engine);   // leva 8: a faixa de grupos acompanha cada desenho da lista
-  const list = filtrarPorPasta(engine, listaCrua);
+  /* DIGITOU = procura em TUDO: os quatro motores e o Mac inteiro, sem filtro de pasta.
+     Antes a busca so via a lista deste motor e so a pasta da aba aberta, entao achar "aquela
+     conversa do checkout" exigia lembrar em qual motor foi E em qual cliente ele estava, e
+     repetir a busca ate quatro vezes. Filtro de pasta e faixa de grupo continuam mandando na
+     lista PARADA; ao digitar, eles saem da frente (o botao de pasta mostra "Mac inteiro"
+     enquanto a busca dura, e cada resultado diz de qual motor e de qual cliente veio). */
+  if (termo) lerHistoricoDeTodosOsMotores(engine);   // motor cuja coluna nunca abriu tambem entra
+  const list = termo ? todasAsConversas() : filtrarPorPasta(engine, listaCrua);
   box.innerHTML = '';
-  if (!listaCrua.length) { box.innerHTML = '<div class="hist-load">Nenhuma conversa ainda.</div>'; return; }
   if (!list.length) {
-    box.innerHTML = '<div class="hist-load">Nenhuma conversa nesta pasta.</div>';
+    /* Sem busca, lista vazia com conversas existindo quer dizer que o filtro de pasta cortou.
+       Buscando, a lista ja e o Mac inteiro: vazia ali e vazia mesmo. */
+    box.innerHTML = '<div class="hist-load">'
+      + (!termo && listaCrua.length ? 'Nenhuma conversa nesta pasta.' : 'Nenhuma conversa ainda.') + '</div>';
     return;
   }
 
@@ -7579,7 +7777,7 @@ async function paintHist(engine, listaCrua) {
   const resto = list.filter(s => !porNome.includes(s));
   if (porNome.length) {
     box.appendChild(Object.assign(document.createElement('div'), { className: 'hist-cab', textContent: 'no nome' }));
-    for (const s of porNome) box.appendChild(linhaConversa(s, termo));
+    for (const s of porNome) box.appendChild(linhaDaBusca(s, termo));
   }
   const aviso = document.createElement('div');
   aviso.className = 'hist-load';
@@ -7604,7 +7802,7 @@ async function paintHist(engine, listaCrua) {
   box.appendChild(Object.assign(document.createElement('div'), { className: 'hist-cab', textContent: 'dentro da conversa' }));
   for (const a of achados) {
     const s = resto.find(x => x.id === a.id);
-    if (s) box.appendChild(linhaConversa(s, termo, a.trecho));
+    if (s) box.appendChild(linhaDaBusca(s, termo, a.trecho));
   }
   // nunca cortar em silencio: se a busca parou no meio, ele precisa saber
   if (parcial) {
@@ -7902,9 +8100,12 @@ const naEstado = { motor: 'claude', pasta: '', onde: 'mac' };
 function telaNovaAba(obrigatoria) {
   const el = $('#novaAba');
   naEstado.motor = motorVisivel(cfg.lastEngine);
-  naEstado.pasta = '';
+  /* ja nasce na pasta padrao dos Ajustes. Antes nascia vazia, e a UNICA forma de escolher era
+     abrir a janela de pastas do macOS e navegar ate la, varias vezes por dia. */
+  naEstado.pasta = (cfg.defCwd && cfg.defCwd !== HOME) ? cfg.defCwd : '';
   naEstado.onde = 'mac';
   naPintar();
+  naPintarAtalhosMac();
   el.dataset.travada = obrigatoria ? '1' : '';
   el.classList.remove('hidden');
   setTimeout(() => $('#naOk').focus(), 40);
@@ -7920,9 +8121,17 @@ function naPintar() {
   const naVps = naEstado.onde === 'vps';
   const motivo = motorIndisponivelNaPasta(naEstado.motor, naVps ? 'vps:/' : '');
   $('#naOk').disabled = !!motivo;
-  $$('.na-motor').forEach(b => b.classList.toggle('on', b.dataset.motor === naEstado.motor));
+  $$('.na-motor').forEach(b => {
+    b.classList.toggle('on', b.dataset.motor === naEstado.motor);
+    // apagado = não dá para usar daqui. Continua clicável de propósito: clicando, a dica
+    // embaixo diz o motivo e o "Começar" fica travado — melhor que um botão morto e mudo.
+    const naoDa = motorIndisponivelNaPasta(b.dataset.motor, naVps ? 'vps:/' : '');
+    b.classList.toggle('apagado', !!naoDa);
+    b.title = naoDa || '';
+  });
   $$('.na-onde').forEach(b => b.classList.toggle('on', b.dataset.onde === naEstado.onde));
   $('#naPasta').classList.toggle('hidden', naVps);
+  $('#naAtalhosMac').classList.toggle('hidden', naVps);
   $('#naRemoto').classList.toggle('hidden', !naVps);
   $('#naEscolhida').classList.toggle('hidden', naVps || !naEstado.pasta);
   $('#naPastaNome').textContent = naEstado.pasta ? shortPath(naEstado.pasta) : '';
@@ -7944,6 +8153,40 @@ function naPintarAtalhos() {
     const b = document.createElement('button');
     b.className = 'na-atalho'; b.textContent = p;
     b.onclick = () => { $('#naCaminho').value = p; $('#naCaminho').focus(); };
+    cx.appendChild(b);
+  }
+}
+
+/* A mesma ideia dos atalhos da VPS, agora para o lado do Mac: um clique em vez da janela de
+   pastas do macOS. A ordem e a de quem ele mais usa: a pasta padrao dos Ajustes, depois as
+   pastas das conversas mais recentes, depois os clientes de Projetos-claude que faltarem.
+   Teto de 12 botoes para a tela nao virar uma parede. */
+const NA_MAX_ATALHOS = 12;
+/* Cada desenho da fileira ganha um numero, igual ao da lista lateral. Ler os clientes do disco
+   e uma ida ao main: clicar em duas pastas seguidas comecava o segundo desenho antes de o
+   primeiro acordar, e os dois despejavam botao no mesmo lugar — a fileira aparecia dobrada. */
+let naAtalhosVez = 0;
+async function naPintarAtalhosMac() {
+  const cx = $('#naAtalhosMac');
+  if (!cx) return;
+  const minhaVez = ++naAtalhosVez;
+  const caminhos = [];
+  const juntar = (p) => {
+    if (!p || p === HOME || NA_VPS(p)) return;      // a VPS tem a fileira dela
+    if (caminhos.length >= NA_MAX_ATALHOS || caminhos.includes(p)) return;
+    caminhos.push(p);
+  };
+  juntar(cfg.defCwd);
+  for (const c of todasAsConversas()) juntar(clienteDe(c.cwd));
+  for (const c of await lerClientes()) juntar(c.path);
+  if (minhaVez !== naAtalhosVez) return;   // ja tem um desenho mais novo: este morreu
+  cx.innerHTML = '';                       // limpa so agora, com os botoes prontos pra entrar
+  for (const p of caminhos) {
+    const b = document.createElement('button');
+    b.className = 'na-atalho' + (p === naEstado.pasta ? ' on' : '');
+    b.textContent = nomeProjeto(p);
+    b.title = p;
+    b.onclick = () => { naEstado.pasta = p; naPintar(); naPintarAtalhosMac(); };
     cx.appendChild(b);
   }
 }
@@ -7995,9 +8238,9 @@ $('#naPasta').addEventListener('click', async () => {
   // aba nova abre direto na pasta dos projetos do Claude (quem resolve o caminho e o main)
   const p = await window.api.pickFolder(naEstado.pasta || '');
   if (!p) return;
-  naEstado.pasta = p; naPintar();
+  naEstado.pasta = p; naPintar(); naPintarAtalhosMac();
 });
-$('#naPastaX').addEventListener('click', () => { naEstado.pasta = ''; naPintar(); });
+$('#naPastaX').addEventListener('click', () => { naEstado.pasta = ''; naPintar(); naPintarAtalhosMac(); });
 $('#naOk').addEventListener('click', () => naConfirmar(false));
 $('#naCaminho').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); naConfirmar(false); } });
 $('#naDois').addEventListener('click', () => naConfirmar(true));
@@ -8492,6 +8735,7 @@ async function pintarRotinas(forcar) {
       rotinasCache.erro = (chegou && chegou.error) || '';
       rotinasCache.velha = !!(chegou && chegou.velho);
     }
+    pintarSeloRotinas();          // ANTES do return: o selo é justamente para quem não abriu a coluna
     if (!rotinasVisivel()) return;
   }
   const porNome = (a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR');
@@ -8559,6 +8803,66 @@ setInterval(() => {
   const b = $('#rotinas');
   if (rotinasVisivel() && !(b && b.matches(':hover'))) pintarRotinas(false);
 }, 60000);
+
+/* ---- o aviso sai da coluna e vai para o ícone ----
+   A coluna de Rotinas só lia o Mac enquanto estava aberta, e o ícone dela não tinha selo
+   nenhum: a conta de quantos robôs dele pararam era feita e jogada fora quando ele fechava a
+   coluna. Ou seja, o painel criado para avisar que um robô morreu só avisava quem já tinha
+   ido olhar. Agora o número fica no ícone, e falha NOVA vira tarja na faixa de avisos. */
+let rotinasFalhasVistas = null;   // null = primeira leitura; nela nada é "novo"
+
+function pintarSeloRotinas() {
+  const bt = $('.act[data-view="rotinas"]');
+  if (!bt) return;
+  const falhas = rotinasCache.itens.filter((t) => t.dele !== false && t.falhou);
+  const selo = $('.act-selo', bt);
+  if (selo) {
+    selo.classList.toggle('hidden', !falhas.length);
+    selo.textContent = falhas.length > 9 ? '9+' : String(falhas.length || '');
+  }
+  bt.title = falhas.length
+    ? 'Rotinas · ' + falhas.length + (falhas.length === 1 ? ' parada' : ' paradas')
+    : 'Rotinas: os robôs agendados que rodam sozinhos nesta máquina';
+  /* Lista vazia = ainda não consegui ler o launchd nenhuma vez. Aí não se mexe no que já foi
+     visto: senão a primeira leitura boa acusaria TODAS as falhas antigas como se fossem de
+     agora, e ele abriria o Cockpit numa parede de tarjas. */
+  if (rotinasCache.itens.length) avisarRotinaNova(falhas);
+}
+
+/* Robô que CAIU AGORA vira tarja, com o nome e o botão "ver". O primeiro giro do app não
+   avisa nada: ali tudo seria "novo" e ele abriria o Cockpit numa parede de tarjas de falha
+   velha, que é o oposto do que este aviso serve. */
+function avisarRotinaNova(falhas) {
+  const agora = new Set(falhas.map((t) => t.nome));
+  if (rotinasFalhasVistas) {
+    for (const t of falhas) {
+      if (rotinasFalhasVistas.has(t.nome)) continue;
+      mostrarAviso({ id: 'rotina-' + t.nome, tipo: 'alerta', fixo: true, acao: 'ver',
+        aoClicar: abrirRotinas, texto: 'Rotina parada · ' + nomeCurtoDaRotina(t) });
+    }
+  }
+  rotinasFalhasVistas = agora;
+}
+
+// o prefixo com.homero./com.adsure. come metade da tarja e é igual em todas as dele
+const nomeCurtoDaRotina = (t) => String(t.nome || '').replace(/^com\.(homeromotti|homero|adsure)\./, '');
+
+// abre a coluna de Rotinas como o clique no ícone — sem fechar se ela já estiver aberta ali
+function abrirRotinas() {
+  $('#sidebar').classList.remove('hidden'); $('#dragbar').classList.remove('hidden');
+  $$('.act').forEach(x => x.classList.toggle('active', x.dataset.view === 'rotinas'));
+  $$('.side-view').forEach(x => x.classList.toggle('hidden', x.dataset.view !== 'rotinas'));
+  abrirVistaLateral('rotinas');
+}
+
+/* De 5 em 5 minutos, com a coluna FECHADA, lê o launchd só para o selo e a tarja. Com a
+   coluna aberta quem manda é o timer de 60s aí em cima — ele tem a guarda do :hover, que
+   aqui faria falta (o repaint troca a linha inteira e o botão "disparar" some sob o mouse).
+   No telefone não roda: quem tem robô agendado é este Mac. */
+if (!window.SEM_ELECTRON) {
+  setInterval(() => { if (!rotinasVisivel()) pintarRotinas(true); }, 300000);
+  setTimeout(() => pintarRotinas(true), 8000);   // a 1ª leitura, sem disputar o boot
+}
 
 /* ===================== LEVA 10.4 — CHIP DO GIT NO CABEÇALHO =====================
    Mostra a branch da pasta deste chat e quantos arquivos estão mexidos. Clicar abre a lista,
@@ -8701,23 +9005,32 @@ const versaoMaisNova = (a, b) => {
 /* No Mac o Cockpit NÃO executa o Claude que o `claude update` atualiza: ele roda uma cópia
    congelada em ~/.cockpit/bin/claude, refeita só no arranque do app (é o que faz o macOS
    parar de pedir permissão de disco a cada versão nova). Por isso o recado daqui é diferente
-   do fork de origem: atualizar sem fechar e abrir o Cockpit não muda nada na tela. */
-const COMO_ATUALIZAR = {
-  claude: 'o Cockpit atualiza sozinho em até 1 minuto — se quiser na hora, rode "claude update" no Terminal',
-  codex: 'o Cockpit atualiza sozinho em até 1 minuto — se quiser na hora, rode "npm i -g @openai/codex" no Terminal',
+   do fork de origem: atualizar sem fechar e abrir o Cockpit não muda nada na tela.
+   Aqui fica so o comando cru — ele vai para o botao "copiar comando" da faixa de avisos,
+   para ele colar no Terminal se nao quiser esperar o Cockpit atualizar sozinho. */
+const COMANDO_ATUALIZAR = {
+  claude: 'claude update',
+  codex: 'npm i -g @openai/codex',
 };
 async function checarVersoesDosMotores() {
   if (window.SEM_ELECTRON) return;              // no telefone não há o que atualizar
-  // o boot pode terminar com zero chats (tela de "Nova aba"): sem painel não há onde escrever
-  if (!focusPane) { setTimeout(checarVersoesDosMotores, 30000); return; }
   let vs = null;
   try { vs = await window.api.motoresVersoes(); } catch { return; }
   if (!vs || typeof vs !== 'object') return;
   for (const eng of Object.keys(vs)) {
     const v = vs[eng];
     if (!v || !v.instalada || !v.ultima || !versaoMaisNova(v.instalada, v.ultima)) continue;
-    const P = focusPane; if (!P) return;
-    note(P, nomeMotor(eng) + ' tem versão nova: ' + v.instalada + ' → ' + v.ultima + '. Para atualizar, ' + (COMO_ATUALIZAR[eng] || '') + '.', true);
+    /* Recado do APP, nao erro do agente. Antes isto caia em VERMELHO dentro da conversa em
+       foco — mesma cor e mesmo lugar de uma falha do motor — e voltava toda manha, sem jeito
+       de dispensar. Agora vai na faixa de avisos da janela, que e feita pra isso: tem botao,
+       tem X e nao repete o que ele ja fechou. Sem painel em foco tambem funciona. */
+    mostrarAviso({
+      id: 'versao-' + eng,
+      texto: nomeMotor(eng) + ' tem versão nova: ' + v.instalada + ' → ' + v.ultima
+        + ' · o Cockpit atualiza sozinho em até 1 minuto',
+      acao: COMANDO_ATUALIZAR[eng] ? 'copiar comando' : '',
+      aoClicar: () => copiarTexto(COMANDO_ATUALIZAR[eng]),
+    });
   }
 }
 
@@ -8734,7 +9047,9 @@ function abrirVistaLateral(v) {
   if (v === 'rotinas') pintarRotinas(true);
 }
 
-/* ⌘P: abre a coluna das conversas do motor do chat em foco e ja poe o cursor na busca.
+/* ⌘P: abre a coluna das conversas e ja poe o cursor na busca. A coluna que aparece e a do
+   motor do chat em foco, mas o que for digitado procura nos QUATRO motores e no Mac inteiro
+   — por isso as listas dos outros ja sao lidas aqui, antes de ele terminar de digitar.
    Nao passa pelo clique do icone de proposito: aquele caminho repinta a conta com
    forcar=true, e um "auth status" novo a cada aperto de ⌘P e lento e sem motivo. */
 function abrirBuscaDeConversa() {
@@ -8743,6 +9058,7 @@ function abrirBuscaDeConversa() {
   $('#sidebar').classList.remove('hidden'); $('#dragbar').classList.remove('hidden');
   $$('.side-view').forEach(x => x.classList.toggle('hidden', x.dataset.view !== v));
   loadHist(eng); pintarContaLateral(eng);
+  lerHistoricoDeTodosOsMotores(eng);
   sincronizarIconesLaterais();
   const campo = $('.side-busca[data-busca="' + eng + '"]');
   if (campo) setTimeout(() => { campo.focus(); campo.select(); }, 60);
@@ -8793,10 +9109,20 @@ function sincronizarIconesLaterais() {
 })();
 
 document.addEventListener('keydown', (e) => {
-  // cmd+1..9 pula de ABA de projeto; com shift, pula de chat dentro da aba
-  if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
-    const n = Number(e.key) - 1;
-    if (e.shiftKey) {
+  /* ⌘1..⌘9 pula de ABA de projeto; ⌘⌥1..⌘⌥9 (e o ⌘⇧ de antes) pula de chat dentro da aba.
+     Duas correcoes, e as duas sao a mesma historia: a tecla tem de FAZER o que a tela de
+     atalhos promete.
+     (1) quem diz qual numero foi apertado passou a ser e.code (Digit1..Digit9) e nao a letra
+     que sairia na tela: com Shift ou Option segurados o Mac entrega '!' e '¡' no lugar de
+     '1', entao o teste antigo por numero falhava justamente com modificador junto.
+     (2) entrou o ⌘⌥ como caminho novo porque ⌘⇧3, ⌘⇧4 e ⌘⇧5 sao do proprio macOS (print da
+     tela) e nunca chegam ate aqui. O ⌘⇧ continua valendo para nao tirar nada de ninguem, mas
+     quem a tela de atalhos anuncia e o ⌘⌥, que e livre no Mac inteiro. */
+  const numTecla = /^(?:Digit|Numpad)([1-9])$/.exec(e.code || '');
+  const digito = numTecla ? numTecla[1] : (/^[1-9]$/.test(e.key) ? e.key : '');
+  if ((e.metaKey || e.ctrlKey) && digito) {
+    const n = Number(digito) - 1;
+    if (e.altKey || e.shiftKey) {
       const A = abaAtiva; if (!A) return;
       const P = panes.get(A.ordem[n]);
       if (P) { e.preventDefault(); setFocus(P); $('.p-input', P.el).focus(); }
@@ -8857,14 +9183,14 @@ window.addEventListener('resize', () => { for (const P of panes.values()) paintE
    do que nao ter tela nenhuma. Quem mexer em atalho tem de mexer nesta lista junto. */
 const ATALHOS = [
   ['Chats e abas', [
-    ['⌘T', 'Novo chat na aba de agora'],
+    ['⌘T', 'Novo chat nesta aba'],
     ['⌘⇧T', 'Nova aba de projeto'],
     ['⌘W', 'Fechar o chat (com janelinha aberta, fecha a janelinha primeiro)'],
     ['⌘⇧W', 'Reabrir o último chat fechado'],
     ['⌘1 … ⌘9', 'Pular de aba de projeto'],
-    ['⌘⇧1 … ⌘⇧9', 'Pular de chat dentro da aba'],
+    ['⌘⌥1 … ⌘⌥9', 'Pular de chat dentro da aba'],
     ['⌘O', 'Trocar a pasta deste chat'],
-    ['⌘B', 'Mostrar/esconder a coluna dos arquivos'],
+    ['⌘B', 'Mostrar/esconder a coluna de conversas'],
     ['⌘⇧F', 'Modo foco: só pergunta e resposta'],
   ]],
   ['Escrever', [
@@ -8881,11 +9207,11 @@ const ATALHOS = [
   ['Ler e copiar', [
     ['PageUp / PageDown', 'Rolar a conversa sem tirar o cursor do campo'],
     ['⌘F', 'Buscar na conversa (Enter vai pro próximo, ⇧Enter volta)'],
-    ['⌘P', 'Buscar uma conversa: abre a coluna e já põe o cursor na busca'],
+    ['⌘P', 'Buscar conversa nos quatro motores e no Mac inteiro'],
     ['⌘A depois ⌘C', 'Copiar a conversa inteira, com os comandos'],
     ['⌘K', 'Limpar a tela (a conversa continua de onde estava)'],
     ['⌘S', 'Salvar a conversa no Obsidian'],
-    ['⌘D', 'Perguntar aos dois motores'],
+    ['⌘D', 'Perguntar aos outros motores desta aba'],
   ]],
   ['Quadro branco (⌘⇧E abre)', [
     ['V H R O D N T A L P E', 'Trocar de ferramenta'],
@@ -9085,7 +9411,7 @@ function acaoDeMenu(a) {
   if (a === 'reabrirFechado') return reabrirUltimoFechado();
   if (a === 'buscarNaConversa') return abrirBuscaConversa(focusPane);
   if (a === 'buscarConversa') return abrirBuscaDeConversa();
-  if (a === 'perguntarAosDois') return focusPane && perguntarAosDois(focusPane);
+  if (a === 'perguntarAosDois') return focusPane && perguntarAosOutros(focusPane);
   if (a === 'ditar') return focusPane && alternarDitado(focusPane);
   if (a === 'quadro') return focusPane && window.Quadro && window.Quadro.abrir(focusPane);
   if (a === 'salvarVault') return focusPane && salvarConversaNoVault(focusPane);
@@ -9106,7 +9432,11 @@ function acaoDeMenu(a) {
     if (rT) { try { rT.term.clear(); } catch (_) {} return; }
     if (!focusPane) return;
     focusPane.chat.innerHTML = ''; focusPane.blocks.clear(); focusPane.tools.clear(); focusPane.rolagem = null;
-    note(focusPane, 'Tela limpa. A conversa continua de onde estava.');
+    /* o note() so escreve na tela quando e ERRO: com ⌘K ele apagava tudo e nao punha nada no
+       lugar — retangulo em branco, sem logo e sem uma palavra. Volta a tela de chat vazio que
+       o app ja tem, e o recado vai por cima dela e some sozinho. */
+    voltarVazio(focusPane);
+    avisoTemp(focusPane, 'Tela limpa. A conversa continua de onde estava.');
   }
 }
 
@@ -9194,7 +9524,14 @@ document.addEventListener('keydown', (e) => {
   repintarAvatares();
   const noTelefone = !!window.SEM_ELECTRON;
   // leva 12.5: o radar de motores instalados, sem segurar o boot e sem derrubar nada se falhar
-  if (window.api.motoresDisponiveis) window.api.motoresDisponiveis().then(m => { MOTORES_OK = m || null; }).catch(() => {});
+  if (window.api.motoresDisponiveis) window.api.motoresDisponiveis().then(m => {
+    MOTORES_OK = m || null;
+    /* O radar responde DEPOIS que os painéis e a tela "Nova aba" já foram pintados. Sem este
+       repinte, o motor que não existe nesta máquina continuaria com a cara dos outros três
+       até ele abrir outro chat. */
+    for (const P of panes.values()) paintEngine(P);
+    naPintar();
+  }).catch(() => {});
   if (!noTelefone) window.api.codexModels().then(ms => {
     if (ms && ms.length) { MODELOS_CODEX = ms; for (const P of panes.values()) if (P.engine === 'codex') fillModels(P); }
   });
