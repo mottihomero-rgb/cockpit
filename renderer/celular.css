@@ -87,11 +87,13 @@ body.sem-mac::after{content:"reconectando ao Mac…";position:fixed;left:0;right
 
   /* o nome da conversa ja aparece na barra de cima: aqui ele so comia 40px de conversa */
   .pane-nome{display:none}
-  /* folga embaixo, senao a ultima linha encosta na caixa de escrever. O degrade de 12px no
-     topo troca a linha cortada ao meio na borda por um sumico suave. */
+  /* folga embaixo, senao a ultima linha encosta na caixa de escrever. O degrade de 12px nas
+     DUAS pontas troca a linha cortada ao meio na borda por um sumico suave: em cima na faixa de
+     abas, embaixo na caixa de escrever. Com a conversa rolada ate o fim a ultima linha fica a
+     18px do chao (o padding acima), entao ela passa longe do degrade e sai cheia. */
   .pane-chat{padding-bottom:18px;
-    -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 12px);
-    mask-image:linear-gradient(to bottom,transparent 0,#000 12px)}
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%);
+    mask-image:linear-gradient(to bottom,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%)}
 
   .msg{padding:0 12px 14px}
   .msg-body{font-size:14.5px}

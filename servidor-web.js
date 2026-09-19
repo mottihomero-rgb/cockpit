@@ -36,6 +36,13 @@ const PERMITIDOS = new Set([
   'conta:ler', 'uso:ler', 'agentes:claude', 'git:status', 'git:diff',
   'motores:versoes', 'motores:disponiveis', 'rotinas:listar',
   'mcp:list', 'mcp:acao', 'auth:acao',
+  /* Estes tres a tela do celular OFERECE no menu, e sem eles aqui o toque so respondia
+     "so funciona no Mac". Nenhum abre terminal: config:claude so LE e devolve contagem
+     (nao volta chave nem senha), arquivo:desfazer volta uma edicao que o agente ja fez e
+     recusa se o arquivo mudou depois, e vault:salvar grava a conversa no Obsidian. Quem
+     entrou com a senha ja manda o agente escrever arquivo pelo pane:send: estes tres nao
+     abrem porta nova nenhuma. */
+  'config:claude', 'arquivo:desfazer', 'vault:salvar',
 ]);
 
 /* A sessao era procurada solta no meio do texto dos cookies: 'ck=' casa dentro de
