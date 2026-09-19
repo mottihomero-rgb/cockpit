@@ -94,13 +94,75 @@
     });
   }
 
+  /* Ajustes no telefone: agora GRAVAM de verdade — so que no proprio celular.
+     Quem manda no config do Mac continua sendo o Mac: o app.js e o MESMO arquivo nos dois e ele
+     grava o config INTEIRO de uma vez, entao um Safari aberto desde ontem escrevia o retrato de
+     ontem por cima e as abas do Mac sumiam. So que, do jeito que estava, o toque mentia: tema,
+     mostrar robos, favoritar conversa, recolher grupo — tudo voltava ao recarregar. Daqui pra
+     frente estas preferencias ficam guardadas no proprio celular, e o getConfig as poe por cima
+     do que veio do Mac.
+     As abas (abas, abaAberta, panes, grupos) ficam de fora DE PROPOSITO: essas sao so do Mac.
+     Criou preferencia nova no app.js? Ponha o nome dela aqui, senao o telefone volta a esquecer. */
+  const AJUSTES_DO_TELEFONE = [
+    'tema', 'verRobos', 'foco', 'envioPadrao', 'defMode', 'lastEngine', 'cameraPreferida',
+    'favoritos', 'gruposConversa', 'grupoSessao', 'gruposRecolhidos',
+    'porPasta', 'usoSkills', 'prompts',
+  ];
+  const GAVETA = 'cockpit:ajustes-do-telefone';
+  let comoOMacEstava = {};   // as preferencias como o Mac mandou no ultimo config:get
+
+  const mesmoValor = (a, b) =>
+    JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
+  // copia de verdade: a tela mexe nas listas por dentro (splice/push), e sem copiar o retrato
+  // do Mac mudaria junto — ai nunca daria pra saber o que foi o telefone que trocou.
+  const copiar = (v) => (v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
+
+  function lerGaveta() {
+    try { return JSON.parse(window.localStorage.getItem(GAVETA) || '{}') || {}; } catch (_) { return {}; }
+  }
+  function gravarGaveta(g) {
+    try { window.localStorage.setItem(GAVETA, JSON.stringify(g)); return; } catch (_) {}
+    /* celular sem espaco (ou Safari anonimo): o historico do "/" e o que mais cresce e o que
+       menos faz falta. Sem ele, tema e favoritos continuam sendo guardados. */
+    try { delete g.prompts; window.localStorage.setItem(GAVETA, JSON.stringify(g)); } catch (_) {}
+  }
+
+  async function lerConfig() {
+    const doMac = (await chamar('config:get')) || {};
+    comoOMacEstava = {};
+    for (const k of AJUSTES_DO_TELEFONE) if (doMac[k] !== undefined) comoOMacEstava[k] = copiar(doMac[k]);
+    const g = lerGaveta();
+    let limpou = false;
+    for (const k of Object.keys(g)) {
+      const meuAjuste = g[k];
+      const vale = AJUSTES_DO_TELEFONE.includes(k) && meuAjuste && typeof meuAjuste === 'object'
+        && Object.prototype.hasOwnProperty.call(meuAjuste, 'meu')
+        // o Mac mexeu nesta preferencia depois de mim: quem manda e o Mac, minha copia vai fora
+        && mesmoValor(doMac[k], meuAjuste.base);
+      if (!vale) { delete g[k]; limpou = true; continue; }
+      doMac[k] = meuAjuste.meu;
+    }
+    if (limpou) gravarGaveta(g);
+    return doMac;
+  }
+
+  function guardarConfig(cfg) {
+    const g = lerGaveta();
+    for (const k of AJUSTES_DO_TELEFONE) {
+      const meu = cfg ? cfg[k] : undefined;
+      // igual ao que o Mac ja tem: nao ha o que guardar aqui
+      if (meu === undefined || mesmoValor(meu, comoOMacEstava[k])) delete g[k];
+      else g[k] = { meu, base: comoOMacEstava[k] === undefined ? null : comoOMacEstava[k] };
+    }
+    gravarGaveta(g);
+    return Promise.resolve(true);
+  }
+
   window.api = {
-    getConfig: () => chamar('config:get'),
-    // O telefone roda o MESMO app.js do Mac, inclusive o savePanes(). Como cada tela guarda a
-    // sua copia do config e grava o arquivo inteiro, um Safari aberto no iPhone desde ontem
-    // escrevia o retrato de ontem por cima e as abas do Mac sumiam. O telefone le, mas nao
-    // manda: quem manda nas abas e o Mac.
-    setConfig: () => Promise.resolve(true),
+    getConfig: () => lerConfig(),
+    // Guarda so aqui no celular, nas chaves de AJUSTES_DO_TELEFONE la de cima. Nada sobe pro
+    // Mac: quem manda nas abas do Mac e o Mac.
+    setConfig: (cfg) => guardarConfig(cfg),
     home: () => chamar('sys:home'),
     // no telefone estas tres nao existem: quem abre janela do sistema e o Mac. Responder na
     // hora evita o toque ficar 2 minutos esperando uma resposta que nunca vem.

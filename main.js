@@ -1785,52 +1785,170 @@ function acharNaConversa(file, alvo, engine) {
 
 /* ---------- indice de busca ----------
    Buscar abria conversa por conversa (mais de 600 arquivos, varios GB) e desistia em 4
-   segundos dizendo "olhei so as mais recentes". Agora cada conversa e lida UMA vez, o texto
-   limpo fica guardado em ~/.cockpit/indice-busca.json, e a busca roda em memoria: instantanea
-   e completa. Arquivo que nao mudou (mesma data e mesmo tamanho) nem e reaberto. */
-const IND_ARQ = path.join(HOME, '.cockpit', 'indice-busca.json');
-/* Teto de texto guardado por conversa. Era 40 mil e, com 2769 conversas, isso da 110 MB de
-   indice: cada busca parava a janela por quase 1 segundo e o app ficava com 1 GB a mais de
-   memoria. Com 12 mil o indice cai para 28 MB e a busca continua achando pelo comeco da
-   conversa. O certo mesmo e um banquinho que busque no disco, mas isso e obra maior. */
-const IND_MAX = 12000;              // caracteres de texto guardados por conversa
-let indBusca = null, indiceSujo = false, indiceTimer = null;
+   segundos dizendo "olhei so as mais recentes". Agora cada conversa e lida UMA vez e o texto
+   limpo fica guardado no disco, em DOIS arquivos — e essa separacao e o coracao da coisa:
 
-/* O indice inteiro pesa dezenas de MB e carregar leva uns 350ms, entao nao vale manter na
-   memoria o dia todo: depois de 5 minutos sem ninguem buscar, ele e solto e o app volta ao
-   tamanho de antes. A proxima busca recarrega sem ninguem notar. */
-let soltarIndTimer = null;
-function lerIndiceBusca() {
-  clearTimeout(soltarIndTimer);
-  soltarIndTimer = setTimeout(() => { if (!indiceSujo) indBusca = null; }, 5 * 60000);
-  if (indBusca) return indBusca;
-  try { indBusca = JSON.parse(fs.readFileSync(IND_ARQ, 'utf8')); } catch { indBusca = {}; }
-  apararIndice();
-  return indBusca;
+   - indice-carimbos.json: so a data e o tamanho de cada conversa, uns 100 bytes por conversa.
+     E o que responde "ja indexei essa e ela nao mudou?". Cabe folgado na memoria.
+   - indice-texto.ndjson: o texto, UMA CONVERSA POR LINHA. Nunca entra inteiro na memoria: a
+     busca passa por ele em pedacos de 256 KB, olha e joga fora, e devolve o controle para o
+     app entre um pedaco e outro. Conversa nova e ACRESCENTADA no fim, sem reescrever o resto.
+
+   Antes era um JSON unico: cada busca lia, montava e (4 s depois) regravava os 168 MB inteiros
+   dentro do processo que desenha a janela — o app parava e a memoria subia 1 GB. Agora o custo
+   nao depende mais do tamanho do indice, entao ele pode crescer a vontade. */
+const IND_CARIMBOS = path.join(HOME, '.cockpit', 'indice-carimbos.json');
+const IND_TEXTO = path.join(HOME, '.cockpit', 'indice-texto.ndjson');
+const IND_VELHO = path.join(HOME, '.cockpit', 'indice-busca.json');   // formato antigo, so para converter
+/* Teto de texto guardado por conversa. Era 40 mil e, com 2769 conversas, isso dava 110 MB de
+   indice. Continua valendo: guardar a conversa inteira nao paga, o comeco dela ja acha. */
+const IND_MAX = 12000;              // caracteres de texto guardados por conversa
+const IND_PEDACO = 256 * 1024;      // quanto do arquivo de texto e lido por vez
+let indCarimbos = null, carimbosSujos = false, carimbosTimer = null;
+
+/* Os carimbos sao miudos, entao ficam na memoria o tempo todo: e o que deixa a pergunta
+   "essa conversa mudou?" ser instantanea sem precisar abrir o arquivo de texto. */
+function lerCarimbos() {
+  if (indCarimbos) return indCarimbos;
+  try { indCarimbos = JSON.parse(fs.readFileSync(IND_CARIMBOS, 'utf8')); } catch { indCarimbos = null; }
+  if (!indCarimbos) { indCarimbos = {}; converterIndiceVelho(); }
+  return indCarimbos;
 }
-/* O que ja esta gravado vem do tempo em que o teto nao funcionava: a maior entrada tinha
-   476 mil letras. Essas entradas so seriam refeitas se o arquivo da conversa mudasse, ou
-   seja, o peso ficaria ali para sempre. Aqui as 2230 que passam do teto sao aparadas na
-   primeira leitura: 161 MB viram 28 MB sem precisar reler conversa nenhuma. */
-function apararIndice() {
-  let mexeu = 0;
-  for (const k of Object.keys(indBusca)) {
-    const e = indBusca[k];
-    if (e && typeof e.x === 'string' && e.x.length > IND_MAX) { e.x = e.x.slice(0, IND_MAX); mexeu++; }
-  }
-  if (mexeu) gravarIndiceDepois();
-}
-function gravarIndiceDepois() {
-  indiceSujo = true;
-  clearTimeout(indiceTimer);
-  indiceTimer = setTimeout(() => {
-    if (!indiceSujo) return;
+function gravarCarimbosDepois() {
+  carimbosSujos = true;
+  clearTimeout(carimbosTimer);
+  carimbosTimer = setTimeout(() => {
+    if (!carimbosSujos) return;
     try {
-      fs.mkdirSync(path.dirname(IND_ARQ), { recursive: true });
-      fs.writeFileSync(IND_ARQ, JSON.stringify(indBusca));
-      indiceSujo = false;
+      fs.mkdirSync(path.dirname(IND_CARIMBOS), { recursive: true });
+      gravarSeguro(IND_CARIMBOS, JSON.stringify(indCarimbos));
+      carimbosSujos = false;
     } catch {}
   }, 4000);
+}
+/* uma conversa por linha; o texto ja entra cortado no teto */
+function montarLinha(f, m, t, x) {
+  const texto = typeof x === 'string' ? (x.length > IND_MAX ? x.slice(0, IND_MAX) : x) : '';
+  return JSON.stringify({ f, m, t, x: texto }) + '\n';
+}
+
+/* Mudanca de casa, uma vez na vida: pega o indice antigo (aquele JSON unico) e espalha cada
+   conversa numa linha do arquivo novo. Sem isto o indice teria de ser remontado do zero,
+   relendo as 2750 conversas. Convertido, o arquivo velho e apagado e nunca mais e lido. */
+function converterIndiceVelho() {
+  let velho;
+  try { velho = JSON.parse(fs.readFileSync(IND_VELHO, 'utf8')); } catch { return; }
+  const linhas = [];
+  for (const f of Object.keys(velho)) {
+    const e = velho[f];
+    if (!e || typeof e.x !== 'string') continue;
+    const linha = montarLinha(f, e.m, e.t, e.x);
+    indCarimbos[f] = { m: e.m, t: e.t, b: Buffer.byteLength(linha) };
+    linhas.push(linha);
+  }
+  try {
+    fs.mkdirSync(path.dirname(IND_TEXTO), { recursive: true });
+    /* carimbo sem linha e pior que nao ter carimbo: ele diria "essa ja esta indexada" e a
+       conversa sumiria da busca para sempre. Nao gravou o texto, joga os carimbos fora. */
+    if (!gravarSeguro(IND_TEXTO, linhas.join(''))) { indCarimbos = {}; return; }
+    try { fs.unlinkSync(IND_VELHO); } catch {}
+  } catch { indCarimbos = {}; return; }
+  gravarCarimbosDepois();
+}
+
+/* Conversa nova ou que mudou entra ACRESCENTANDO uma linha no fim. A linha velha dela fica
+   para tras virando lixo, e o lixo some na faxina (compactarTexto). Antes, qualquer
+   mudancinha mandava regravar o arquivo inteiro. */
+function guardarTexto(file, m, t, texto) {
+  /* de proposito ANTES de escrever: se o indice velho ainda nao tiver sido convertido, a
+     conversao regrava o arquivo de texto inteiro e levaria junto a linha recem-acrescentada */
+  const carim = lerCarimbos();
+  const linha = montarLinha(file, m, t, texto);
+  try {
+    fs.mkdirSync(path.dirname(IND_TEXTO), { recursive: true });
+    fs.appendFileSync(IND_TEXTO, linha);
+  } catch { return null; }
+  const c = { m, t, b: Buffer.byteLength(linha) };
+  carim[file] = c;
+  gravarCarimbosDepois();
+  return c;
+}
+/* Garante que a conversa esta no indice e devolve o carimbo dela (null se o arquivo sumiu).
+   O texto NAO volta junto de proposito: quem precisa dele le do disco, de passagem. */
+function indexarSePreciso(file) {
+  const carim = lerCarimbos();
+  let st;
+  try { st = fs.statSync(file); } catch { return null; }
+  const e = carim[file];
+  if (e && e.m === st.mtimeMs && e.t === st.size) return e;
+  return guardarTexto(file, st.mtimeMs, st.size, textoLegivel(file));
+}
+
+/* Passa pelo arquivo de texto de pedaco em pedaco e entrega uma LINHA por vez. So o pedaco
+   atual fica na memoria, e entre um pedaco e outro o app respira — e por isso que a janela
+   nao trava mais, nem se o indice virar centenas de MB. Devolver false para parar na hora. */
+async function varrerTexto(aCadaLinha) {
+  let fd = null;
+  try { fd = fs.openSync(IND_TEXTO, 'r'); } catch { return; }
+  try {
+    const tam = fs.fstatSync(fd).size;
+    let sobra = null, pos = 0;
+    while (pos < tam) {
+      const buf = Buffer.alloc(Math.min(IND_PEDACO, tam - pos));
+      const n = fs.readSync(fd, buf, 0, buf.length, pos);
+      if (n <= 0) break;
+      pos += n;
+      const dados = sobra ? Buffer.concat([sobra, buf.subarray(0, n)]) : buf.subarray(0, n);
+      let ini = 0, q;
+      while ((q = dados.indexOf(10, ini)) >= 0) {
+        if (q > ini && aCadaLinha(dados.toString('utf8', ini, q)) === false) return;
+        ini = q + 1;
+      }
+      sobra = ini < dados.length ? Buffer.from(dados.subarray(ini)) : null;
+      await new Promise(r => setImmediate(r));
+    }
+    if (sobra && sobra.length) aCadaLinha(sobra.toString('utf8'));
+  } catch {} finally { try { fs.closeSync(fd); } catch {} }
+}
+
+/* Faxina do arquivo de texto. Tira duas sujeiras: a linha da conversa que foi apagada e a
+   linha velha daquela que mudou. Roda no fundo e so quando o lixo ja passou da metade — nao
+   adianta reescrever 30 MB a toa. */
+async function compactarTexto() {
+  let tam = 0;
+  try { tam = fs.statSync(IND_TEXTO).size; } catch { return false; }
+  const carim = lerCarimbos();
+  let vivos = 0;
+  for (const k of Object.keys(carim)) vivos += (carim[k] && carim[k].b) || 0;
+  if (tam < 4 * 1024 * 1024 || tam < vivos * 1.5) return false;
+  const tmp = IND_TEXTO + '.faxina';
+  try { fs.writeFileSync(tmp, ''); } catch { return false; }
+  const feitos = new Set();
+  let balde = [], baldeTam = 0, deuRuim = false;
+  const despejar = () => {
+    if (!balde.length) return true;
+    try { fs.appendFileSync(tmp, balde.join('')); } catch { deuRuim = true; return false; }
+    balde = []; baldeTam = 0;
+    return true;
+  };
+  await varrerTexto((linha) => {
+    let d;
+    try { d = JSON.parse(linha); } catch { return; }
+    const c = d && d.f ? carim[d.f] : null;
+    if (!c || c.m !== d.m || c.t !== d.t || feitos.has(d.f)) return;   // apagada, velha ou repetida
+    feitos.add(d.f);
+    balde.push(linha + '\n'); baldeTam += linha.length + 1;
+    if (baldeTam >= IND_PEDACO && !despejar()) return false;
+  });
+  if (!despejar() || deuRuim) { try { fs.unlinkSync(tmp); } catch {} return false; }
+  /* enquanto a faxina rodava, uma busca pode ter acrescentado conversa no fim do arquivo
+     velho. Esse pedacinho vai junto para o novo, senao ele se perderia na troca. */
+  try {
+    const agora = fs.statSync(IND_TEXTO).size;
+    if (agora > tam) fs.appendFileSync(tmp, tailRead(IND_TEXTO, agora - tam));
+  } catch { try { fs.unlinkSync(tmp); } catch {} return false; }
+  try { fs.renameSync(tmp, IND_TEXTO); } catch { try { fs.unlinkSync(tmp); } catch {} return false; }
+  return true;
 }
 /* tira do .jsonl so o que e texto de gente ou do motor: o resto e encanamento */
 function textoLegivel(file) {
@@ -1867,17 +1985,6 @@ function textoLegivel(file) {
   }
   return partes.join('\n');
 }
-function noIndice(file) {
-  const ind = lerIndiceBusca();
-  let st;
-  try { st = fs.statSync(file); } catch { return null; }
-  const e = ind[file];
-  if (e && e.m === st.mtimeMs && e.t === st.size) return e;
-  const novo = { m: st.mtimeMs, t: st.size, x: textoLegivel(file) };
-  ind[file] = novo;
-  gravarIndiceDepois();
-  return novo;
-}
 function trechoDoIndice(texto, alvo) {
   const j = texto.toLowerCase().indexOf(alvo);
   if (j < 0) return null;
@@ -1888,22 +1995,41 @@ function trechoDoIndice(texto, alvo) {
 handle('sessions:buscar', async (_e, { engine, termo, itens }) => {
   const alvo = String(termo || '').toLowerCase().trim();
   if (!alvo) return [];
-  const achados = [];
   const lista = itens || [];
   // teto largo: so entra em acao na primeira busca, quando o indice ainda esta sendo montado
   const ateQuando = Date.now() + 20000;
+  const querido = new Map();          // caminho da conversa -> id dela na tela
   let vistos = 0, cortou = false;
   for (const it of lista) {
     vistos++;
     if (!it.file) continue;
-    const e = noIndice(it.file);
-    if (e) {
-      const t = trechoDoIndice(e.x, alvo);
-      if (t) achados.push({ id: it.id, trecho: t });
-    }
-    if (achados.length >= 40) break;
+    if (indexarSePreciso(it.file)) querido.set(it.file, it.id);
     if (Date.now() > ateQuando) { cortou = true; break; }
     if (vistos % 25 === 0) await new Promise(r => setImmediate(r));
+  }
+  /* O termo e procurado na linha CRUA antes de desmontar o JSON: assim so o punhado de linhas
+     que realmente casa paga o desmonte. Aspas e barra invertida viram escape dentro do JSON,
+     entao com elas o atalho e desligado — melhor gastar um pouco mais do que deixar de achar. */
+  const atalho = !/["\\]/.test(alvo);
+  const carim = lerCarimbos();
+  const achou = new Map();            // id da conversa -> trecho para mostrar
+  await varrerTexto((linha) => {
+    if (atalho && !linha.toLowerCase().includes(alvo)) return;
+    let d;
+    try { d = JSON.parse(linha); } catch { return; }
+    const id = d && d.f ? querido.get(d.f) : undefined;
+    if (id === undefined || achou.has(id)) return;
+    const c = carim[d.f];
+    if (!c || c.m !== d.m || c.t !== d.t) return;   // linha velha da mesma conversa nao vale
+    const t = trechoDoIndice(d.x || '', alvo);
+    if (t) achou.set(id, t);
+  });
+  // a ordem da tela e a da lista que chegou (mais nova primeiro), nao a ordem do arquivo
+  const achados = [];
+  for (const it of lista) {
+    const t = achou.get(it.id);
+    if (t) achados.push({ id: it.id, trecho: t });
+    if (achados.length >= 40) break;
   }
   // o corte por tempo nao pode ser silencioso: se sobrou conversa sem olhar, a tela avisa
   return { achados, parcial: cortou ? { vistos, total: lista.length } : null };
@@ -1917,15 +2043,16 @@ function montarIndiceDeFundo() {
       const listas = [claudeSessions(5000, true) || [], codexSessions(true, {}) || []];
       const arquivos = listas.flat().map(s => s && s.file).filter(Boolean);
       for (const f of arquivos) {
-        noIndice(f);
+        indexarSePreciso(f);
         await new Promise(r => setTimeout(r, 12));   // devagar de proposito: nada de travar a tela
       }
       // conversa apagada nao pode ficar ocupando o indice para sempre
-      const ind = lerIndiceBusca();
+      const carim = lerCarimbos();
       const vivos = new Set(arquivos);
       let tirou = 0;
-      for (const f of Object.keys(ind)) if (!vivos.has(f) && !fs.existsSync(f)) { delete ind[f]; tirou++; }
-      if (tirou) gravarIndiceDepois();
+      for (const f of Object.keys(carim)) if (!vivos.has(f) && !fs.existsSync(f)) { delete carim[f]; tirou++; }
+      if (tirou) gravarCarimbosDepois();
+      await compactarTexto();   // e, ja que estamos no fundo, tira o lixo do arquivo de texto
     } catch {}
   }, 20000);
 }
@@ -2515,9 +2642,9 @@ ipcMain.handle('sessao:apagar', async (_e, dados) => {
     if (!f || !fs.existsSync(f)) return { error: 'Não achei o arquivo desta conversa.' };
     try { await shell.trashItem(f); }
     catch (e) { return { error: 'Não consegui mandar para a Lixeira: ' + String(e && e.message || e) }; }
-    /* o indice de busca do local guarda o TEXTO de cada conversa (~/.cockpit/indice-busca.json).
-       Sem tirar daqui, a conversa apagada continuaria aparecendo na busca da coluna lateral. */
-    try { const ind = lerIndiceBusca(); if (ind && ind[f]) { delete ind[f]; gravarIndiceDepois(); } } catch {}
+    /* o indice de busca do local guarda o TEXTO de cada conversa. Sem tirar o carimbo daqui,
+       a conversa apagada continuaria aparecendo na busca da coluna lateral. */
+    try { const c = lerCarimbos(); if (c && c[f]) { delete c[f]; gravarCarimbosDepois(); } } catch {}
     // e o apelido que ele deu para ela
     try { const nomes = lerNomes(); if (id && nomes[id]) { delete nomes[id]; salvarNomes(nomes); } } catch {}
     // o indice de titulos tambem aponta para o arquivo que acabou de sumir
