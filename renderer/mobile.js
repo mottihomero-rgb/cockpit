@@ -77,11 +77,11 @@
 
   function guardarRascunhos() {
     clearTimeout(relogio);
-    if (!pronto) return;
+    if (!pronto || reabrindo) return;
     guardarConversa();
     const agora = Date.now();
     const itens = [...panes.values()].map((P, indice) => ({
-      engine: P.engine, cwd: P.cwd, sessao: sessao(P), indice,
+      engine: P.engine, cwd: P.cwd, sessao: sessao(P), file: P.sessaoFile || '', indice,
       texto: P.el.querySelector('.p-input')?.value || '',
       // o anexo vai SEM a miniatura: ela é a imagem inteira em base64 e sozinha entope a gaveta
       anexos: (P.anexos || []).map(({ mini, ...resto }) => resto),
@@ -96,26 +96,40 @@
       else localStorage.removeItem(chaveRascunhos);   // nada escrito: não deixa lixo guardado
     } catch {}
   }
-  function reporRascunhos() {
+  async function reporRascunhos() {
     let itens = [];
     try { itens = JSON.parse(localStorage.getItem(chaveRascunhos) || '[]'); } catch {}
     if (!Array.isArray(itens)) itens = [];
     // rascunho de mais de um dia não volta, e ainda sai da gaveta pra não ocupar espaço à toa
-    const vivos = itens.filter(x => x && Date.now() - (Number(x.em) || 0) < VALIDADE);
+    const vivos = itens.filter(x => x && typeof x.texto === 'string' && typeof x.cwd === 'string'
+      && ['claude', 'codex', 'acp', 'gemini', 'grok'].includes(x.engine)
+      && Date.now() - (Number(x.em) || 0) < VALIDADE);
     if (vivos.length !== itens.length) {
       try {
         if (vivos.length) localStorage.setItem(chaveRascunhos, JSON.stringify(vivos));
         else localStorage.removeItem(chaveRascunhos);
       } catch {}
     }
-    for (const [indice, P] of [...panes.values()].entries()) {
-      const item = vivos.find(x => x.engine === P.engine && x.cwd === P.cwd
-        && (x.sessao ? x.sessao === sessao(P) : !sessao(P) && x.indice === indice));
+    const usados = new Set();
+    for (const item of vivos) {
+      let P = [...panes.values()].find((p, indice) => !usados.has(p) && item.engine === p.engine && item.cwd === p.cwd
+        && (item.sessao ? item.sessao === sessao(p) : !sessao(p) && item.indice === indice));
+      // Painéis criados no telefone não fazem parte do config do Mac. Sem recriar
+      // esses painéis, seus rascunhos ficavam salvos, mas nunca voltavam à tela.
+      if (!P) {
+        if (item.sessao) {
+          await openSession({ id: item.sessao, engine: item.engine, cwd: item.cwd,
+            file: item.file || '', remoto: NA_VPS(item.cwd) });
+          P = [...panes.values()].find(p => p.engine === item.engine && p.cwd === item.cwd && sessao(p) === item.sessao);
+        } else P = newPane({ engine: item.engine, cwd: item.cwd, aba: abaDoCaminho(item.cwd, true) });
+      }
+      if (!P) continue;
+      usados.add(P);
       const campo = P.el.querySelector('.p-input');
-      if (!item || !campo || campo.value) continue;
+      if (!campo || campo.value) continue;
       campo.value = item.texto;
       campo.dispatchEvent(new Event('input', { bubbles: true }));
-      if (item.anexos?.length && !P.anexos.length) anexar(P, item.anexos).catch(() => {});
+      if (Array.isArray(item.anexos) && item.anexos.length && !P.anexos.length) await anexar(P, item.anexos).catch(() => {});
     }
   }
   // não gravar a cada tecla: espera ele parar de digitar meio segundo
@@ -170,12 +184,17 @@
   window.addEventListener('cockpit:pronto', async () => {
     pronto = true; reabrindo = true;
     try {
-      const ultima = JSON.parse(localStorage.getItem(chaveConversa) || 'null');
-      if (ultima?.id && ultima.cwd && Date.now() - (Number(ultima.em) || 0) < VALIDADE
-        && ['claude', 'codex', 'acp', 'gemini', 'grok'].includes(ultima.engine)) await openSession(ultima);
+      try {
+        const ultima = JSON.parse(localStorage.getItem(chaveConversa) || 'null');
+        if (ultima?.id && ultima.cwd && Date.now() - (Number(ultima.em) || 0) < VALIDADE
+          && ['claude', 'codex', 'acp', 'gemini', 'grok'].includes(ultima.engine)) await openSession(ultima);
+      } catch { /* rascunhos ainda voltam se só a última conversa ficou indisponível */ }
+      const focoAnterior = focusPane;
+      await reporRascunhos();
+      if (focoAnterior && panes.get(focoAnterior.id) === focoAnterior) setFocus(focoAnterior);
     } catch { /* o histórico completo continua disponível na gaveta */ }
     finally { reabrindo = false; }
-    reporRascunhos(); mostrarConversa(); voltou();
+    mostrarConversa(); voltou();
   });
   window.addEventListener('cockpit:conectado', voltou);
   window.addEventListener('pageshow', voltou);

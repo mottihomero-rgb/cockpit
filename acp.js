@@ -551,7 +551,7 @@ function criarAcp(dep) {
        o catch do primeiro matava o processo do segundo. Agora um start IGUAL
        em curso e' reaproveitado. Igual = mesmo comando, pasta, modo e retomada;
        mudou qualquer um, e' outro start de verdade (e derruba o em curso). */
-    const chave = JSON.stringify([comando, o.cwd || '', o.approval || '', o.resumeId || '']);
+    const chave = JSON.stringify([comando, o.cwd || '', o.approval || '', o.resumeId || '', o.authMethod || '', o.chaveApi === true]);
     const emCurso = iniciando.get(paneId);
     if (emCurso && emCurso.chave === chave) return emCurso.promessa;
     const promessa = startDeVerdade(paneId, comando, o);
@@ -572,7 +572,7 @@ function criarAcp(dep) {
       proc: null, buf: '', erro: '', rpcId: 0, pend: new Map(), pedidos: new Map(),
       sessionId: '', nova: false, caps: {}, info: {}, modos: [], modoAtual: '', modelos: [], modeloAtual: '', comandos: [],
       ferramentas: new Map(), msgId: null, acc: '', seq: 0, carregando: false, ocupado: false, cancelando: false,
-      arquivo: '', timerFala: null, ultimaFala: null, parandoDeProposito: false, contextoAntigo: null,
+      arquivo: '', timerFala: null, timerFila: null, ultimaFala: null, parandoDeProposito: false, contextoAntigo: null,
     };
     paineis.set(paneId, st);
     try {
@@ -741,15 +741,22 @@ function criarAcp(dep) {
     st.cancelando = false;
     st.ferramentas.clear();
     cancelarPedidos(st);
+    // A mensagem continua na fila até poder sair. Tirar antes dos 50 ms perdia
+    // a mensagem se chegasse outra nesse intervalo, além de inverter a ordem.
+    if (st.fila && st.fila.length && !st.timerFila) {
+      st.timerFila = setTimeout(() => {
+        st.timerFila = null;
+        if (paineis.get(st.paneId) !== st || st.ocupado) return;
+        const prox = st.fila.shift();
+        if (prox) enviar(st.paneId, prox.texto, prox.anexos);
+      }, 50);
+    }
     // pedido de permissao que sobrou nao vale mais: o main tira o cartao da tela
     try { aoFimDoTurno && aoFimDoTurno(st.paneId); } catch {}
     if (motivo === 'refusal') emit(st.paneId, 'note', { text: 'O agente recusou continuar este pedido.', error: true });
     else if (motivo === 'max_turn_requests') emit(st.paneId, 'note', { text: 'O agente parou no teto de passos do turno. Mande "continue" pra seguir.' });
     else if (motivo === 'max_tokens') emit(st.paneId, 'note', { text: 'A resposta bateu no teto de tamanho. Mande "continue" pra seguir.' });
     emit(st.paneId, 'turn-end', {});
-    // mensagem que chegou com o turno rodando: sai agora, na ordem
-    const prox = st.fila && st.fila.shift();
-    if (prox) setTimeout(() => { if (paineis.get(st.paneId) === st && !st.ocupado) enviar(st.paneId, prox.texto, prox.anexos); }, 50);
   }
 
   function textoDoContextoAntigo(msgs) {
@@ -767,7 +774,7 @@ function criarAcp(dep) {
   function enviar(paneId, texto, anexos) {
     const st = paineis.get(paneId);
     if (!st || !st.proc || !st.sessionId) return false;
-    if (st.ocupado) {
+    if (st.ocupado || st.timerFila) {
       // ocupado NAO e' morto: a tela traduzia o false como "conexao caiu" e
       // religava por cima do turno. Vai pra fila e sai no fim do turno.
       (st.fila = st.fila || []).push({ texto, anexos: (anexos || []).slice() });
@@ -821,10 +828,13 @@ function criarAcp(dep) {
   }
 
   function parar(paneId) {
+    iniciando.delete(paneId);
     const st = paineis.get(paneId);
     if (!st) return;
     st.parandoDeProposito = true;
     pararFala(st);
+    if (st.timerFila) { clearTimeout(st.timerFila); st.timerFila = null; }
+    st.fila = [];
     cancelarPedidos(st);
     for (const [, q] of [...st.pend]) q.rej(new Error('painel parado'));
     st.pend.clear();
@@ -862,6 +872,8 @@ function criarAcp(dep) {
 
   return {
     start, enviar, interromper, parar, responderPermissao, setModelo, comandos,
+    trabalhando: () => [...paineis.values()].filter(st => st.ocupado).length,
+    vivo: paneId => !!paineis.get(paneId)?.proc,
     fechar: () => { for (const id of [...paineis.keys()]) parar(id); },
     sessoes: () => listarSessoes(pastaDados),
     historico: (id, file, max) => historicoDaSessao(file && fs.existsSync(file) ? file : arquivoDaSessao(pastaDados, id), max || 60),

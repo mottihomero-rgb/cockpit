@@ -1,0 +1,38 @@
+'use strict';
+const { _electron } = require('playwright');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const root = path.resolve(__dirname, '..');
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cockpit-native-qa-'));
+const output = process.env.COCKPIT_QA_OUT || home;
+let app;
+(async () => {
+  const env = { ...process.env, COCKPIT_QA_HOME: home, COCKPIT_QA_SOURCE: process.env.COCKPIT_QA_SOURCE || root };
+  delete env.ELECTRON_RUN_AS_NODE;
+  app = await _electron.launch({ executablePath: require('electron'), args: [path.join(__dirname, 'fixtures/electron-auditoria-main.cjs')], env });
+  const page = await app.firstWindow();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.locator('#naOk').waitFor({ state: 'visible' });
+  await page.locator('.na-motor[data-motor=codex]').click();
+  await page.locator('#naOk').click();
+  await page.locator('.p-input').first().fill('Teste nativo isolado, sem IA real');
+  await page.locator('.p-send').first().click();
+  await page.getByText('Resposta nativa de teste:', { exact: false }).first().waitFor();
+  const status = await app.evaluate(({ app }) => ({ electron: process.versions.electron, userData: app.getPath('userData') }));
+  assert.ok(status.userData.startsWith(home));
+  assert.deepEqual(errors, []);
+  await page.screenshot({ path: path.join(output, 'electron-nativo.png') });
+  const cfg = JSON.parse(fs.readFileSync(path.join(home, 'dados/config.json'), 'utf8'));
+  assert.ok(cfg.abas && cfg.abas.length, 'IPC deve salvar a aba criada no disco temporário');
+  const log = fs.readFileSync(path.join(home, 'dados/cockpit.log'), 'utf8');
+  assert.doesNotMatch(log, /ERRO NAO TRATADO|PROMESSA REJEITADA sem tratamento/);
+  const result = { ...status, motores: 'simulados', ipc: 'real', configuracao: 'disco temporário', envio: true, resposta: true, erros: errors };
+  fs.writeFileSync(path.join(output, 'qa-electron.json'), JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
+})().catch(e => { console.error(e); process.exitCode = 1; }).finally(async () => {
+  if (app) await app.close();
+  if (output !== home) fs.rmSync(home, { recursive: true, force: true });
+});

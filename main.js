@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const { StringDecoder } = require('string_decoder');
 const codexProtocol = require('./codex-protocol');
 
 const plataforma = require('./plataforma');
@@ -160,7 +161,8 @@ function saveConfig(cfg, origem) {
       }
     }
   }
-  if (gravarSeguro(CONFIG_PATH(), JSON.stringify(aGravar, null, 2))) abasNoDisco = listaDeAbas(aGravar).length;
+  if (!gravarSeguro(CONFIG_PATH(), JSON.stringify(aGravar, null, 2))) return -1;
+  abasNoDisco = listaDeAbas(aGravar).length;
   return devolvidas;
 }
 
@@ -225,9 +227,11 @@ const codexConns = new Map();     // destino ('local' | 'vps') -> conexao
 const codexPaneDest = new Map();  // paneId -> destino
 const codexPaneBilling = new Map(); // paneId -> 'plan' | 'api'
 const codexPaneSettings = new Map(); // escolhas efetivas por conversa, nunca configuração global
+const codexPaneIdentity = new Map(); // distingue duas aberturas da mesma thread no mesmo painel
 const codexPaneAgents = new Map();
 const codexAgentOwners = new Map(); // thread de agente -> painel pai, sem misturar turnos
 const codexSettingsRevision = new Map();
+const codexSettingsQueue = new Map(); // aplica escolhas na ordem; resposta lenta não vence escolha nova
 const codexPendingSettings = new Map(); // escolhas que só serão efetivas no próximo turn/start
 const codexTurnRevision = new Map();
 const codexProcessPanes = new Map();
@@ -265,9 +269,34 @@ function conexaoCodex(destino) {
   return c;
 }
 
+function limparPaineisCodex(destino, avisar = true) {
+  for (const [paneId, d] of codexPaneDest) {
+    if (d !== destino) continue;
+    if (avisar) emit(paneId, 'engine-down', {});
+    const tid = codex.paneToThread.get(paneId);
+    if (tid) codex.threadToPane.delete(tid);
+    codex.paneToThread.delete(paneId);
+    codexPaneIdentity.delete(paneId);
+    codex.paneTurn.delete(paneId);
+    codexApiCortado.delete(paneId);
+    codexPendingSettings.delete(paneId);
+    codexPaneAgents.delete(paneId);
+    paneStarts.delete(paneId);
+    soltarFio(paneId);
+    const delta = filaDelta.get(paneId);
+    if (delta) { clearTimeout(delta.timer); filaDelta.delete(paneId); }
+    for (const [key, approval] of pendingApprovals) if (approval.paneId === paneId) pendingApprovals.delete(key);
+    for (const [thread, owner] of codexAgentOwners) if (owner === paneId) codexAgentOwners.delete(thread);
+    for (const [key, owner] of codexProcessPanes) if (owner === paneId) codexProcessPanes.delete(key);
+    codexPaneDest.delete(paneId);
+    codexPaneBilling.delete(paneId);
+  }
+}
+
 function codexStart(destino = 'local') {
   const c = conexaoCodex(destino);
   if (c.ready) return c.ready;
+  let processoDaTentativa;
   const tentativa = new Promise((resolve, reject) => {
     let p;
     try {
@@ -279,10 +308,12 @@ function codexStart(destino = 'local') {
         p = spawn('ssh', argsSsh(r, 'codex app-server'), { env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
       }
     } catch (e) { return reject(e); }
-    c.proc = p;
+    c.proc = p; processoDaTentativa = p; c.buf = '';
+    const decoder = new StringDecoder('utf8');
 
     p.stdout.on('data', (chunk) => {
-      c.buf += chunk.toString('utf8');
+      if (c.proc !== p) return;
+      c.buf += decoder.write(chunk);
       let i;
       while ((i = c.buf.indexOf('\n')) >= 0) {
         const line = c.buf.slice(0, i).trim();
@@ -297,22 +328,15 @@ function codexStart(destino = 'local') {
     // derruba o Electron inteiro
     p.stdin.on('error', (e) => { anota('stdin do codex caiu:', e && e.message); });
     p.on('close', () => {
+      if (c.proc !== p) return;
       c.proc = null; c.ready = null;
       // quem estava esperando resposta precisa saber que caiu. Sem isto a promessa nunca
       // resolve e o chat fica em "Ligando o Codex..." para sempre, sem erro nenhum.
       for (const [, pend] of c.pend) { try { pend.reject(new Error('o Codex caiu no meio')); } catch {} }
       c.pend.clear();
-      for (const [paneId, d] of codexPaneDest) {
-        if (d !== destino) continue;
-        emit(paneId, 'engine-down', {});
-        const tid = codex.paneToThread.get(paneId);
-        if (tid) codex.threadToPane.delete(tid);
-        codex.paneToThread.delete(paneId);
-        codexPaneDest.delete(paneId);
-        codexPaneBilling.delete(paneId);
-      }
+      limparPaineisCodex(destino);
     });
-    p.on('error', (e) => { c.ready = null; reject(e); });
+    p.on('error', (e) => { if (c.proc === p) reject(e); });
 
     codexReq(destino, 'initialize', { clientInfo: { name: 'cockpit', version: '1.0.0', title: 'Cockpit' }, capabilities: { experimentalApi: true } })
       .then(() => { codexNote(destino, 'initialized', {}); resolve(true); })
@@ -321,7 +345,17 @@ function codexStart(destino = 'local') {
   c.ready = tentativa;
   // Se ligar o Codex falhar, esquecer a tentativa. Antes o erro ficava guardado em c.ready e
   // TODA chamada seguinte recebia o mesmo erro velho: o Codex ficava morto ate reiniciar o app.
-  tentativa.catch(() => { if (c.ready === tentativa) c.ready = null; });
+  tentativa.catch(() => {
+    if (c.ready !== tentativa) return;
+    c.ready = null;
+    if (processoDaTentativa && c.proc === processoDaTentativa) {
+      c.proc = null; c.buf = '';
+      for (const [, pend] of c.pend) pend.reject(new Error('Não consegui iniciar o Codex.'));
+      c.pend.clear();
+      limparPaineisCodex(destino);
+      try { processoDaTentativa.kill('SIGTERM'); } catch {}
+    }
+  });
   return c.ready;
 }
 
@@ -810,9 +844,11 @@ function claudeSettingsSemBypass() {
    conversa ja esta aberta, em vez de subir por cima. */
 const donoDoFio = new Map();   // numero da conversa -> { paneId, engine } que esta com ela
 const insistiuNoFio = new Map();  // painel -> conversa que ele ja tentou abrir uma vez
+const paneStarts = new Map();    // reserva durante a abertura assíncrona; fechar invalida a resposta
 
 // painel com motor de pe. E o que separa "aberta agora" de "sobrou de uma janela que fechou".
-const paneVivo = (paneId) => claudePanes.has(paneId) || codex.paneToThread.has(paneId);
+const paneVivo = (paneId) => paneStarts.has(paneId) || claudePanes.has(paneId) || codex.paneToThread.has(paneId)
+  || cli.vivo(paneId) || acp.vivo(paneId);
 
 // de que tela e o painel: o telefone poe um "w" na frente dos ids (renderer/app.js:11)
 const telaDoPane = (paneId) => (/^w/.test(String(paneId || '')) ? 'celular' : 'Mac');
@@ -957,10 +993,12 @@ function claudeStart(paneId, opts) {
     proc = spawnBin(CLAUDE_BIN, args, { cwd: opts.cwd || HOME, env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
   }
   const st = { proc, buf: '' };
+  const decoder = new StringDecoder('utf8');
   claudePanes.set(paneId, st);
 
   proc.stdout.on('data', (chunk) => {
-    st.buf += chunk.toString('utf8');
+    if (claudePanes.get(paneId) !== st || st.parandoDeProposito) return;
+    st.buf += decoder.write(chunk);
     let i;
     while ((i = st.buf.indexOf('\n')) >= 0) {
       const line = st.buf.slice(0, i).trim(); st.buf = st.buf.slice(i + 1);
@@ -970,6 +1008,7 @@ function claudeStart(paneId, opts) {
     }
   });
   proc.stderr.on('data', (c) => {
+    if (claudePanes.get(paneId) !== st || st.parandoDeProposito) return;
     const t = String(c).trim();
     // ruido normal do ssh nao vira aviso; erro de verdade sim
     if (!t || /Warning: Permanently added|Pseudo-terminal/i.test(t)) return;
@@ -1008,6 +1047,7 @@ function claudeStart(paneId, opts) {
   });
   proc.on('error', (e) => {
     const meu = claudePanes.get(paneId) === st;
+    if (!meu || st.parandoDeProposito) return;
     if (meu) claudePanes.delete(paneId);
     emit(paneId, 'note', { text: 'Erro: ' + e.message, error: true });
     // o 'close' que vem em seguida sai calado (a guarda ve que o registro ja nao e deste
@@ -1020,7 +1060,14 @@ function claudeStart(paneId, opts) {
 
 function claudeStop(paneId) {
   const st = claudePanes.get(paneId);
-  if (st) { st.parandoDeProposito = true; try { st.proc.kill('SIGTERM'); } catch {} }
+  if (st) {
+    st.parandoDeProposito = true;
+    claudePanes.delete(paneId);
+    try { st.proc.kill('SIGTERM'); } catch {}
+  }
+  const delta = filaDelta.get(paneId);
+  if (delta) { clearTimeout(delta.timer); filaDelta.delete(paneId); }
+  for (const [key, pending] of pendingApprovals) if (pending.paneId === paneId && pending.kind === 'claude') pendingApprovals.delete(key);
 }
 
 /* Unico lugar que fala com o claude. Antes cada comando escrevia direto no stdin, e escrever
@@ -2956,9 +3003,9 @@ function termRodar({ id, linha, cols, rows }) {
     });
   } catch (e) { return { error: e.message }; }
   terms.set(id, p);
-  p.onData((d) => termEnviar(id, 'data', { data: d }));
-  p.onErro((e) => termEnviar(id, 'data', { data: '\r\n[erro: ' + e.message + ']\r\n' }));
-  p.onFim((code) => { terms.delete(id); termEnviar(id, 'exit', { code }); });
+  p.onData((d) => { if (terms.get(id) === p) termEnviar(id, 'data', { data: d }); });
+  p.onErro((e) => { if (terms.get(id) === p) termEnviar(id, 'data', { data: '\r\n[erro: ' + e.message + ']\r\n' }); });
+  p.onFim((code) => { if (terms.get(id) !== p) return; terms.delete(id); termEnviar(id, 'exit', { code }); });
   return { ok: true };
 }
 
@@ -3708,15 +3755,7 @@ handle('codex:reiniciar', async (_e) => {
      so' devolveria erro. Some junto com o processo. */
   for (const [k, a] of pendingApprovals) if (a && a.destino === 'local') pendingApprovals.delete(k);
   // painel que vivia no processo velho perde a thread: a proxima mensagem abre outra
-  for (const [paneId, d] of codexPaneDest) {
-    if (d !== 'local') continue;
-    const tid = codex.paneToThread.get(paneId);
-    if (tid) codex.threadToPane.delete(tid);
-    codex.paneToThread.delete(paneId);
-    codex.paneTurn.delete(paneId);
-    codexPaneDest.delete(paneId);
-    codexPaneBilling.delete(paneId);
-  }
+  limparPaineisCodex('local', false);
   if (!p) return { ok: true };
   /* O 'close' registrado no codexStart nao confere se quem caiu ainda e' o processo atual: se
      ele disparasse depois de o Codex NOVO ja estar de pe, apagaria o processo novo e o chat
@@ -3998,10 +4037,11 @@ handle('imagem:salvar', (_e, { dados, prefixo } = {}) => {
     }
     const dir = path.join(app.getPath('userData'), 'colados');
     fs.mkdirSync(dir, { recursive: true });
-    const nome = (String(prefixo || 'imagem').replace(/[^\w-]/g, '').slice(0, 24) || 'imagem')
-      + '-' + Date.now() + '.' + tipo;
-    const destino = path.join(dir, nome);
-    fs.writeFileSync(destino, bytes);
+    const base = String(prefixo || 'imagem').replace(/[^\w-]/g, '').slice(0, 24) || 'imagem';
+    let carimbo = Date.now();
+    let destino = path.join(dir, base + '-' + carimbo + '.' + tipo);
+    while (fs.existsSync(destino)) destino = path.join(dir, base + '-' + (++carimbo) + '.' + tipo);
+    fs.writeFileSync(destino, bytes, { flag: 'wx' });
     return { arquivo: destino };
   } catch (e) { return { error: String(e && e.message || e) }; }
 });
@@ -4299,15 +4339,27 @@ function agentesTrabalhando() {
   let n = 0;
   try { n += codex.paneTurn.size; } catch {}
   try { for (const st of claudePanes.values()) if (st && st.rodando) n++; } catch {}
+  try { n += cli.trabalhando(); } catch {}
+  try { n += acp.trabalhando(); } catch {}
   return n;
 }
 let saindoDoApp = false;
 
 function shutdown() {
+  paneStarts.clear();
   cli.fechar(); acp.fechar();
   fecharMestresSsh();   // o mestre do ControlPersist nao fica pendurado depois do app
   for (const id of [...claudePanes.keys()]) claudeStop(id);
-  for (const c of codexConns.values()) { if (c.proc) { try { c.proc.kill('SIGTERM'); } catch {} c.proc = null; c.ready = null; } }
+  for (const id of [...vozAtiva.keys()]) vozMatar(id);
+  for (const id of [...terms.keys()]) termMatar(id);
+  for (const c of codexConns.values()) {
+    const proc = c.proc;
+    c.proc = null; c.ready = null; c.buf = '';
+    for (const [, pending] of c.pend) pending.reject(new Error('A janela do Cockpit foi fechada.'));
+    c.pend.clear();
+    limparPaineisCodex(c.destino);
+    if (proc) { try { proc.kill('SIGTERM'); } catch {} }
+  }
 }
 
 /* ======================= IPC ======================= */
@@ -4357,6 +4409,7 @@ handle('config:set', (_e, c, origem) => {
   /* `origem` so vem de dentro do Mac (o preload passa). Sem ela, uma gravacao que perde aba
      e barrada. O numero de abas devolvidas volta pra tela poder dar o recado. */
   const devolvidas = saveConfig(novo, origem);
+  if (devolvidas < 0) return { ok: false, error: 'Não consegui salvar as abas e preferências no disco. O arquivo anterior foi preservado.' };
   return { ok: true, abasDevolvidas: devolvidas };
 });
 handle('sys:home', () => HOME);
@@ -4507,8 +4560,10 @@ handle('voz:vivo', (_e, { paneId, silencio, teto }) => {
   } catch (e) { return { error: String(e && e.message || e) }; }
   vozAtiva.set(paneId, proc);
   let buf = '';
+  const decoder = new StringDecoder('utf8');
   proc.stdout.on('data', (d) => {
-    buf += d.toString();
+    if (vozAtiva.get(paneId) !== proc) return;
+    buf += decoder.write(d);
     const linhas = buf.split('\n');
     buf = linhas.pop();
     for (const l of linhas) {
@@ -4521,10 +4576,17 @@ handle('voz:vivo', (_e, { paneId, silencio, teto }) => {
   let erro = '';
   proc.stderr.on('data', (d) => { erro = (erro + d.toString()).slice(-500); });
   proc.on('close', () => {
-    if (vozAtiva.get(paneId) === proc) vozAtiva.delete(paneId);
+    if (vozAtiva.get(paneId) !== proc) return;
+    vozAtiva.delete(paneId);
     emit(paneId, 'voz', { type: 'status', msg: 'fim', erro: erro || undefined });
   });
-  proc.on('error', (e) => emit(paneId, 'voz', { type: 'error', msg: String(e && e.message || e) }));
+  const falhou = (e) => {
+    if (vozAtiva.get(paneId) !== proc) return;
+    vozMatar(paneId);
+    emit(paneId, 'voz', { type: 'error', msg: String(e && e.message || e) });
+  };
+  proc.on('error', falhou);
+  proc.stdin.on('error', falhou);
   return { ok: true };
 });
 handle('voz:parar', (_e, { paneId, cancelar }) => {
@@ -4705,6 +4767,10 @@ function attachCodexThread(paneId, threadId, response, settings) {
   if (previous && previous !== threadId) codex.threadToPane.delete(previous);
   codex.threadToPane.set(threadId, paneId);
   codex.paneToThread.set(paneId, threadId);
+  codexPaneIdentity.set(paneId, {});
+  // Uma retomada substitui a ligação anterior, inclusive se o id da conversa for igual.
+  codex.paneTurn.delete(paneId);
+  codexApiCortado.delete(paneId);
   const previousMode = (codexPaneSettings.get(paneId) || {}).collaborationMode || 'default';
   codexPaneSettings.set(paneId, { ...settings, collaborationMode: previousMode });
   codexPendingSettings.set(paneId, settings);
@@ -4735,7 +4801,10 @@ function matarGrupoExtra(proc) {
     if (timer.unref) timer.unref();
   } else matarProcesso(proc);
 }
-const cli = require('./cli-motors').criarCli({ HOME, emit, spawnBin, acharBin, temBin, buildEnv: () => contasCli.ambiente('gemini'),
+const cli = require('./cli-motors').criarCli({ HOME, emit: (paneId, kind, data) => {
+  if (kind === 'sessao' && data && data.id) marcarDonoDoFio(paneId, data.id, 'gemini');
+  emit(paneId, kind, data);
+}, spawnBin, acharBin, temBin, buildEnv: () => contasCli.ambiente('gemini'),
   pastaDados: () => app.getPath('userData'), matarGrupo: matarGrupoExtra,
   aoConfirmarConta: () => contasCli.confirmar('gemini'), aoFalharConta: () => contasCli.invalidar('gemini') });
 handle('sessions:cli', (_e, engine) => engine === 'gemini' ? cli.sessoes()
@@ -4770,6 +4839,7 @@ function edicaoDoAcp(m) {
    usam. Só três eventos precisam de tradução; o resto passa direto. */
 function emitAcp(paneId, kind, data) {
   const d = data || {};
+  if (kind === 'sessao' && d.id) marcarDonoDoFio(paneId, d.id, (paneStarts.get(paneId) || {}).engine || 'acp');
   if (kind === 'plano') {
     // o plano vivo do ACP entra no MESMO cartão do planoCodex, sem cartão novo
     const steps = (d.itens || []).map((i) => ({
@@ -4867,10 +4937,15 @@ handle('pane:start', async (_e, data) => {
       : 'no ' + telaDoPane(donoAtual.paneId);
     return { jaAberta: true, onde, error: 'Esta conversa já está aberta ' + onde + '.' };
   }
+  const abertura = { engine };
+  paneStarts.set(paneId, abertura);
+  const aberturaAtual = () => paneStarts.get(paneId) === abertura;
+  try {
   if (donoAtual) {
     // ele mandou de novo: a conversa muda de dono e o agente que estava nela para de verdade
     try { await HANDLERS['pane:stop'](null, { paneId: donoAtual.paneId, engine: donoAtual.engine }); }
     catch (e) { anota('nao consegui desligar o dono anterior da conversa:', e && e.message); }
+    if (!aberturaAtual()) return false;
     emit(donoAtual.paneId, 'note', { text: 'Esta conversa foi aberta ' + (telaDoPane(paneId) === 'Mac' ? 'no Mac' : 'no celular') + ' e passou para lá. Este chat parou.', error: true });
   }
   insistiuNoFio.delete(paneId);
@@ -4910,36 +4985,61 @@ handle('pane:start', async (_e, data) => {
   if (porCreditos) {
     if (dest !== 'local') throw new Error('O Astra por créditos funciona no Mac, não na VPS.');
     await validarUsoAstra();
+    if (!aberturaAtual()) return false;
     if (data.experimentalContext) throw new Error('O contexto experimental exige login ChatGPT. Use a assinatura neste chat.');
   }
   const settings = codexSettingsFor(paneId, { ...data, cwd: cwd || HOME, ...(porCreditos ? { serviceTier: 'default' } : {}) });
   codexPaneDest.set(paneId, dest);
   codexPaneBilling.set(paneId, porCreditos ? 'api' : 'plan');
   await codexStart(dest);
+  if (!aberturaAtual()) return false;
   const params = codexThreadParams(settings, porCreditos ? 'api' : 'plan');
   let fioInvalido = false;
   if (resumeId) {
     try {
       const r = await codexReq(dest, 'thread/resume', { threadId: resumeId, ...params });
+      if (!aberturaAtual()) return false;
       const rid = r && (r.threadId || r.thread && r.thread.id) || resumeId;
       attachCodexThread(paneId, rid, r || {}, settings);
       return true;
     } catch (e) {
+      if (!aberturaAtual()) return false;
       if (!/no rollout found for thread id/i.test(String(e && e.message || e))) throw e;
       fioInvalido = true;
     }
   }
   const res = await codexReq(dest, 'thread/start', params);
+  if (!aberturaAtual()) return false;
   const tid = res && (res.threadId || res.thread && res.thread.id);
   if (!tid) throw new Error('Codex não devolveu a conversa');
   attachCodexThread(paneId, tid, res, settings);
   if (fioInvalido) emit(paneId, 'note', { text: 'O número antigo era de outro motor. Abri uma conversa nova no Codex e mantive o contexto desta tela.' });
   return fioInvalido ? { ok: true, nova: true } : true;
+  } finally {
+    if (aberturaAtual()) paneStarts.delete(paneId);
+  }
 });
 
-async function codexApplySettings(paneId, changes) {
+function codexApplySettings(paneId, changes) {
+  const identidade = codexPaneIdentity.get(paneId);
+  const anterior = codexSettingsQueue.get(paneId);
+  const fila = { identidade, promessa: null };
+  const aplicar = () => {
+    if (codexPaneIdentity.get(paneId) !== identidade) throw new Error('Esta conversa foi fechada enquanto as escolhas aguardavam.');
+    return codexApplySettingsAgora(paneId, changes);
+  };
+  fila.promessa = anterior && anterior.identidade === identidade
+    ? anterior.promessa.catch(() => {}).then(aplicar) : Promise.resolve().then(aplicar);
+  codexSettingsQueue.set(paneId, fila);
+  const limpar = () => { if (codexSettingsQueue.get(paneId) === fila) codexSettingsQueue.delete(paneId); };
+  fila.promessa.then(limpar, limpar);
+  return fila.promessa;
+}
+
+async function codexApplySettingsAgora(paneId, changes) {
   const tid = codex.paneToThread.get(paneId);
   if (!tid) throw new Error('Abra uma conversa primeiro.');
+  const identidade = codexPaneIdentity.get(paneId);
   const settings = codexSettingsFor(paneId, changes);
   if (changes.cwd && destinoDoCwd(changes.cwd) !== destinoDoPane(paneId)) throw new Error('Troque a pasta pelo menu para mudar entre Mac e VPS.');
   if (codexPaneBilling.get(paneId) === 'api') {
@@ -4952,6 +5052,7 @@ async function codexApplySettings(paneId, changes) {
   }
   // Config não é campo de turn/start: reaplicar somente a esta conversa via resume.
   const response = await codexReq(destinoDoPane(paneId), 'thread/resume', { threadId: tid, ...codexThreadParams(settings, codexPaneBilling.get(paneId)) });
+  if (codex.paneToThread.get(paneId) !== tid || codexPaneIdentity.get(paneId) !== identidade) throw new Error('Esta conversa foi fechada enquanto as escolhas eram aplicadas.');
   const previousMode = (codexPaneSettings.get(paneId) || {}).collaborationMode || 'default';
   codexPaneSettings.set(paneId, { ...settings, collaborationMode: previousMode });
   codexPendingSettings.set(paneId, settings);
@@ -4984,12 +5085,17 @@ handle('pane:send', async (_e, data) => {
   }
   const tid = codex.paneToThread.get(paneId);
   if (!tid) return false;
+  const identidade = codexPaneIdentity.get(paneId);
+  const dest = destinoDoPane(paneId);
+  const mesmoChat = () => codex.paneToThread.get(paneId) === tid && codexPaneIdentity.get(paneId) === identidade;
   if (codexPaneBilling.get(paneId) === 'api') await validarUsoAstra();
+  if (!mesmoChat()) return false;
   const previous = codexPaneSettings.get(paneId) || {};
   let settings = codexSettingsFor(paneId, data);
   if (settings.experimentalContext !== previous.experimentalContext) {
     if (codex.paneTurn.has(paneId)) throw new Error('Espere o trabalho terminar para mudar o contexto.');
     const updated = await codexApplySettings(paneId, data);
+    if (!mesmoChat()) return false;
     // resume pode devolver o esforço do turno anterior. O envio deve manter o
     // snapshot escolhido pelo usuário, sem confundir intenção com valor efetivo.
     settings = codexProtocol.normalizeSettings(updated.settings, settings);
@@ -5001,7 +5107,15 @@ handle('pane:send', async (_e, data) => {
   const revision = codexSettingsRevision.get(paneId) || 0;
   const turnRevision = codexTurnRevision.get(paneId) || 0;
   codexPendingSettings.set(paneId, settings);
-  const response = await codexReq(destinoDoPane(paneId), 'turn/start', { threadId: tid, input, ...codexProtocol.turnSettings(settings, policy) });
+  const response = await codexReq(dest, 'turn/start', { threadId: tid, input, ...codexProtocol.turnSettings(settings, policy) });
+  if (!mesmoChat()) {
+    // O servidor pode aceitar o envio depois do fechamento. Interromper ESTE turno,
+    // sem escrever estado nem eventos no painel que já foi reutilizado.
+    if (response && response.turn && response.turn.id && !['completed', 'failed', 'interrupted'].includes(response.turn.status)) {
+      codexReq(dest, 'turn/interrupt', { threadId: tid, turnId: response.turn.id }).catch(() => {});
+    }
+    return false;
+  }
   if ((codexSettingsRevision.get(paneId) || 0) === revision) {
     codexPaneSettings.set(paneId, settings);
     codexPendingSettings.delete(paneId);
@@ -5065,6 +5179,9 @@ handle('pane:interrupt', async (_e, { paneId, engine }) => {
 });
 
 handle('pane:stop', async (_e, { paneId, engine }) => {
+  paneStarts.delete(paneId);
+  const delta = filaDelta.get(paneId);
+  if (delta) { clearTimeout(delta.timer); filaDelta.delete(paneId); }
   soltarFio(paneId);   // parou: a conversa fica livre para a outra tela abrir
   if (engine === 'gemini') { cli.parar(paneId); return true; }
   // ramo NOVO na frente: mata o processo do agente e devolve o "cancelled" a quem esperava
@@ -5072,6 +5189,7 @@ handle('pane:stop', async (_e, { paneId, engine }) => {
   if (engine === 'claude') claudeStop(paneId);
   else {
     const tid = codex.paneToThread.get(paneId);
+    const identidade = codexPaneIdentity.get(paneId);
     const turno = codex.paneTurn.get(paneId);
     // O codex app-server e um processo so, compartilhado por todos os chats. Fechar o chat
     // apenas esquecia o apontamento: o turno continuava vivo la dentro, rodando comando e
@@ -5087,8 +5205,8 @@ handle('pane:stop', async (_e, { paneId, engine }) => {
     }
     // Outro chat pode ter ocupado o mesmo painel enquanto a interrupção aguardava.
     // Nesse caso, a limpeza antiga não pode apagar destino, escolhas ou turno novos.
-    if (codex.paneToThread.get(paneId) !== tid) {
-      if (tid && codex.threadToPane.get(tid) === paneId) codex.threadToPane.delete(tid);
+    if (paneStarts.has(paneId) || codex.paneToThread.get(paneId) !== tid || codexPaneIdentity.get(paneId) !== identidade) {
+      if (tid && codex.paneToThread.get(paneId) !== tid && codex.threadToPane.get(tid) === paneId) codex.threadToPane.delete(tid);
       return true;
     }
     codex.paneTurn.delete(paneId);
@@ -5101,6 +5219,7 @@ handle('pane:stop', async (_e, { paneId, engine }) => {
       if (codex.paneToThread.get(paneId) === tid) codex.paneToThread.delete(paneId);
     }
     codexPaneDest.delete(paneId);
+    codexPaneIdentity.delete(paneId);
     codexPaneBilling.delete(paneId);
     codexPaneSettings.delete(paneId);
     codexPaneAgents.delete(paneId);

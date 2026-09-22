@@ -21,7 +21,7 @@ function normalizeSettings(previous = {}, changes = {}) {
     if (changes[key] !== undefined && changes[key] !== null) result[key] = changes[key];
   }
   result.serviceTier = result.serviceTier === 'fast' ? 'priority' : (['default', 'priority'].includes(result.serviceTier) ? result.serviceTier : '');
-  const mode = typeof result.collaborationMode === 'object' ? result.collaborationMode.mode : result.collaborationMode;
+  const mode = result.collaborationMode && typeof result.collaborationMode === 'object' ? result.collaborationMode.mode : result.collaborationMode;
   result.collaborationMode = mode === 'plan' || result.approval === 'plan' ? 'plan' : 'default';
   result.experimentalContext = result.experimentalContext === true;
   result.contextMode = result.experimentalContext ? 'experimental' : 'standard';
@@ -184,16 +184,19 @@ function historyItem(item) {
      sai do texto e vira a lista `imagens`; todo resultado SEM imagem segue pelo ramo
      original, intocado, logo abaixo. */
   if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') {
-    const imagens = imagensDoConteudo(item.result != null ? item.result : item.contentItems);
+    const conteudo = item.result != null ? item.result : item.contentItems;
+    const imagens = imagensDoConteudo(conteudo);
+    const blocos = Array.isArray(conteudo) ? conteudo : (conteudo && Array.isArray(conteudo.content) ? conteudo.content : []);
+    const texto = blocos.filter(x => x && x.type === 'text' && typeof x.text === 'string').map(x => x.text).join('\n');
     if (imagens.length) return {
       role: 'tool',
       name: [item.server, item.tool].filter(Boolean).join(' · '),
       arg: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}),
-      output: imagens.length === 1 ? '(1 imagem)' : '(' + imagens.length + ' imagens)',
+      output: texto || (imagens.length === 1 ? '(1 imagem)' : '(' + imagens.length + ' imagens)'),
       imagens,
     };
   }
-  if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') return { role: 'tool', name: [item.server, item.tool].filter(Boolean).join(' · '), arg: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}), output: item.result ? JSON.stringify(item.result) : '' };
+  if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') return { role: 'tool', name: [item.server, item.tool].filter(Boolean).join(' · '), arg: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}), output: item.result != null ? JSON.stringify(item.result) : (item.contentItems ? JSON.stringify(item.contentItems) : '') };
   if (item.type === 'collabAgentToolCall') return { role: 'tool', name: 'Time de agentes', arg: item.prompt || item.tool || '' };
   if (item.type === 'functionCallOutput') return { role: 'tool', name: item.name || 'Ferramenta', arg: '', output: typeof item.output === 'string' ? item.output : JSON.stringify(item.output) };
   return null;

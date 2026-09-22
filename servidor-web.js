@@ -106,9 +106,10 @@ function tipoPelosBytes(b) {
    juntar o arquivo inteiro na memoria. Guarda so' o rabinho de cada pedaco, porque a
    fronteira pode chegar partida entre dois. */
 function cortadorMultipart(fronteira) {
+  if (!fronteira || fronteira.length > 200 || /[\r\n]/.test(fronteira)) throw new Error('fronteira inválida');
   const marca = Buffer.from('\r\n--' + fronteira);
   let fase = 'cabecalho', resto = Buffer.alloc(0), acabou = false;
-  return (entrada) => {
+  const cortar = (entrada) => {
     if (acabou) return Buffer.alloc(0);
     resto = resto.length ? Buffer.concat([resto, entrada]) : entrada;
     if (fase === 'cabecalho') {
@@ -117,23 +118,41 @@ function cortadorMultipart(fronteira) {
         if (resto.length > 16384) throw new Error('formulario estranho');
         return Buffer.alloc(0);
       }
+      if (i > 16384 || !resto.subarray(0, i).toString('latin1').startsWith('--' + fronteira + '\r\n')) throw new Error('formulario estranho');
       resto = resto.subarray(i + 4); fase = 'corpo';
     }
-    const f = resto.indexOf(marca);
-    if (f >= 0) { acabou = true; const saida = resto.subarray(0, f); resto = Buffer.alloc(0); return saida; }
-    const guardar = Math.min(resto.length, marca.length - 1);
+    // Bytes parecidos dentro de um vídeo não são uma fronteira. Só termina
+    // quando também chegaram os dois bytes que fecham/separam o campo.
+    let f = resto.indexOf(marca);
+    while (f >= 0 && resto.length >= f + marca.length + 2) {
+      const sufixo = resto.subarray(f + marca.length, f + marca.length + 2).toString('latin1');
+      if (sufixo === '--' || sufixo === '\r\n') {
+        acabou = true; const saida = resto.subarray(0, f); resto = Buffer.alloc(0); return saida;
+      }
+      f = resto.indexOf(marca, f + 1);
+    }
+    const guardar = Math.min(resto.length, marca.length + 1);
     const saida = resto.subarray(0, resto.length - guardar);
     resto = resto.subarray(resto.length - guardar);
     return saida;
   };
+  cortar.terminou = () => acabou;
+  return cortar;
 }
 
 // pagina de outro site nao fala com o Cockpit. O cookie ja e' SameSite=Strict; isto e' o
 // cinto de seguranca do suspensorio, o mesmo cuidado que o WebSocket ja toma la embaixo.
-const mesmaOrigem = (req) => {
+const mesmaOrigem = (req, endereco = '') => {
   const o = String(req.headers.origin || '');
   if (!o) return true;                   // pedido sem origem nao nasceu na pagina de outro site
-  try { return new URL(o).host === String(req.headers.host || ''); } catch { return false; }
+  try {
+    const origem = new URL(o);
+    if (!['http:', 'https:'].includes(origem.protocol)) return false;
+    // O Tailscale recebe HTTPS e entrega HTTP no loopback. A origem pública
+    // continua HTTPS, mesmo que o proxy reescreva o Host para 127.0.0.1.
+    if (origem.host === String(req.headers.host || '')) return true;
+    try { return origem.origin === new URL(endereco).origin; } catch { return false; }
+  } catch { return false; }
 };
 
 /* POST /upload — recebe UM arquivo e grava em colados/, escrevendo enquanto recebe.
@@ -141,7 +160,7 @@ const mesmaOrigem = (req) => {
    (fetch('/upload', { method: 'POST', body: arquivo })) ou um formulario multipart com o
    arquivo no primeiro campo. Devolve { arquivo: "/caminho/no/mac" } — o mesmo formato do
    imagem:salvar, para o renderer/web.js so' trocar de porta de entrada. */
-function receberUpload(req, res, { temSessao, pasta }) {
+function receberUpload(req, res, { temSessao, pasta, endereco }) {
   const responder = (status, corpo, fechar) => {
     if (res.headersSent) return;
     const cab = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
@@ -158,13 +177,15 @@ function receberUpload(req, res, { temSessao, pasta }) {
   // toda recusa fecha a conexao: o arquivo ja esta subindo e nao adianta deixar o resto chegar
   if (req.method !== 'POST') return responder(405, { error: 'use POST' }, true);
   if (!temSessao) return responder(401, { error: 'sessão expirada, entre de novo no Cockpit' }, true);
-  if (!mesmaOrigem(req)) return responder(403, { error: 'origem inválida' }, true);
+  if (!mesmaOrigem(req, endereco)) return responder(403, { error: 'origem inválida' }, true);
 
   const grande = 'arquivo grande demais (o limite é 500 MB)';
   const soFotoVideo = 'só foto ou vídeo (png, jpg, gif, webp, heic, mov, mp4, webm)';
   if (Number(req.headers['content-length'] || 0) > LIMITE_UPLOAD) return responder(413, { error: grande }, true);
 
-  const fronteira = (String(req.headers['content-type'] || '').match(/boundary=(?:"([^"]+)"|([^;]+))/) || []).slice(1).find(Boolean);
+  const tipo = String(req.headers['content-type'] || '');
+  const fronteira = (tipo.match(/boundary=(?:"([^"]+)"|([^;]+))/i) || []).slice(1).find(Boolean);
+  if (/^multipart\//i.test(tipo) && !fronteira) return responder(400, { error: 'não entendi o formulário' }, true);
   let cortar; try { cortar = fronteira ? cortadorMultipart(fronteira.trim()) : (p) => p; }
   catch { return responder(400, { error: 'não entendi o formulário' }, true); }
 
@@ -197,9 +218,12 @@ function receberUpload(req, res, { temSessao, pasta }) {
         const caminho = path.resolve(raiz, nome);
         // e ainda assim confere DEPOIS de resolver: tem de cair dentro de colados/
         if (path.dirname(caminho) !== raiz) return desistir(400, 'caminho inválido');
-        destino = caminho;
         // 'wx' = so' cria arquivo novo; nunca sobrescreve nem segue atalho plantado ali
-        fluxo = fs.createWriteStream(destino, { flags: 'wx' });
+        // Abre antes de aceitar mais dados: abortar enquanto o open assíncrono
+        // ainda estava na fila deixava um arquivo vazio depois da limpeza.
+        const fd = fs.openSync(caminho, 'wx');
+        destino = caminho;
+        fluxo = fs.createWriteStream(destino, { fd });
         fluxo.on('error', () => desistir(500, 'não consegui gravar o arquivo no Mac'));
       } catch { return desistir(500, 'não consegui gravar o arquivo no Mac'); }
       dados = cabeca; cabeca = Buffer.alloc(0);
@@ -210,6 +234,7 @@ function receberUpload(req, res, { temSessao, pasta }) {
 
   req.on('end', () => {
     if (falhou || pronto) return;
+    if (cortar.terminou && !cortar.terminou()) return desistir(400, 'o arquivo chegou incompleto; tente anexar de novo');
     if (!fluxo) return desistir(400, cabeca.length ? soFotoVideo : 'não chegou nenhum arquivo');
     pronto = true;
     const f = fluxo, caminho = destino; fluxo = null;
@@ -226,6 +251,8 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
   const { WebSocketServer } = require('ws');
   const sessoes = new Map();
   const tentativas = new Map();
+  const clientes = new Set();
+  let encerrado = false;
   const VIDA_SESSAO = 8 * 60 * 60 * 1000;
   const JANELA_TENTATIVAS = 15 * 60 * 1000;
   const MAX_TENTATIVAS = 5;
@@ -274,8 +301,20 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     res.end(paginaSenha(errou, detalhe));
   };
 
+  const arquivoDaTela = (nome) => {
+    try {
+      const raiz = fs.realpathSync(pastaRenderer);
+      const alvo = fs.realpathSync(path.join(raiz, nome));
+      const relativo = path.relative(raiz, alvo);
+      if (!relativo || relativo === '..' || relativo.startsWith('..' + path.sep) || path.isAbsolute(relativo)) return null;
+      return fs.statSync(alvo).isFile() ? alvo : null;
+    } catch { return null; }
+  };
   const servidor = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://x');
+    if (encerrado) { res.writeHead(503); return res.end('acesso desligado'); }
+    let url;
+    try { url = new URL(req.url, 'http://x'); }
+    catch { res.writeHead(400); return res.end('endereco invalido'); }
     if (!redePermitida(req)) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end('Abra pelo Tailscale para proteger seu Mac.');
@@ -313,8 +352,8 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     }
     // o telefone busca estes sem cookie; sao inofensivos
     if (['/manifest.json', '/icone-180.png', '/icone-512.png', '/favicon.ico'].includes(url.pathname)) {
-      const pub = path.join(pastaRenderer, url.pathname.replace(/^\//, ''));
-      if (url.pathname === '/favicon.ico' || !fs.existsSync(pub)) { res.writeHead(204); return res.end(); }
+      const pub = arquivoDaTela(url.pathname.replace(/^\//, ''));
+      if (url.pathname === '/favicon.ico' || !pub) { res.writeHead(204); return res.end(); }
       return mandarArquivo(req, res, pub);
     }
     const t = pegarSessao(req.headers.cookie);
@@ -322,13 +361,15 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
     // a sessao precisa receber um erro curto em JSON, e nao a tela de login inteira em HTML
     // (o app leria 200 "deu certo" e anexaria a pagina de login no lugar do video).
     if (url.pathname === '/upload') {
-      return receberUpload(req, res, { temSessao: !!t && sessaoValida(t), pasta: pastaDeColados(pastaColados) });
+      return receberUpload(req, res, { temSessao: !!t && sessaoValida(t), pasta: pastaDeColados(pastaColados), endereco });
     }
     if (!t || !sessaoValida(t)) return paginaLogin(res, 200, false);
 
-    let arq = url.pathname === '/' ? '/index-web.html' : url.pathname;
-    const alvo = path.join(pastaRenderer, path.normalize(arq).replace(/^(\.\.[/\\])+/, ''));
-    if (!alvo.startsWith(pastaRenderer) || !fs.existsSync(alvo)) { res.writeHead(404); return res.end('nao achei'); }
+    let arq;
+    try { arq = url.pathname === '/' ? 'index-web.html' : decodeURIComponent(url.pathname).replace(/^\//, ''); }
+    catch { res.writeHead(400); return res.end('endereco invalido'); }
+    const alvo = arquivoDaTela(arq);
+    if (!alvo) { res.writeHead(404); return res.end('nao achei'); }
     mandarArquivo(req, res, alvo);
   });
 
@@ -341,25 +382,25 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
   // aqui: vao pela rota /upload, que grava direto no disco.
   const wss = new WebSocketServer({ server: servidor, path: '/ws', maxPayload: 12 * 1024 * 1024 });
   wss.on('connection', (ws, req) => {
-    const origin = String(req.headers.origin || '');
-    const esperado = 'http://' + String(req.headers.host || '');
+    ws.on('error', (e) => { aoLog && aoLog('erro do telefone: ' + ((e && e.message) || e)); });
     // Navegadores sempre informam a origem. Sem esta checagem, uma página aberta
     // no celular poderia tentar falar com o Cockpit usando a sessão já existente.
     if (!redePermitida(req)) { ws.close(1008, 'fora do Tailscale'); return; }
-    if (origin && origin !== esperado) { ws.close(1008, 'origem invalida'); return; }
+    if (!mesmaOrigem(req, endereco)) { ws.close(1008, 'origem invalida'); return; }
     const t = pegarSessao(req.headers.cookie);
     if (!t || !sessaoValida(t)) { ws.close(1008, 'sem sessao'); return; }
     ws.ck = t;                       // guarda a sessao deste telefone para reconferir depois
-    ouvintes.add(ws);
+    clientes.add(ws); ouvintes.add(ws);
     aoLog && aoLog('telefone conectado');
-    ws.on('close', () => { ouvintes.delete(ws); aoLog && aoLog('telefone saiu'); });
+    ws.on('close', () => { clientes.delete(ws); ouvintes.delete(ws); aoLog && aoLog('telefone saiu'); });
     ws.on('message', async (bruto) => {
       // A sessao era conferida uma unica vez, no aperto de mao. Quem ja estava conectado
       // nunca mais era checado: podia rodar comando no Mac para sempre, mesmo depois das
       // 8 horas de validade e mesmo depois de desligar o acesso pelo Wi-Fi nos Ajustes.
       if (!sessaoValida(ws.ck)) { try { ws.close(1008, 'sessao expirou'); } catch {} return; }
       let m; try { m = JSON.parse(bruto.toString()); } catch { return; }
-      if (m.tipo !== 'chamada' || typeof m.nome !== 'string') return;
+      if (!m || typeof m !== 'object' || Array.isArray(m) || m.tipo !== 'chamada' || typeof m.nome !== 'string'
+        || !(Number.isSafeInteger(m.id) || typeof m.id === 'string')) return;
       // So passa o que esta na lista PERMITIDOS la de cima. O resto nem chega no comando.
       if (!PERMITIDOS.has(m.nome)) {
         aoLog && aoLog('telefone pediu comando fora da lista: ' + m.nome);
@@ -379,9 +420,11 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
   // varre de minuto em minuto e fecha quem ja venceu, em vez de esperar o telefone
   // mandar alguma coisa para so entao descobrir que a sessao caiu
   const varredura = setInterval(() => {
-    for (const ws of [...ouvintes]) {
+    for (const ws of [...clientes]) {
       if (!sessaoValida(ws.ck)) { try { ws.close(1008, 'sessao expirou'); } catch {} ouvintes.delete(ws); }
     }
+    for (const token of sessoes.keys()) sessaoValida(token);
+    for (const [endereco, item] of tentativas) if (item.inicio + JANELA_TENTATIVAS < Date.now()) tentativas.delete(endereco);
   }, 60000);
   if (varredura.unref) varredura.unref();
   servidor.on('close', () => clearInterval(varredura));
@@ -396,8 +439,14 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
   // "porta ocupada" virava excecao nao tratada e derrubava o processo
   wss.on('error', (e) => { aoLog && aoLog('erro do canal do telefone: ' + ((e && e.message) || e)); });
   const pronto = new Promise((ok, deuErro) => {
-    servidor.once('listening', ok);
+    const limparInicio = () => {
+      servidor.removeListener('listening', iniciou);
+      servidor.removeListener('error', caiu);
+      wss.removeListener('error', caiu);
+    };
+    const iniciou = () => { limparInicio(); ok(); };
     const caiu = (e) => {
+      limparInicio();
       try { clearInterval(varredura); } catch {}
       try { wss.close(); } catch {}
       try { servidor.close(); } catch {}
@@ -405,6 +454,7 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
         ? 'a porta ' + porta + ' ja esta sendo usada por outro programa'
         : ((e && e.message) || String(e))));
     };
+    servidor.once('listening', iniciou);
     servidor.once('error', caiu);
     wss.once('error', caiu);
   });
@@ -418,11 +468,22 @@ function criar({ pastaRenderer, handlers, ouvintes, porta, senha, aoLog, somente
   // Desligar o acesso so parava de aceitar telefone NOVO: quem ja estava dentro continuava
   // com poder total sobre o Mac. Este fechar() derruba tambem as conexoes abertas.
   const fechar = () => {
+    if (encerrado) return;
+    encerrado = true;
+    sessoes.clear(); tentativas.clear();
     clearInterval(varredura);
-    for (const ws of [...ouvintes]) { try { ws.close(1001, 'acesso desligado'); } catch {} }
-    ouvintes.clear();
+    for (const ws of [...clientes]) {
+      try { ws.close(1001, 'acesso desligado'); } catch {}
+      ouvintes.delete(ws);
+      // Um telefone sem rede não responde ao fechamento. Isso não pode
+      // manter o servidor antigo ocupando a porta depois de desligar.
+      const limite = setTimeout(() => { if (ws.readyState !== 3) ws.terminate(); }, 1000);
+      limite.unref?.(); ws.once('close', () => clearTimeout(limite));
+    }
     try { wss.close(); } catch {}
     try { servidor.close(); } catch {}
+    // Interrompe também um upload em andamento; seu tratador apaga o parcial.
+    try { servidor.closeAllConnections(); } catch {}
   };
 
   return { servidor, fechar, pronto, endereco: endereco || (somenteTailscale ? '' : ('http://' + ipDaRede() + ':' + porta)) };

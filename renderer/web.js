@@ -2,7 +2,7 @@
 (function () {
   window.SEM_ELECTRON = true;   // estamos no telefone, pelo navegador
   const pend = new Map();
-  const ouvintes = {};
+  const ouvintes = Object.create(null);
   let seq = 0, ws = null, fila = [], religar = null;
   let jaConectou = false;
 
@@ -18,13 +18,21 @@
     clearTimeout(religar);
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    const conexao = ws;
     ws.onopen = () => {
+      if (ws !== conexao) return;
       document.body.classList.remove('sem-mac');
-      fila.forEach(x => { if (pend.has(x.id)) ws.send(x.txt); }); fila = [];
+      const aguardando = fila; fila = [];
+      aguardando.forEach(x => {
+        if (!pend.has(x.id)) return;
+        try { conexao.send(x.txt); }
+        catch (_) { encerrarPedido(x.id, 'A conexão com o Mac caiu. Confira a conversa antes de enviar de novo.'); }
+      });
       const reconectou = jaConectou; jaConectou = true;
       window.dispatchEvent(new CustomEvent('cockpit:conectado', { detail: { reconectou } }));
     };
     ws.onclose = (ev) => {
+      if (ws !== conexao) return;
       document.body.classList.add('sem-mac');
       // Nunca repetir um envio que talvez já tenha chegado ao Mac.
       for (const id of [...pend.keys()]) encerrarPedido(id, 'A conexão com o Mac caiu. Confira a conversa antes de enviar de novo.');
@@ -35,11 +43,15 @@
       religar = setTimeout(ligar, 1500);
     };
     ws.onmessage = (ev) => {
+      if (ws !== conexao) return;
       let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (!m || typeof m !== 'object' || Array.isArray(m)) return;
       if (m.tipo === 'resposta') {
         encerrarPedido(m.id, m.erro, m.resposta);
       } else if (m.tipo === 'evento') {
-        (ouvintes[m.canal] || []).forEach(f => f(m.dados));
+        (ouvintes[m.canal] || []).slice().forEach(f => {
+          try { f(m.dados); } catch (e) { console.error('[cockpit] erro ao mostrar evento do Mac:', e); }
+        });
       }
     };
   }
@@ -49,8 +61,10 @@
     const id = ++seq;
     const timer = setTimeout(() => encerrarPedido(id, 'O Mac não respondeu.'), 120000);
     pend.set(id, { res, rej, timer });
-    const txt = JSON.stringify({ tipo: 'chamada', id, nome, arg });
-    if (ws && ws.readyState === 1) ws.send(txt); else fila.push({ id, txt });
+    try {
+      const txt = JSON.stringify({ tipo: 'chamada', id, nome, arg });
+      if (ws && ws.readyState === 1) ws.send(txt); else fila.push({ id, txt });
+    } catch (e) { encerrarPedido(id, (e && e.message) || 'Não consegui enviar para o Mac.'); }
   });
 
   window.addEventListener('online', ligar);
@@ -217,7 +231,10 @@
   const copiar = (v) => (v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
 
   function lerGaveta() {
-    try { return JSON.parse(window.localStorage.getItem(GAVETA) || '{}') || {}; } catch (_) { return {}; }
+    try {
+      const valor = JSON.parse(window.localStorage.getItem(GAVETA) || '{}');
+      return valor && typeof valor === 'object' && !Array.isArray(valor) ? valor : {};
+    } catch (_) { return {}; }
   }
   function gravarGaveta(g) {
     try { window.localStorage.setItem(GAVETA, JSON.stringify(g)); return; } catch (_) {}

@@ -84,6 +84,8 @@
   /* ---------------- estado ---------------- */
   const Q = {
     aberto: false,
+    abertura: 0,
+    revisao: 0,
     P: null,
     cena: { v: 1, formas: [], setas: [] },
     cam: { x: 0, y: 0, z: 1 },
@@ -101,7 +103,7 @@
     desenhoPedido: false,
     enviado: false,          // o desenho de agora ja foi mandado pro chat?
     tema: {},
-    rascunho: { timer: null, ultimo: '', gravando: false, sujo: false },
+    rascunho: { timer: null, ultimo: '', ultimoEnviadoEm: 0, enviadoEm: 0, gravando: false, promessa: null, sujo: false },
     setasTimer: null,        // junta uma rajada de setas do teclado num passo so
     ultimoToque: { t: 0, x: 0, y: 0 },
     limparArmado: 0,
@@ -1594,6 +1596,7 @@
   function temApi(nome) { return !!(window.api && typeof window.api[nome] === 'function'); }
 
   function marcarSujo() {
+    Q.revisao++;
     Q.enviado = false;
     pintarPontinho();
     Q.rascunho.sujo = true;
@@ -1602,27 +1605,39 @@
   }
 
   async function gravarRascunho() {
-    if (!temApi('quadroRascunhoGravar')) return;
-    if (Q.rascunho.gravando) { Q.rascunho.timer = setTimeout(gravarRascunho, 800); return; }
+    if (!temApi('quadroRascunhoGravar')) return false;
+    // Fechar o quadro e enviar ao chat usam a mesma fila de gravação. Assim
+    // uma gravação automática antiga não apaga a marca de desenho já enviado.
+    if (Q.rascunho.gravando) { await Q.rascunho.promessa; return gravarRascunho(); }
     const s = JSON.stringify(limparCena(Q.cena));
-    if (s === Q.rascunho.ultimo) { Q.rascunho.sujo = false; return; }
+    const enviadoEm = Q.enviado ? Q.rascunho.enviadoEm : 0;
+    if (s === Q.rascunho.ultimo && enviadoEm === Q.rascunho.ultimoEnviadoEm) { Q.rascunho.sujo = false; return true; }
     Q.rascunho.gravando = true;
-    try {
-      await window.api.quadroRascunhoGravar({ cena: JSON.parse(s) });
-      Q.rascunho.ultimo = s;
-    } catch (_) { /* rascunho e conforto, nunca motivo de erro na cara dele */ }
-    finally {
-      Q.rascunho.gravando = false;
-      if (Q.rascunho.sujo && JSON.stringify(limparCena(Q.cena)) !== Q.rascunho.ultimo) marcarSujo();
-      else Q.rascunho.sujo = false;
-    }
+    Q.rascunho.promessa = (async () => {
+      try {
+        const r = await window.api.quadroRascunhoGravar({ cena: JSON.parse(s), ...(enviadoEm ? { enviadoEm } : {}) });
+        if (r && (r.error || r.ok === false)) return false;
+        Q.rascunho.ultimo = s; Q.rascunho.ultimoEnviadoEm = enviadoEm;
+        return true;
+      } catch (_) { return false; }
+      finally {
+        Q.rascunho.gravando = false;
+        if (Q.rascunho.sujo && JSON.stringify(limparCena(Q.cena)) !== Q.rascunho.ultimo) marcarSujo();
+        else Q.rascunho.sujo = false;
+      }
+    })();
+    return Q.rascunho.promessa;
   }
 
   /* volta direto, sem perguntar: um dialogo "quer recuperar?" e o tipo de parada que ele odeia */
   async function recuperarRascunho() {
     if (!temApi('quadroRascunhoLer')) return;
+    const abertura = Q.abertura, revisao = Q.revisao;
     let r = null;
     try { r = await window.api.quadroRascunhoLer(); } catch (_) { return; }
+    // A leitura no telefone pode demorar: ele pode ter desenhado, limpado ou
+    // fechado o quadro nesse tempo. O rascunho antigo não passa por cima disso.
+    if (!Q.aberto || Q.abertura !== abertura || Q.revisao !== revisao || !cenaVazia()) return;
     if (!r || !r.cena) return;
     /* desenho que ja foi mandado pro chat nao ressuscita: dias depois ele voltaria na tela
        e seria mandado de novo, colado no fluxo novo (o Claude receberia A+B como um so) */
@@ -1661,15 +1676,15 @@
     let escala = 2;
     const maior = Math.max((b.w + M * 2) * escala, (b.h + M * 2) * escala);
     // o piso de 0.4 furava o proprio LIM_PNG: cena muito larga saia com 8000px de lado
-    if (maior > LIM_PNG) escala = Math.max(0.15, escala * LIM_PNG / maior);
+    if (maior > LIM_PNG) escala *= LIM_PNG / maior;
     let url = pintarEmEscala(b, M, escala);
     /* O WebSocket do telefone corta em 8MB, fecha a conexao calado e a promessa so morre no
        tempo limite de 2 minutos. A rede antiga so disparava com escala > 1 — mas desenho
        grande JA entra com escala < 1, entao ela nunca rodava justamente no caso dela.
        Agora encolhe ate caber. */
     let voltas = 0;
-    while (url.length > 5e6 && escala > 0.15 && voltas++ < 8) {
-      escala = Math.max(0.15, escala * 0.7);
+    while (url.length > 5e6 && voltas++ < 8) {
+      escala *= 0.7;
       url = pintarEmEscala(b, M, escala);
     }
     return url;
@@ -1750,16 +1765,18 @@
     } catch (e) { toast('Não deu para salvar: ' + (e.message || e)); }
   }
 
-  function copiarTexto() {
+  async function copiarTexto() {
     if (cenaVazia()) return toast('Desenhe alguma coisa primeiro.');
     const d = descrever(limparCena(Q.cena));
     const txt = d.texto + (d.mermaid ? '\n\n' + d.mermaid : '');
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt);
+      if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(txt);
       else {
         const ta = document.createElement('textarea');
         ta.value = txt; document.body.appendChild(ta); ta.select();
-        document.execCommand('copy'); ta.remove();
+        let copiou;
+        try { copiou = document.execCommand('copy'); } finally { ta.remove(); }
+        if (!copiou) throw new Error('cópia não autorizada');
       }
       toast('Texto do fluxo copiado.');
     } catch (_) { toast('Não deu para copiar.'); }
@@ -1773,12 +1790,20 @@
     if (cenaVazia()) return toast('Desenhe alguma coisa primeiro.');
     if (!temApi('quadroSalvar')) return toast('Este aparelho ainda não sabe salvar o quadro.');
     const bt = Q.el.mandar;
+    if (bt.disabled) return;
+    const abertura = Q.abertura;
+    const destino = JSON.stringify([P.engine, P.cwd, P.sessaoId || P.resumeId || '']);
+    const destinoAtual = () => Q.aberto && Q.abertura === abertura && Q.P === P
+      && document.body.contains(P.el)
+      && JSON.stringify([P.engine, P.cwd, P.sessaoId || P.resumeId || '']) === destino;
     bt.classList.add('ocupado'); bt.disabled = true;
     try {
       const png = gerarPNG();
       const cena = limparCena(Q.cena);
       const r = await window.api.quadroSalvar({ png, cena });
       if (!r || r.error || !r.png) throw new Error((r && r.error) || 'não deu para salvar o desenho');
+      if (!destinoAtual()) return;
+      if (JSON.stringify(limparCena(Q.cena)) !== JSON.stringify(cena)) return toast('O desenho mudou enquanto eu salvava. Toque em mandar novamente.');
       const d = descrever(cena);
       let txt = montarTextoDoEnvio(d);
       if (typeof window.abrirQuadroAnexar === 'function') {
@@ -1787,13 +1812,15 @@
       } else {
         txt = 'Desenhei um fluxograma. Abra a imagem antes de responder: ' + r.png + '\n\n' + txt;
       }
+      if (!destinoAtual()) return;
+      if (JSON.stringify(limparCena(Q.cena)) !== JSON.stringify(cena)) return toast('O desenho mudou enquanto eu anexava. Toque em mandar novamente.');
       // o resumo vai junto para a aba nao nascer chamada "Desenhei um fluxograma no quadro…"
       if (typeof window.abrirQuadroTexto === 'function') window.abrirQuadroTexto(P, txt, d.resumo);
       Q.enviado = true;
-      try { await window.api.quadroRascunhoGravar({ cena, enviadoEm: Date.now() }); } catch (_) {}
-      /* o fechar() logo abaixo chama gravarRascunho(), que gravaria a mesma cena SEM o
-         carimbo e apagaria a marca de "ja foi enviado". Adiantando o cache, ele nao regrava. */
-      try { Q.rascunho.ultimo = JSON.stringify(cena); Q.rascunho.sujo = false; } catch (_) {}
+      Q.rascunho.enviadoEm = Date.now();
+      const salvo = await gravarRascunho();
+      if (!destinoAtual() || JSON.stringify(limparCena(Q.cena)) !== JSON.stringify(cena)) return;
+      if (!salvo) return toast('O desenho foi anexado ao chat, mas não consegui salvar o rascunho.');
       fechar();
       const inp = P.el.querySelector('.p-input');
       if (inp) { inp.focus(); try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (_) {} }
@@ -2148,15 +2175,17 @@
 
     el.classList.remove('hidden');
     Q.aberto = true;
+    const abertura = ++Q.abertura;
+    document.addEventListener('keydown', aoTeclar, true);
+    document.addEventListener('keyup', aoSoltarTecla, true);
     redimensionar();
     if (cenaVazia()) {
       Q.cam = { x: -Q.larg / 2, y: -Q.alt / 2, z: 1 };
       await recuperarRascunho();
     }
+    if (!Q.aberto || Q.abertura !== abertura) return;
     if (!Q.pilha.passos.length) iniciarPilha();
     setFerramenta(Q.ferramenta || 'selecionar');
-    document.addEventListener('keydown', aoTeclar, true);
-    document.addEventListener('keyup', aoSoltarTecla, true);
     agendar();
   }
 
@@ -2164,6 +2193,7 @@
     if (!Q.aberto) return;
     fecharEditor(true);
     Q.aberto = false;
+    Q.abertura++;
     Q.gesto = null; Q.pinch = null; Q.ponteiros.clear(); Q.bloqueado = false; Q.espaco = false;
     const el = document.getElementById('qdPainel');
     if (el) el.classList.add('hidden');

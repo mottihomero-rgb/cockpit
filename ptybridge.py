@@ -81,6 +81,15 @@ def main():
     rows = max(5, min(300, int(sys.argv[2])))
     cmd = sys.argv[3:]
 
+    # Conferir ANTES do forkpty: sem canal extra, o terminal recebe justamente
+    # o descritor 3. Confundi-lo com o controle colocava a mesma saída duas
+    # vezes no select e travava a segunda leitura, impedindo qualquer digitação.
+    ctrl = 3
+    try:
+        os.fstat(ctrl)
+    except OSError:
+        ctrl = None
+
     pid, master = os.forkpty()
     if pid == 0:
         os.environ['TERM'] = os.environ.get('TERM', 'xterm-256color')
@@ -95,11 +104,6 @@ def main():
     set_size(master, cols, rows)
 
     # fd 3 = canal de controle, so existe se quem chamou criou
-    ctrl = 3
-    try:
-        os.fstat(ctrl)
-    except OSError:
-        ctrl = None
     ctrl_buf = b''
 
     fontes = [master, 0] + ([ctrl] if ctrl is not None else [])

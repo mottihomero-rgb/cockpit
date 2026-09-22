@@ -7,7 +7,19 @@ const { StringDecoder } = require('string_decoder');
 function criarCli({ HOME, emit, spawnBin, acharBin, temBin, buildEnv, pastaDados, matarGrupo, aoConfirmarConta, aoFalharConta }) {
 const CLIS = { gemini: { nome: 'Gemini', bin: 'gemini', conversas: true, comandos: true,
   pastaSessoes: () => path.join(HOME, '.gemini', 'tmp') } };
-const headRead = (file, max) => { try { return fs.readFileSync(file, 'utf8').slice(0, max); } catch { return ''; } };
+const headRead = (file, max) => {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buffer = Buffer.alloc(max);
+    return buffer.subarray(0, fs.readSync(fd, buffer, 0, max, 0)).toString('utf8');
+  } catch { return ''; }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+};
+const mensagemValida = m => m && typeof m === 'object' && !Array.isArray(m);
+const linhasDoArquivo = file => fs.readFileSync(file, 'utf8').split('\n').flatMap(l => {
+  try { const valor = JSON.parse(l); return mensagemValida(valor) ? [valor] : []; } catch { return []; }
+});
 function cliFalaDeGente(t) {
   const s = String(t || '').trim();
   return !!s && !s.startsWith('/') && !s.startsWith('?')
@@ -29,13 +41,14 @@ function cliLerConversa(file, tetoBytes) {
   // As versões atuais também usam um JSON completo, não apenas JSONL.
   try {
     const registro = JSON.parse(bruto);
-    if (registro.sessionId && Array.isArray(registro.messages)) return { meta: registro, msgs: registro.messages };
+    if (registro.sessionId && Array.isArray(registro.messages)) return { meta: registro, msgs: registro.messages.filter(mensagemValida) };
   } catch {}
   for (const linha of bruto.split('\n')) {
     // chave aberta como TEXTO engana o contador de chaves de quem extrai a
     // funcao pra testar (ja quebrou o andaime). Aqui vai o codigo do caractere.
     if (linha.charCodeAt(0) !== 123) continue;
     let d; try { d = JSON.parse(linha); } catch { continue; }
+    if (!mensagemValida(d)) continue;
     if (typeof d.$rewindTo === 'string') {
       // apaga dali pra frente; se o id nao esta no mapa, o CLI limpa tudo
       const ids = [...mapa.keys()];
@@ -125,7 +138,7 @@ function cliHistory(file, maxMsgs) {
     }
     // o CLI chama a fala do modelo de "gemini"
     if (texto) out.push({ role: 'bot', text: texto });
-    for (const t of (m.toolCalls || [])) {
+    for (const t of (Array.isArray(m.toolCalls) ? m.toolCalls.filter(mensagemValida) : [])) {
       let arg = '';
       try { arg = t.args ? JSON.stringify(t.args).slice(0, 120) : ''; } catch {}
       out.push({ role: 'tool', name: t.name || 'Ferramenta', arg });
@@ -184,7 +197,11 @@ function fala(st) {
 }
 function fecharFala(st) {
   clearTimeout(st.timer); st.timer = null;
-  if (st.acc) { fala(st); anotar(st, { role: 'bot', text: st.acc }); }
+  if (st.acc) {
+    fala(st);
+    try { anotar(st, { role: 'bot', text: st.acc }); }
+    catch (e) { emit(st.paneId, 'note', { text: 'A resposta está na tela, mas não consegui salvá-la no Mac: ' + e.message, error: true }); }
+  }
   st.acc = ''; st.msgId = null;
 }
 function evento(st, ev) {
@@ -361,7 +378,12 @@ function enviar(paneId, texto, anexos = []) {
   proc.on('close', code => concluir(code));
   proc.on('error', error => concluir(-1, error));
   proc.stdin.on('error', error => concluir(-1, error));
-  anotar(st, { role: 'user', text: prompt });
+  try { anotar(st, { role: 'user', text: prompt }); }
+  catch (e) {
+    st.proc = null; matarGrupo(proc);
+    emit(paneId, 'note', { text: 'Não consegui salvar a mensagem no Mac: ' + e.message, error: true });
+    return false;
+  }
   emit(paneId, 'busy', {});
   proc.stdin.end(agy ? JSON.stringify({ event: 'user', message: { content: enviado } }) + '\n' : enviado);
   return true;
@@ -371,24 +393,29 @@ function sessoes() {
   const dir = path.join(pastaDados(), 'gemini');
   try { for (const nome of fs.readdirSync(dir)) {
     if (!nome.endsWith('.jsonl')) continue;
+    try {
     const file = path.join(dir, nome);
-    const linhas = fs.readFileSync(file, 'utf8').split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+    const linhas = linhasDoArquivo(file);
     const meta = linhas[0], user = linhas.find(m => m.role === 'user');
     if (!meta?.cockpit || !user) continue;
     const retomada = linhas.filter(m => m.retomada).pop()?.retomada;
     const existente = out.findIndex(s => s.id === retomada || s.id === meta.id);
     if (existente >= 0) out.splice(existente, 1);
     out.push({ engine: 'gemini', id: meta.id, file, cwd: meta.cwd, when: fs.statSync(file).mtimeMs, title: String(user.text).replace(/\s+/g, ' ').slice(0, 120) });
+    } catch { /* Uma sessão ilegível não esconde as demais. */ }
   } } catch {}
   return out.sort((a, b) => b.when - a.when).slice(0, 300);
 }
 function historico(file) {
   try {
-    const linhas = fs.readFileSync(file, 'utf8').split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+    const linhas = linhasDoArquivo(file);
     if (linhas[0]?.cockpit) return linhas.filter(m => ['user', 'bot', 'tool'].includes(m.role));
   } catch { return []; }
   return cliHistory(file, 5000);
 }
-return { start, enviar, parar, sessoes, historico, comandos: () => comandosDoCli('gemini'), fechar: () => { for (const id of [...paineis.keys()]) parar(id); } };
+return { start, enviar, parar, sessoes, historico,
+  vivo: paneId => paineis.has(paneId),
+  trabalhando: () => [...paineis.values()].filter(st => !!st.proc).length,
+  comandos: () => comandosDoCli('gemini'), fechar: () => { for (const id of [...paineis.keys()]) parar(id); } };
 }
 module.exports = { criarCli };

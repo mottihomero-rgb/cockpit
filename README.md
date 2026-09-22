@@ -22,7 +22,29 @@ npm install
 npm start
 ```
 
-Precisa de Node.js 18+ e do Claude Code e/ou Codex CLI já instalados na máquina.
+Precisa de Node.js 22.12+ e do Claude Code e/ou Codex CLI já instalados na máquina.
+
+## Conferir antes de gerar o app
+
+```bash
+npm test
+npm audit
+npx playwright install chromium
+npm run test:ui
+npm run test:electron
+```
+
+Os testes de interface usam o Chromium real no computador, celular e tablet.
+O teste nativo abre uma janela Electron com `main.js`, preload e IPC reais,
+usando uma pasta temporária. Os motores de IA são simulados nos dois casos:
+nenhuma conta, conversa ou serviço pago é acessado.
+
+Para guardar capturas e resultados, definir `COCKPIT_QA_OUT` com uma pasta de
+evidências. O teste nativo também aceita `COCKPIT_QA_SOURCE` apontando para o
+`app.asar` gerado pelo build, para conferir o conteúdo efetivamente empacotado.
+
+Electron está fixado na versão 43.7.3, que mantém a API de clipboard usada
+pelo app. Atualizações de versão principal exigem repetir os testes nativos.
 
 ## Gerar o app
 
@@ -39,6 +61,5 @@ O acesso pelo celular é desligado por padrão. Quando ligado, gera uma senha al
 ## Licença
 
 MIT — Homero Motti
-
 
 

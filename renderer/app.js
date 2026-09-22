@@ -12,6 +12,7 @@ const ESTA_TELA = (typeof window !== 'undefined' && window.SEM_ELECTRON)
   ? ('w' + Math.random().toString(36).slice(2, 7))
   : '';
 const panes = new Map();     // id -> objeto do painel
+const motoresTrocandoConta = new Set();
 // cada ABA e uma pasta de projeto; dentro dela ficam os chats lado a lado
 let abaSeq = 0, abaAtiva = null;
 const abas = new Map();      // aid -> { id, cwd, el, corpoEl, ordem: [paneId], ativo }
@@ -410,6 +411,8 @@ async function fecharAba(A) {
     const P = panes.get(pid);
     if (!P) continue;
     vozSoltar(P, { guardarTexto: true });   // a aba inteira sai: nenhum microfone dela pode ficar aceso
+    P.tamanhoObserver?.disconnect();
+    if (P.fecharTerminal) { try { P.fecharTerminal(); } catch {} }
     paraParar.push({ pid, engine: P.engine });
     P.el.remove(); panes.delete(pid);
   }
@@ -429,12 +432,14 @@ async function fecharAba(A) {
 // pasta nova = vida nova: a memoria, o historico e o trabalho passam a ser os da pasta,
 // entao a conversa antiga (que era da pasta velha) nao vai junto
 function conversaDaPastaNova(P, pasta) {
+  invalidarConversa(P);
   // O processo antigo foi morto aqui. Sem zerar o "ocupado", o evento de fim de turno nunca
   // chega (nao ha mais processo pra manda-lo) e TODA mensagem seguinte fica presa em "na fila",
   // para sempre. E o que estava na fila morreu junto com o processo.
   P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
   pararTrabalho(P); limparPassos(P); limparContinuar(P);
   P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null;
+  P.passarContexto = null; P.edicoes = [];
   zerarContexto(P);          // conversa nova: o medidor volta ao zero
   // leva 8.3: o fio mudou de conversa — a intenção de ramificar não pode ir junto, senão a
   // próxima mensagem forkaria a conversa ERRADA, em silêncio
@@ -459,7 +464,8 @@ async function trocarPastaDaAba(A) {
   // os chats dessa aba passam a viver na pasta nova
   for (const pid of A.ordem) {
     const P = panes.get(pid); if (!P) continue;
-    await window.api.paneStop({ paneId: pid, engine: P.engine });
+    await desligarMotor(P);
+    if (panes.get(pid) !== P) continue;
     P.cwd = p; P.started = false; setDot(P, 'off');
     pintarPasta(P, nomePasta(p));
     conversaDaPastaNova(P, p);
@@ -488,10 +494,15 @@ function moverPane(P, A, indice) {
   if (antiga !== A) { P.coluna = crypto.randomUUID(); P.larguraColuna = 0; P.pesoAltura = 1; }
   // mudou de projeto: o chat recomeca na pasta da aba nova
   if (antiga && antiga !== A && P.cwd !== A.cwd) {
-    window.api.paneStop({ paneId: P.id, engine: P.engine });
+    P.trocando = true;
+    const parada = window.api.paneStop({ paneId: P.id, engine: P.engine });
     P.cwd = A.cwd; P.started = false; setDot(P, 'off');
     pintarPasta(P, nomePasta(P.cwd));
     conversaDaPastaNova(P, P.cwd);
+    const revisao = P.revisaoConversa;
+    Promise.resolve(parada).catch(() => {}).finally(() => {
+      if (painelAindaAtual(P, revisao)) P.trocando = false;
+    });
     mostrarPastaNoPainel(P); atualizarGit(P);   // leva 10: tira o "⎇ nome" e repõe o chip do git
   }
   remontarEspaco(A);
@@ -565,7 +576,8 @@ async function levarChatPara(P, escolhida) {
   const jaExiste = abaDoCaminho(escolhida, false);
 
   if (jaExiste && jaExiste === A0) {   // ja e a aba certa: so a subpasta do chat muda
-    await window.api.paneStop({ paneId: P.id, engine: P.engine });
+    await desligarMotor(P);
+    if (panes.get(P.id) !== P) return;
     P.cwd = escolhida; P.started = false; setDot(P, 'off');
     pintarPasta(P, nomePasta(escolhida));
     conversaDaPastaNova(P, escolhida);
@@ -578,7 +590,8 @@ async function levarChatPara(P, escolhida) {
   // e mais simples a propria aba mudar de pasta do que criar outra
   if (!jaExiste && A0 && A0.ordem.length === 1) {
     A0.cwd = escolhida;
-    await window.api.paneStop({ paneId: P.id, engine: P.engine });
+    await desligarMotor(P);
+    if (panes.get(P.id) !== P) return;
     P.cwd = escolhida; P.started = false; setDot(P, 'off');
     pintarPasta(P, nomePasta(escolhida));
     pintarAba(A0);
@@ -1066,8 +1079,13 @@ function savePanes(fechou) {
   })).filter(a => a.chats.length).concat(abasQueNaoVoltaram);
   cfg.abaAberta = Math.max(0, listaAbas.indexOf(abaAtiva));
   Promise.resolve(window.api.setConfig(cfg, fechou ? { fechou: true } : null))
-    .then(r => { if (r && r.abasDevolvidas) avisarAbasGuardadas(r.abasDevolvidas); })
-    .catch(() => {});
+    .then(r => {
+      if (r && (r.ok === false || r.error)) throw new Error(r.error || 'Não consegui salvar as conversas.');
+      document.querySelector('[data-aviso="config-nao-salvou"]')?.remove();
+      if (r && r.abasDevolvidas) avisarAbasGuardadas(r.abasDevolvidas);
+    })
+    .catch(e => mostrarAviso({ id: 'config-nao-salvou', tipo: 'erro', fixo: true,
+      texto: (e.message || 'Não consegui salvar as conversas.') + ' Mantenha o Cockpit aberto para não perder estas abas.' }));
 }
 
 // o Mac barrou uma gravacao que ia comer aba: recado curto, so o numero
@@ -1148,12 +1166,13 @@ async function restaurarAbasCorpo(salvas) {
       // de ser repintado aqui porque o newPane desenhou antes de saber do worktree
       if (c.worktree && !NA_VPS(c.cwd || a.cwd)) { P.worktree = c.worktree; mostrarPastaNoPainel(P); }
       if (c.sessao) {
+        P.carregandoHistorico = true;
         P.resumeId = c.sessao;                       // a proxima mensagem continua a mesma conversa
         // Sem repor tambem o caminho do arquivo, o primeiro savePanes() apos abrir gravava
         // arquivo:"" por cima do caminho salvo. Na reabertura seguinte o chat voltava VAZIO,
         // mesmo com a conversa inteira intacta no disco.
         P.sessaoFile = c.arquivo || '';
-        paraCarregar.push({ P, arquivo: c.arquivo || '', id: c.sessao, cwd: c.cwd || a.cwd });
+        paraCarregar.push({ P, arquivo: c.arquivo || '', id: c.sessao, cwd: c.cwd || a.cwd, revisao: P.revisaoConversa || 0 });
       }
       pintarNome(P);
     });
@@ -1175,7 +1194,8 @@ async function restaurarAbasCorpo(salvas) {
   ativarAbaProjeto(abertas[i] || abertas[0]);
 
   // as conversas voltam com o que ja tinha sido dito, uma de cada vez para nao travar a tela
-  for (const { P, arquivo, id, cwd } of paraCarregar) {
+  for (const { P, arquivo, id, cwd, revisao } of paraCarregar) {
+    if (!painelAindaAtual(P, revisao)) continue;
     note(P, 'Trazendo a conversa de volta…');
     try {
       // manda tambem id e pasta: quando o caminho se perdeu (config antigo), o main
@@ -1184,13 +1204,15 @@ async function restaurarAbasCorpo(salvas) {
       const msgs = (P.engine === 'claude' && NA_VPS(cwd) && window.api.sessionHistoryRemoto)
         ? await window.api.sessionHistoryRemoto({ id })
         : await window.api.sessionHistory({ engine: P.engine, file: arquivo, id, cwd });
+      if (!painelAindaAtual(P, revisao)) continue;
       const aviso = $('.note', P.chat); if (aviso) aviso.remove();
       for (const m of (msgs || [])) renderizarHistorico(P, m);
       $$('.tool-st.run', P.el).forEach(x => { x.className = 'tool-st ok'; x.innerHTML = ico('check'); });
       // sem isto o "Escreva embaixo pra começar" ficava por cima da conversa que acabou de voltar
       if (msgs && msgs.length) { clearEmpty(P); note(P, '— daqui pra baixo é a conversa de agora —'); }
       scroll(P, true);
-    } catch { note(P, 'Não consegui trazer o que já foi conversado. Pode continuar mesmo assim.', true); }
+    } catch { if (painelAindaAtual(P, revisao)) note(P, 'Não consegui trazer o que já foi conversado. Pode continuar mesmo assim.', true); }
+    finally { if (painelAindaAtual(P, revisao)) P.carregandoHistorico = false; }
   }
   return true;
 }
@@ -1255,6 +1277,7 @@ async function trocarMotor(P, novo) {
   const velho = P.engine;
   const estavaPlanejando = velho === 'codex' ? P.collaborationMode === 'plan' : P.mode === 'plan';
   P.trocando = true;
+  invalidarConversa(P);
   // o estado e o desenho mudam JA, antes da ida ao processo principal: enquanto se esperava
   // o paneStop responder, o icone continuava marcando o motor antigo
   // Cada motor usa um tipo diferente de numero de conversa. O id do Claude nao existe no
@@ -1424,7 +1447,10 @@ function pintarCorFoco() {
    de ser a tela, aqui, na hora. Sem isto o chat ficava preso em "trabalhando..." para sempre
    e toda mensagem seguinte virava "Na fila". */
 async function desligarMotor(P) {
+  invalidarConversa(P);
+  P.trocando = true;
   try { await window.api.paneStop({ paneId: P.id, engine: P.engine }); } catch {}
+  finally { P.trocando = false; }
   P.started = false;
   P.busy = false;
   if (P.queued) { const q = P.queued; P.queued = null; devolverFilaAoCampo(P, q); }
@@ -1821,17 +1847,17 @@ function devolverFilaAoCampo(P, texto) {
   }
   texto = String(texto || '');
   const cx = $('.p-input', P.el);
-  if (cx && !cx.value) {
+  if (cx) {
     tirarBolhasDaFila(P);
-    cx.value = texto;
+    cx.value = [texto, cx.value].filter(Boolean).join('\n\n');
     /* o 'input' aqui so serve para reajustar a altura do campo. Num comando de barra ("/graphify")
        ele acordava o menu de skills, que ESVAZIA o campo — o texto devolvido sumia na hora. */
     if (texto.startsWith('/') && !texto.includes(' ')) cx.style.height = 'auto';
     else cx.dispatchEvent(new Event('input'));
+    window.dispatchEvent(new Event('cockpit:salvar-rascunhos'));
     return;
   }
-  /* Campo ocupado: nao da para jogar por cima do que ele esta escrevendo agora. A bolha fica
-     na tela, mas para de mentir que esta a caminho — o lapis dela manda de novo num clique. */
+  /* Sem campo disponível, a bolha informa que a mensagem não foi entregue. */
   for (const f of (P.filaMsgs || [])) if (f.el) { f.el.classList.remove('esperando'); f.el.classList.add('naoenviada'); }
   P.filaMsgs = [];
 }
@@ -3317,13 +3343,69 @@ function reporAnexos(P, anexos) {
   pintarAnexos(P);
 }
 function recuperarEnvio(P, bolha, text, anexos) {
+  if (P.queued) { const q = P.queued; P.queued = null; devolverFilaAoCampo(P, q); }
   tirarBolha(P, bolha);
   const campo = $('.p-input', P.el);
   campo.value = [text, campo.value].filter(Boolean).join('\n\n');
   campo.style.height = 'auto';
   reporAnexos(P, anexos);
+  window.dispatchEvent(new Event('cockpit:salvar-rascunhos'));
+}
+function painelAindaAtual(P, revisao) {
+  return panes.get(P.id) === P && (P.revisaoConversa || 0) === revisao;
+}
+function invalidarConversa(P) {
+  P.revisaoConversa = (P.revisaoConversa || 0) + 1;
+  clearTimeout(P.filaTimer); P.filaTimer = null;
+  P.carregandoHistorico = false; P.settingsSend = null;
+}
+
+/* A fila continua pertencendo ao painel durante os 150 ms de espera. Tirar antes
+   fazia um timer antigo mandar mensagens depois de fechar ou trocar a conversa. */
+function agendarFila(P) {
+  if (P.filaTimer || !P.queued) return;
+  const revisao = P.revisaoConversa || 0;
+  P.filaTimer = setTimeout(async () => {
+    P.filaTimer = null;
+    if (!painelAindaAtual(P, revisao) || P.trocando || P.busy || !P.queued) return;
+    const pacote = P.queued;
+    P.queued = null;
+    if (!P.started) { devolverFilaAoCampo(P, pacote); return; }
+    // Só estas bolhas foram enviadas. Outra mensagem pode entrar durante o await.
+    const fila = P.filaMsgs || [];
+    P.filaMsgs = [];
+    P.busy = true; P.comecouEm = Date.now(); setDot(P, 'busy');
+    comecarTurno(P); limparContinuar(P); trabalhando(P);
+    const escolhasDoEnvio = prepararEscolhasEnvio(P);
+    try {
+      const q = typeof pacote === 'string' ? { text: pacote } : pacote;
+      if (escolhasDoEnvio) escolhasDoEnvio.phase = 'sending';
+      const ok = await window.api.paneSend({ paneId: P.id, engine: P.engine,
+        text: q.text || '', attachments: q.attachments || [],
+        ...(escolhasDoEnvio ? escolhasDoEnvio.desired : {}) });
+      if (!painelAindaAtual(P, revisao)) return;
+      if (ok === false || ok && (ok.error || ok.ok === false)) throw new Error('não foi entregue');
+      concluirEscolhasEnvio(P, escolhasDoEnvio, true);
+      for (const f of fila) if (f.el) f.el.classList.remove('esperando');
+    } catch (e) {
+      if (!painelAindaAtual(P, revisao)) return;
+      concluirEscolhasEnvio(P, escolhasDoEnvio, false);
+      P.busy = false; P.started = false;
+      // Falha do motor devolve também as mensagens recebidas enquanto ele caía.
+      const depois = P.queued;
+      P.queued = pacote;
+      if (depois) juntarNaFila(P, typeof depois === 'string' ? { text: depois, displayText: depois } : depois);
+      const devolver = P.queued; P.queued = null;
+      P.filaMsgs = [...fila, ...(P.filaMsgs || [])];
+      setDot(P, 'off'); pararTrabalho(P); limparPassos(P);
+      note(P, 'A mensagem que estava na fila não foi enviada. Ela voltou para a caixa: é só mandar de novo.', true);
+      devolverFilaAoCampo(P, devolver);
+    }
+  }, 150);
 }
 async function send(P) {
+  if (P.trocando || P.carregandoHistorico || motoresTrocandoConta.has(P.engine) || panes.get(P.id) !== P) return;
+  const revisao = P.revisaoConversa || 0;
   const inp = $('.p-input', P.el);
   /* Enter no campo vazio COM o chip "Continuar" na tela = manda "continue". O chip so nasce
      no fim de um turno desta conversa, entao chat recem-aberto nao liga o motor sem querer.
@@ -3351,7 +3433,7 @@ async function send(P) {
   pararBuscaDeArquivos(P);
   soltarNavArquivos(P);   // e o atalho de setas sai junto: sem menu, sem dono
 
-  if (P.busy) {
+  if (P.busy || P.queued) {
     const anx = P.anexos.slice(); P.anexos = []; pintarAnexos(P);
     P.quadroColado = null;
     inp.value = ''; inp.style.height = 'auto';
@@ -3361,24 +3443,27 @@ async function send(P) {
     const pacote = envioComAnexos(P, text, anx);
     // ja havia uma esperando? Junta em vez de trocar: o `P.queued = envio` de antes apagava a
     // primeira em silencio — a bolha dela ficava na tela e a mensagem nunca era enviada.
-    if (P.envio === 'entra') {
+    if (P.envio === 'entra' && P.busy) {
       const nota = avisoEnvio(P, 'Mandando para dentro do trabalho…');
       let r;
       try { r = await window.api.paneSteer({ paneId: P.id, engine: P.engine,
         text: ENTRA_MSG + pacote.text, attachments: anx }); } catch { r = { ok: false }; }
+      if (!painelAindaAtual(P, revisao)) return;
       if (nota) nota.textContent = r && r.ok
         ? 'Entregue no meio do trabalho. Ele escolhe se atende agora ou ao terminar.'
         : 'Não deu para entrar agora, então ficou na fila.';
-      if (!(r && r.ok)) { juntarNaFila(P, pacote); marcarNaFila(P, bolha, text); }
+      if (!(r && r.ok)) { juntarNaFila(P, pacote); marcarNaFila(P, bolha, text); if (!P.busy) agendarFila(P); }
     } else {
       juntarNaFila(P, pacote);
       marcarNaFila(P, bolha, text);
       avisoEnvio(P, 'Na fila. Começa assim que ele terminar.');
+      if (!P.busy) agendarFila(P);
     }
     return;
   }
   const escolhasDoEnvio = prepararEscolhasEnvio(P);
   const pedidoCodex = escolhasDoEnvio ? escolhasDoEnvio.desired : {};
+  const historicoAnterior = P.hist.length;
   const anexos = P.anexos.slice();
   P.anexos = []; pintarAnexos(P);
   inp.value = ''; inp.style.height = 'auto';
@@ -3408,8 +3493,8 @@ async function send(P) {
       // na memoria de outro chat. Vai junto o que foi dito AQUI, e a ordem de ignorar o resto.
       // O contexto vai junto em silencio: a tarja vermelha aparecia no comeco de quase todo chat
       // e nao pedia nada dele. O comportamento continua igual, so o recado saiu da tela.
-      if (!fio && P.hist.length && !P.passarContexto) {
-        P.passarContexto = montarContexto(P, true);
+      if (!fio && historicoAnterior && !P.passarContexto) {
+        P.passarContexto = montarContexto({ ...P, hist: P.hist.slice(0, historicoAnterior) }, true);
         console.log('[cockpit] sem fio: mandei o contexto desta conversa junto');
       }
       const inicio = await window.api.paneStart({
@@ -3425,6 +3510,8 @@ async function send(P) {
         worktree: (P.engine === 'claude' && !NA_VPS(P.cwd) && P.worktree) || undefined,
         ...pedidoCodex,
       });
+      if (!painelAindaAtual(P, revisao)) return;
+      if (inicio === false || inicio && (inicio.error || inicio.ok === false)) throw new Error(inicio && inicio.error || 'O motor não abriu.');
       /* Esta mesma conversa ja esta aberta em outra tela. O Mac recusou subir um segundo agente
          nela — seriam dois mexendo no mesmo historico e na mesma pasta ao mesmo tempo. A fala
          volta inteira pro campo, com os anexos, e o chat conta o que houve. Mandar de novo
@@ -3439,12 +3526,13 @@ async function send(P) {
       }
       // Uma versao antiga podia guardar aqui o numero da conversa do outro motor. O processo
       // principal se recupera abrindo outra; antes de mandar a fala, esta tela repoe o contexto.
-      if (inicio && inicio.nova && P.hist.length && !P.passarContexto) {
-        P.passarContexto = montarContexto(P, true);
+      if (inicio && inicio.nova && historicoAnterior && !P.passarContexto) {
+        P.passarContexto = montarContexto({ ...P, hist: P.hist.slice(0, historicoAnterior) }, true);
       }
       P.started = true; P.ultraAvisado = false;   // processo novo: liberar o ultracode de novo
       P.forkPendente = false;   // o ramo já nasceu no start; não pode forkar de novo
     } catch (e) {
+      if (!painelAindaAtual(P, revisao)) return;
       P.busy = false; concluirEscolhasEnvio(P, escolhasDoEnvio, false);
       recuperarEnvio(P, bolha, text, anexos);
       setDot(P, 'off'); note(P, 'Não consegui ligar: ' + (e && e.message || e), true); return;
@@ -3459,6 +3547,8 @@ async function send(P) {
   pararTrabalho(P); limparPassos(P); limparContinuar(P); trabalhando(P);
   subirNaLista(P);
   let envio = envioComAnexos(P, text, anexos).text;
+  const contextoDoEnvio = P.passarContexto;
+  const ultraAntes = P.ultraAvisado;
   /* O contexto entra na FRENTE do 'envio' (que ja carrega a lista de anexos), nunca do 'text' cru:
      colando no 'text' a lista "Arquivos que anexei" era jogada fora, e o caminho do print ou do
      desenho do quadro nunca chegava ao motor — a fichinha aparecia na tela e nada era lido. */
@@ -3472,10 +3562,14 @@ async function send(P) {
     if (escolhasDoEnvio) escolhasDoEnvio.phase = 'sending';
     const ok = await window.api.paneSend({ paneId: P.id, engine: P.engine, text: envio,
       attachments: anexos, ...pedidoCodex });
-    concluirEscolhasEnvio(P, escolhasDoEnvio, ok !== false);
+    if (!painelAindaAtual(P, revisao)) return;
+    const aceito = ok !== false && !(ok && (ok.error || ok.ok === false));
+    concluirEscolhasEnvio(P, escolhasDoEnvio, aceito);
     // false = o motor caiu antes de receber. Sem isto o chat ficava em "trabalhando..."
     // para sempre, esperando uma resposta que nunca vem.
-    if (ok === false) {
+    if (!aceito) {
+      if (!P.passarContexto) P.passarContexto = contextoDoEnvio;
+      P.ultraAvisado = ultraAntes;
       // P.started TEM de voltar a false, senao o proximo envio pula o religar e repete
       // a mesma frase para sempre. (No Claude o engine-down ja faz isso; no Codex nao vem.)
       P.started = false; P.resumeId = P.sessaoId || P.resumeId;
@@ -3489,7 +3583,10 @@ async function send(P) {
          ja tinha sido apagada do campo la em cima. */
     }
   }
-  catch (e) { concluirEscolhasEnvio(P, escolhasDoEnvio, false);
+  catch (e) { if (!painelAindaAtual(P, revisao)) return;
+    if (!P.passarContexto) P.passarContexto = contextoDoEnvio;
+    P.ultraAvisado = ultraAntes;
+    concluirEscolhasEnvio(P, escolhasDoEnvio, false);
     P.busy = false; pararTrabalho(P); limparPassos(P);
     recuperarEnvio(P, bolha, text, anexos);
     setDot(P, 'idle'); note(P, 'Falhou: ' + (e && e.message || e), true); }
@@ -3637,32 +3734,7 @@ function receberEventoPane(ev) {
       salvarNomeCurto(P);
       setTimeout(() => buscarNome(P), 1200);
       if (lateralAberta(P.engine)) loadHist(P.engine, true);
-      if (P.queued) { const q = P.queued; P.queued = null;
-        setTimeout(async () => {
-          P.busy = true; setDot(P, 'busy');
-          comecarTurno(P);        // a mensagem da fila e um turno novo: relogio e rastro zerados
-          const escolhasDoEnvio = prepararEscolhasEnvio(P);
-          try {
-            const pacote = typeof q === 'string' ? { text: q } : q;
-            if (escolhasDoEnvio) escolhasDoEnvio.phase = 'sending';
-            const ok = await window.api.paneSend({ paneId: P.id, engine: P.engine,
-              text: pacote.text || '', attachments: pacote.attachments || [],
-              ...(escolhasDoEnvio ? escolhasDoEnvio.desired : {}) });
-            concluirEscolhasEnvio(P, escolhasDoEnvio, ok !== false);
-            // se a mensagem da fila nao foi entregue, o chat NAO pode ficar preso em
-            // "trabalhando" para sempre: destrava e avisa, com o texto de volta na caixa
-            if (ok === false) throw new Error('nao foi entregue');
-            desmarcarFila(P);   // saiu de verdade: a bolha deixa de ser "na fila"
-          } catch (e) {
-            concluirEscolhasEnvio(P, escolhasDoEnvio, false);
-            // sem zerar o "started" o proximo envio pula o religar e cai na MESMA tarja para
-            // sempre: no Claude quem zerava era o engine-down; no Codex nao vem engine-down.
-            P.busy = false; P.started = false;
-            setDot(P, 'off'); pararTrabalho(P); limparPassos(P);
-            note(P, 'A mensagem que estava na fila não foi enviada. Ela voltou para a caixa: é só mandar de novo.', true);
-            devolverFilaAoCampo(P, q);
-          }
-        }, 150); }
+      agendarFila(P);
       break;
     case 'engine-down': {
       // Guardar o FIO da conversa. Sem isto, a proxima mensagem subia um motor novo sem
@@ -3712,6 +3784,7 @@ window.api.onPaneEvent(receberEventoPane);
    tarja no fim do turno, na queda e na troca de motor, ela ficava pendurada pedindo autorizacao
    para um processo que ja morreu — e responder "sim" ali derrubava o chat que estava no lugar. */
 function escondePerm(P, encerrarTodas = true) {
+  if (P) { P.aprovacaoAtual = null; P.aprovacoesPendentes = []; }
   const bar = P && P.el && $('.pane-perm', P.el);
   if (bar) bar.classList.add('hidden');
   if (P && P.questions) for (const q of P.questions.values()) {
@@ -3723,11 +3796,35 @@ function escondePerm(P, encerrarTodas = true) {
 }
 
 function showApproval(P, ev) {
+  if (P.aprovacaoAtual) {
+    const fila = P.aprovacoesPendentes || (P.aprovacoesPendentes = []);
+    if (P.aprovacaoAtual.key !== ev.key && !fila.some(x => x.key === ev.key)) fila.push(ev);
+    return;
+  }
   const bar = $('.pane-perm', P.el);
+  const pedido = { key: ev.key }; P.aprovacaoAtual = pedido;
   $('.pp-txt', bar).textContent = ev.title + '\n' + (ev.detail || '') + (ev.reason ? '\n' + ev.reason : '');
   bar.classList.remove('hidden');
   marcarEspera(P);                    // a aba tem de mudar de cara AGORA, mesmo estando no fundo
-  const done = (allow) => { bar.classList.add('hidden'); window.api.approve({ key: ev.key, allow }); marcarEspera(P); };
+  const botoes = [$('.pp-yes', bar), $('.pp-no', bar)];
+  botoes.forEach(b => { b.disabled = false; });
+  const done = async (allow) => {
+    if (P.aprovacaoAtual !== pedido || botoes[0].disabled) return;
+    botoes.forEach(b => { b.disabled = true; });
+    try {
+      const r = await window.api.approve({ key: ev.key, allow });
+      if (r === false || r && (r.error || r.ok === false)) throw new Error(r && r.error || 'A resposta não chegou. Tente novamente.');
+      if (P.aprovacaoAtual !== pedido) return;
+      P.aprovacaoAtual = null;
+      bar.classList.add('hidden'); marcarEspera(P);
+      const proximo = (P.aprovacoesPendentes || []).shift();
+      if (proximo) showApproval(P, proximo);
+    } catch (e) {
+      if (P.aprovacaoAtual !== pedido) return;
+      botoes.forEach(b => { b.disabled = false; });
+      avisoTemp(P, e.message || 'Não consegui enviar sua resposta. Tente novamente.', true);
+    }
+  };
   $('.pp-yes', bar).onclick = () => done(true);
   $('.pp-no', bar).onclick = () => done(false);
 }
@@ -3997,7 +4094,7 @@ function perguntaCodex(P, ev, historico = false) {
   P.questions.set(key, estado);
   marcarEspera(P);                    // pergunta esperando resposta também trava o chat
   const responder = async (action) => {
-    if (estado.done) return;
+    if (estado.done || enviar.disabled) return;
     const answers = Object.create(null), content = Object.create(null);
     try {
       if (action === 'accept') {
@@ -4006,10 +4103,11 @@ function perguntaCodex(P, ev, historico = false) {
         for (const f of conteudo) { const v = f.read(); if (v !== undefined) content[f.name] = v; }
       }
       enviar.disabled = cancelar.disabled = true; status.textContent = 'Enviando…';
-      const r = await window.api.paneRespond({ paneId: P.id, key: ev.key, action, answers, content });
+      const r = await window.api.paneRespond({ paneId: P.id, key: ev.key ?? ev.id, action, answers, content });
+      if (estado.done) return;
       if (r === false || r && (r.ok === false || r.error)) throw new Error(r && r.error || 'A resposta não chegou. Tente de novo.');
       encerrarPerguntaCodex(P, key, action === 'accept' ? 'Resposta enviada.' : 'Pedido cancelado.');
-    } catch (e) { enviar.disabled = cancelar.disabled = false; status.textContent = e.message || 'Não foi possível responder.'; }
+    } catch (e) { if (estado.done) return; enviar.disabled = cancelar.disabled = false; status.textContent = e.message || 'Não foi possível responder.'; }
   };
   form.onsubmit = e => { e.preventDefault(); responder('accept'); };
   cancelar.onclick = () => responder('cancel');
@@ -6217,6 +6315,9 @@ async function menuEsquecerConta(P, eng) {
 }
 
 async function trocarParaConta(P, eng, apelido) {
+  if (motoresTrocandoConta.has(eng)) return;
+  motoresTrocandoConta.add(eng);
+  try {
   const nomeEng = eng === 'codex' ? 'Codex' : 'Claude';
   /* PRIMEIRO parar os motores. Um CLI vivo renova o token e reescreve o arquivo da credencial:
      trocar com ele rodando podia ser desfeito calado, minutos depois. */
@@ -6245,6 +6346,9 @@ async function trocarParaConta(P, eng, apelido) {
   USO_FECHADO[eng] = null; lerUso(eng, true);
   avisoTemp(P, 'Conta do ' + nomeEng + ' trocada para “' + apelido + '”'
     + (religados ? ' · ' + religados + ' chat(s) religam na conta nova na próxima mensagem' : '') + '.');
+  } catch (e) {
+    note(P, 'Não consegui trocar a conta: ' + (e.message || e), true);
+  } finally { motoresTrocandoConta.delete(eng); }
 }
 
 /* ---------- aviso de limite do plano, em cima da caixa de texto ----------
@@ -6659,10 +6763,18 @@ const tamanhoBonito = (b) => {
 };
 
 async function anexar(P, caminhos) {
+  const revisao = P.revisaoConversa || 0;
   for (const c of caminhos) {
-    if (P.anexos.some(a => a.path === c)) continue;
-    const a = await window.api.anexoLer(c);
-    if (a) P.anexos.push(a);
+    const caminho = typeof c === 'string' ? c : c && c.path;
+    if (!caminho || P.anexos.some(a => a.path === caminho)) continue;
+    let a;
+    try { a = await window.api.anexoLer(caminho); }
+    catch (e) { a = { erro: e.message || 'Falha ao ler o anexo.' }; }
+    if (!painelAindaAtual(P, revisao)) return;
+    if (a && !a.erro && !a.error) {
+      // Duas leituras do mesmo arquivo podem terminar juntas.
+      if (!P.anexos.some(x => x.path === a.path)) P.anexos.push(a);
+    } else avisoTemp(P, 'Não consegui anexar: ' + caminho.split('/').pop() + '. ' + (a && (a.erro || a.error) || ''), true);
   }
   pintarAnexos(P);
 }
@@ -6716,6 +6828,7 @@ function pintarAnexos(P) {
       pintarAnexos(P);
     }, null, P));   // 5o parametro: clique na fichinha abre o arquivo no visor, e so isso
   }
+  queueMicrotask(() => window.dispatchEvent(new Event('cockpit:salvar-rascunhos')));
 }
 
 /* ================= completar caminho de arquivo com "@" =================
@@ -6915,6 +7028,7 @@ function recadoVisor(corpo, linhas) {
 
 async function verArquivo(P, caminho) {
   const v = $('.p-visor', P.el);
+  const pedido = {}; v.pedidoArquivo = pedido;
   const corpo = $('.visor-corpo', v);
   v.classList.remove('hidden');
   v.onclick = (e) => { if (e.target === v) fecharVisor(); };
@@ -6931,7 +7045,10 @@ async function verArquivo(P, caminho) {
   $('.visor-abrir', v).classList.toggle('hidden', NA_VPS(caminho));
   corpo.innerHTML = '<div class="visor-vazio">abrindo…</div>';
 
-  const a = await lerParaVisor(caminho);
+  let a;
+  try { a = await lerParaVisor(caminho); }
+  catch (e) { a = { erro: e.message || 'Falha ao ler o arquivo.' }; }
+  if (v.pedidoArquivo !== pedido || v.classList.contains('hidden')) return;
   if (!a || a.erro) { recadoVisor(corpo, ['Não consegui abrir.', (a && a.erro) || '']); return; }
   $('.visor-nome', v).textContent = a.nome + '  ·  ' + tamanhoBonito(a.bytes);
   if (a.tipo === 'imagem') { corpo.innerHTML = ''; const i = document.createElement('img'); i.src = a.dados; corpo.appendChild(i); }
@@ -6941,6 +7058,7 @@ async function verArquivo(P, caminho) {
 
 /* ============ conversas recentes ============ */
 const histCache = { claude: null, codex: null, acp: null, gemini: null, grok: null };
+const leituraHistorico = Object.create(null);
 
 /* As conversas do Claude que rodaram DENTRO da VPS gravam o .jsonl lá, não aqui: elas chegam
    por SSH e ficam num cache PRÓPRIO. Guardar tudo num cache só fazia a lista trocar de dono a
@@ -7039,15 +7157,25 @@ function lateralAberta(engine) {
 }
 
 async function loadHist(engine, force) {
+  const pedido = leituraHistorico[engine] = (leituraHistorico[engine] || 0) + 1;
   const box = caixaHist(engine);   // [EDITA leva 12.4] sem isto o ACP APAGAVA a lista do Codex
   if (histCache[engine]) paintHist(engine, histCache[engine]);   // mostra o que ja tem
   else box.innerHTML = '<div class="hist-load">Carregando…</div>';
   /* [EDITA leva 12.4] uma alternativa NOVA na frente das duas de sempre, que ficaram intactas:
      as conversas do ACP são as que o próprio Cockpit anota, num JSONL por sessão. */
-  const r = ['gemini', 'grok'].includes(engine) ? await window.api.sessionsCli(engine)
-    : engine === 'acp' ? await window.api.sessionsAcp()
-    : engine === 'claude' ? await window.api.sessionsClaude(!!cfg.verRobos) : await window.api.sessionsCodex(!!cfg.verRobos);
-  if (r && r.error) { box.innerHTML = '<div class="hist-load">Não consegui ler: ' + r.error + '</div>'; return; }
+  let r;
+  try {
+    r = ['gemini', 'grok'].includes(engine) ? await window.api.sessionsCli(engine)
+      : engine === 'acp' ? await window.api.sessionsAcp()
+      : engine === 'claude' ? await window.api.sessionsClaude(!!cfg.verRobos) : await window.api.sessionsCodex(!!cfg.verRobos);
+    if (r && r.error) throw new Error(r.error);
+    if (r && !Array.isArray(r)) throw new Error('A lista de conversas está indisponível.');
+  } catch (e) {
+    if (leituraHistorico[engine] === pedido) box.replaceChildren(Object.assign(document.createElement('div'),
+      { className: 'hist-load', textContent: 'Não consegui ler: ' + (e.message || e) }));
+    return;
+  }
+  if (leituraHistorico[engine] !== pedido) return;
   histCache[engine] = juntarComVps(engine, r || []);
   paintHist(engine, histCache[engine]);
   /* de propósito SEM o `force`: o turn-end também chama loadHist(engine, true), então passar
@@ -7749,7 +7877,7 @@ async function paintHist(engine, listaCrua) {
     return;
   }
 
-  const porNome = list.filter(s => s.title.toLowerCase().includes(termo));
+  const porNome = list.filter(s => String(s.title || '').toLowerCase().includes(termo));
   const resto = list.filter(s => !porNome.includes(s));
   if (porNome.length) {
     box.appendChild(Object.assign(document.createElement('div'), { className: 'hist-cab', textContent: 'no nome' }));
@@ -7760,14 +7888,20 @@ async function paintHist(engine, listaCrua) {
   aviso.textContent = 'procurando dentro das conversas…';
   box.appendChild(aviso);
 
-  const r = await window.api.buscarConversas({ engine, termo, itens: resto.map(s => ({ id: s.id, file: s.file })) });
+  let r;
+  try { r = await window.api.buscarConversas({ engine, termo, itens: resto.map(s => ({ id: s.id, file: s.file })) }); }
+  catch (e) {
+    if (minhaVez === pintaVez[engine]) aviso.textContent = 'Não consegui buscar nas conversas: ' + (e.message || e);
+    return;
+  }
   if (minhaVez !== pintaVez[engine]) return;   // ja tem um desenho mais novo: este morreu
   // o main passou a devolver { achados, parcial }; a versao antiga devolvia so a lista
   const achados = Array.isArray(r) ? r : ((r && r.achados) || []);
   const parcial = (r && !Array.isArray(r) && r.parcial) || null;
   aviso.remove();
   if (!achados.length) {
-    if (!porNome.length) box.innerHTML = '<div class="hist-load">Nada com “' + termo + '”.</div>';
+    if (!porNome.length) box.replaceChildren(Object.assign(document.createElement('div'),
+      { className: 'hist-load', textContent: 'Nada com “' + termo + '”.' }));
     // o aviso de "olhei so as mais recentes" vale mesmo quando ja houve acerto pelo nome
     if (parcial) box.appendChild(Object.assign(document.createElement('div'), {
       className: 'hist-load',
@@ -7790,8 +7924,10 @@ async function paintHist(engine, listaCrua) {
 }
 
 async function openSession(s, el) {
+  const remoto = !!s.remoto || NA_VPS(s.cwd);
   // ja esta aberta em algum painel? so pisca e leva voce ate ela
-  const aberta = [...panes.values()].find(q => q.resumeId === s.id || q.sessaoId === s.id);
+  const aberta = [...panes.values()].find(q => q.engine === s.engine && NA_VPS(q.cwd) === remoto
+    && (q.resumeId === s.id || q.sessaoId === s.id));
   if (aberta) {
     document.querySelectorAll('.hist-item').forEach(x => x.classList.remove('on'));
     if (el) el.classList.add('on');
@@ -7808,7 +7944,11 @@ async function openSession(s, el) {
   document.querySelectorAll('.hist-item').forEach(x => x.classList.remove('on'));
   if (el) el.classList.add('on');
 
-  await window.api.paneStop({ paneId: P.id, engine: P.engine });
+  // O painel acabou de nascer e não possui motor. Identificar a conversa antes
+  // do primeiro await também impede que um clique duplo crie dois painéis iguais.
+  invalidarConversa(P);
+  const revisao = P.revisaoConversa;
+  P.carregandoHistorico = true;
   escondePerm(P);
   P.engine = s.engine; P.cwd = s.cwd; P.resumeId = s.id; P.sessaoId = null; P.started = false; P.busy = false; P.model = '';
   if (s.engine === 'acp' && s.comando) P.model = s.comando;
@@ -7828,14 +7968,21 @@ async function openSession(s, el) {
   note(P, 'Conversa: ' + s.title);
   /* Conversa que rodou na VPS mora no disco DELA: o arquivo daqui não existe, e sem este
      desvio clicar nela abria um chat vazio. O caminho local segue exatamente como era. */
-  const msgs = s.remoto
-    ? await window.api.sessionHistoryRemoto({ id: s.id })
-    : await window.api.sessionHistory({ engine: s.engine, file: s.file });
-  for (const m of (msgs || [])) renderizarHistorico(P, m);
-  document.querySelectorAll('.tool-st').forEach(x => { if (x.classList.contains('run')) { x.className = 'tool-st ok'; x.innerHTML = ico('check'); } });
-  note(P, '— daqui pra baixo é a conversa de agora —');
-  scroll(P, true);
-  $('.p-input', P.el).focus();
+  try {
+    const msgs = remoto
+      ? await window.api.sessionHistoryRemoto({ id: s.id })
+      : await window.api.sessionHistory({ engine: s.engine, file: s.file, id: s.id, cwd: s.cwd });
+    if (!painelAindaAtual(P, revisao)) return;
+    if (!Array.isArray(msgs)) throw new Error(msgs && (msgs.error || msgs.erro) || 'Histórico indisponível.');
+    for (const m of msgs) renderizarHistorico(P, m);
+    $$('.tool-st.run', P.el).forEach(x => { x.className = 'tool-st ok'; x.innerHTML = ico('check'); });
+    scroll(P, true);
+    if (focusPane === P) $('.p-input', P.el).focus();
+  } catch (e) {
+    if (painelAindaAtual(P, revisao)) note(P, 'Não consegui abrir o histórico: ' + (e.message || e), true);
+  } finally {
+    if (painelAindaAtual(P, revisao)) P.carregandoHistorico = false;
+  }
 }
 
 async function novaConversa(engine) {
@@ -8945,7 +9092,7 @@ async function alternarWorktree(P) {
   await aplicarWorktree(P, limpo);
 }
 async function aplicarWorktree(P, nome) {
-  try { await window.api.paneStop({ paneId: P.id, engine: P.engine }); } catch {}
+  await desligarMotor(P);
   if (!panes.has(P.id)) return;                 // fechou o chat enquanto o motor parava
   P.worktree = nome || '';
   /* Worktree é outra árvore de arquivos: conversa nova, como na troca de pasta. Sem isso o
@@ -8953,6 +9100,7 @@ async function aplicarWorktree(P, nome) {
   P.busy = false; P.queued = null; P.filaMsgs = []; escondePerm(P);
   pararTrabalho(P); limparPassos(P); limparContinuar(P);
   P.sessaoId = null; P.sessaoFile = ''; P.resumeId = null; P.forkPendente = false;
+  P.passarContexto = null; P.edicoes = [];
   zerarContexto(P);          // conversa nova: o medidor volta ao zero
   P.titulo = ''; P.nomeManual = false; P.nomeCurto = false; P.hist = []; limparPlano(P); limparSugestoes(P);
   P.blocks.clear(); P.tools.clear();
@@ -9496,7 +9644,7 @@ document.addEventListener('keydown', (e) => {
   }
   aplicarTema(cfg.tema);
   document.body.classList.toggle('foco', !!cfg.foco);   // o modo foco continua como ele deixou
-  $('#verLine').textContent = 'Cockpit 1.0';
+  $('#verLine').textContent = 'Cockpit 1.1.0';
   repintarAvatares();
   const noTelefone = !!window.SEM_ELECTRON;
   // leva 12.5: o radar de motores instalados, sem segurar o boot e sem derrubar nada se falhar

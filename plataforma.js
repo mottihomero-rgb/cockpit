@@ -74,10 +74,18 @@ function buildEnv() {
    No Mac o caminho do Claude era fixo (~/.local/bin/claude). No Windows ele pode
    estar em quatro lugares e com três extensões, então procuramos de fato. */
 const cacheBin = new Map();
+function executavel(p) {
+  try {
+    if (!fs.statSync(p).isFile()) return false;
+    if (!EH_WIN) fs.accessSync(p, fs.constants.X_OK);
+    return true;
+  } catch { return false; }
+}
 
 function acharBin(nome) {
   // Uma instalação local feita com o app aberto deve aparecer sem reiniciar.
-  if (cacheBin.has(nome) && cacheBin.get(nome) !== nome) return cacheBin.get(nome);
+  if (cacheBin.has(nome) && cacheBin.get(nome) !== nome && executavel(cacheBin.get(nome))) return cacheBin.get(nome);
+  if (path.isAbsolute(nome)) return nome;
   const exts = EH_WIN ? ['.exe', '.cmd', '.bat', ''] : [''];
   const pastas = [...pastasExtras(), ...((process.env.PATH || '').split(SEP))];
   let achado = null;
@@ -85,7 +93,7 @@ function acharBin(nome) {
     if (!dir) continue;
     for (const ext of exts) {
       const p = path.join(dir, nome + ext);
-      try { if (fs.statSync(p).isFile()) { achado = p; break; } } catch {}
+      if (executavel(p)) { achado = p; break; }
     }
     if (achado) break;
   }
@@ -149,14 +157,13 @@ function matarProcesso(p) {
 function temBin(nome) {
   try {
     const p = acharBin(nome);
-    if (p !== nome) return true;              // achou caminho completo
-    if (path.isAbsolute(p)) return fs.existsSync(p);
+    if (p !== nome || path.isAbsolute(p)) return executavel(p);
     // nome cru: procura no PATH do jeito do sistema
     const exts = EH_WIN ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';') : [''];
     for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
       if (!dir) continue;
       for (const e of exts) {
-        try { if (fs.existsSync(path.join(dir, nome + e))) return true; } catch {}
+        if (executavel(path.join(dir, nome + e))) return true;
       }
     }
     return false;
@@ -199,14 +206,20 @@ function ptyMac({ linha, cols, rows, cwd, env, ptyBridge }) {
      em vez de mostrar "�". Um por canal: saída e erro são fluxos separados. */
   const deSaida = new StringDecoder('utf8');
   const deErro = new StringDecoder('utf8');
+  const avisosErro = [];
+  // Fechar o terminal enquanto uma tecla/resize está no cano produz EPIPE
+  // no stream, não no ChildProcess. Sem ouvir esse erro o app inteiro cai.
+  const avisarErro = e => { for (const fn of avisosErro) fn(e); };
+  p.on('error', avisarErro);
+  for (const fluxo of [p.stdin, p.stdout, p.stderr, p.stdio[3]]) fluxo.on('error', avisarErro);
   return {
     onData(fn) {
       p.stdout.on('data', (d) => { const t = deSaida.write(d); if (t) fn(t); });
       p.stderr.on('data', (d) => { const t = deErro.write(d); if (t) fn(t); });
     },
-    onErro(fn) { p.on('error', (e) => fn(e)); },
+    onErro(fn) { avisosErro.push(fn); },
     onFim(fn) { p.on('close', (code) => fn(code)); },
-    escrever(d) { p.stdin.write(d); },
+    escrever(d) { if (!p.stdin.destroyed && !p.stdin.writableEnded) p.stdin.write(d); },
     redimensionar(c, r) { try { p.stdio[3].write(`resize ${c} ${r}\n`); } catch {} },
     matar() {
       try { p.kill('SIGTERM'); } catch {}

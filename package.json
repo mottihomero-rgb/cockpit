@@ -9,6 +9,8 @@
     "start": "electron .",
     "build": "electron-builder --mac --arm64",
     "test": "node --test tests/*.test.cjs && npm run test:acp",
+    "test:ui": "node tests/auditoria-ui.cjs",
+    "test:electron": "node tests/auditoria-electron.cjs",
     "test:acp": "node tests/teste-acp.js && node tests/teste-acp-ponte.js"
   },
   "dependencies": {
@@ -19,8 +21,9 @@
   },
   "devDependencies": {
     "ajv": "^6.12.6",
-    "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron": "43.7.3",
+    "electron-builder": "26.15.3",
+    "playwright": "1.63.0"
   },
   "build": {
     "appId": "com.adsure.cockpit",
@@ -72,7 +75,7 @@
         "dir"
       ],
       "icon": "assets/icon.icns",
-      "identity": null,
+      "identity": "-",
       "extendInfo": {
         "NSCameraUsageDescription": "O Cockpit usa a câmera para você fotografar um rascunho no papel ou um quadro físico e mandar direto para o Claude ou o Codex.",
         "NSMicrophoneUsageDescription": "O Cockpit usa o microfone para o ditado: você fala e o texto aparece no campo da mensagem."
